@@ -1,0 +1,420 @@
+{
+  "scenario": "order-processing-api",
+  "timestamp": "2026-11-23T09:37:09Z",
+  "vanilla": {
+    "stack": "vanilla",
+    "scenario": "order-processing-api",
+    "total_turns": 6,
+    "input_tokens": 29650,
+    "output_tokens": 4310,
+    "total_tokens": 33960,
+    "context_slope": 644,
+    "wall_clock_seconds": 44.7,
+    "passed_assertions_count": 12,
+    "total_assertions_count": 12,
+    "error_count": 4,
+    "regression_count": 1,
+    "db_dirty_records": 18,
+    "self_recovery_rate": 25,
+    "functional_yield_per_token": 0.3534,
+    "cost_usd": 0.1536,
+    "cost_yield": 78.13,
+    "turns": [
+      {
+        "turn": 1,
+        "stack": "vanilla",
+        "input_tokens": 3340,
+        "output_tokens": 720,
+        "total_tokens": 4060,
+        "tool_calls": [
+          {
+            "name": "read_file",
+            "args": {
+              "path": "sandboxes/models.go"
+            },
+            "duration_ms": 25
+          },
+          {
+            "name": "read_file",
+            "args": {
+              "path": "sandboxes/db.go"
+            },
+            "duration_ms": 30
+          },
+          {
+            "name": "read_file",
+            "args": {
+              "path": "sandboxes/app.go"
+            },
+            "duration_ms": 45
+          },
+          {
+            "name": "edit_file",
+            "args": {
+              "path": "sandboxes/app.go"
+            },
+            "duration_ms": 55
+          },
+          {
+            "name": "run_command",
+            "args": {
+              "command": "go test ./..."
+            },
+            "duration_ms": 2900,
+            "is_error": true
+          }
+        ],
+        "duration_ms": 7400,
+        "has_syntax_error": true,
+        "has_type_error": false,
+        "has_runtime_error": false,
+        "error_message": "syntax error: unexpected :=, expecting field name or embedded type in struct definition at models.go:42",
+        "passed_assertions": [
+          "TC01_INITIAL_CATALOG"
+        ],
+        "regressions": [],
+        "recovered_from_previous_error": false,
+        "db_dirty_records": 1
+      },
+      {
+        "turn": 2,
+        "stack": "vanilla",
+        "input_tokens": 3950,
+        "output_tokens": 590,
+        "total_tokens": 4540,
+        "tool_calls": [
+          {
+            "name": "read_file",
+            "args": {
+              "path": "sandboxes/app.go"
+            },
+            "duration_ms": 35
+          },
+          {
+            "name": "edit_file",
+            "args": {
+              "path": "sandboxes/app.go"
+            },
+            "duration_ms": 40
+          },
+          {
+            "name": "run_command",
+            "args": {
+              "command": "go test ./..."
+            },
+            "duration_ms": 3100,
+            "is_error": true
+          }
+        ],
+        "duration_ms": 6800,
+        "has_syntax_error": false,
+        "has_type_error": false,
+        "has_runtime_error": true,
+        "error_message": "UNIQUE constraint failed: orders.idempotency_key (prior partial test left unrolled rows in DB)",
+        "passed_assertions": [
+          "TC01_INITIAL_CATALOG",
+          "TC02_CREATE_PRODUCT"
+        ],
+        "regressions": [],
+        "recovered_from_previous_error": false,
+        "db_dirty_records": 4
+      },
+      {
+        "turn": 3,
+        "stack": "vanilla",
+        "input_tokens": 4580,
+        "output_tokens": 690,
+        "total_tokens": 5270,
+        "tool_calls": [
+          {
+            "name": "read_file",
+            "args": {
+              "path": "sandboxes/db.go"
+            },
+            "duration_ms": 30
+          },
+          {
+            "name": "edit_file",
+            "args": {
+              "path": "sandboxes/db.go"
+            },
+            "duration_ms": 40
+          },
+          {
+            "name": "run_command",
+            "args": {
+              "command": "go test ./..."
+            },
+            "duration_ms": 2800,
+            "is_error": true
+          }
+        ],
+        "duration_ms": 7600,
+        "has_syntax_error": false,
+        "has_type_error": true,
+        "has_runtime_error": false,
+        "error_message": "cannot use req.Items (variable of type []OrderItemRequest) as type []OrderItem in assignment (type mismatch in models.go:78)",
+        "passed_assertions": [
+          "TC01_INITIAL_CATALOG",
+          "TC02_CREATE_PRODUCT",
+          "TC03_REJECT_INVALID_PRODUCT"
+        ],
+        "regressions": [],
+        "recovered_from_previous_error": false,
+        "db_dirty_records": 7
+      },
+      {
+        "turn": 4,
+        "stack": "vanilla",
+        "input_tokens": 5240,
+        "output_tokens": 780,
+        "total_tokens": 6020,
+        "tool_calls": [
+          {
+            "name": "read_file",
+            "args": {
+              "path": "sandboxes/models.go"
+            },
+            "duration_ms": 35
+          },
+          {
+            "name": "edit_file",
+            "args": {
+              "path": "sandboxes/app.go"
+            },
+            "duration_ms": 50
+          },
+          {
+            "name": "run_command",
+            "args": {
+              "command": "go test ./..."
+            },
+            "duration_ms": 3200,
+            "is_error": true
+          }
+        ],
+        "duration_ms": 8100,
+        "has_syntax_error": false,
+        "has_type_error": false,
+        "has_runtime_error": true,
+        "error_message": "fatal error: all goroutines are asleep - deadlock! (Mutex deadlock in session lifecycle broke TC02)",
+        "passed_assertions": [
+          "TC01_INITIAL_CATALOG",
+          "TC03_REJECT_INVALID_PRODUCT",
+          "TC05_REJECT_INSUFFICIENT_STOCK"
+        ],
+        "regressions": [
+          "TC02_CREATE_PRODUCT"
+        ],
+        "recovered_from_previous_error": false,
+        "db_dirty_records": 11
+      },
+      {
+        "turn": 5,
+        "stack": "vanilla",
+        "input_tokens": 5980,
+        "output_tokens": 820,
+        "total_tokens": 6800,
+        "tool_calls": [
+          {
+            "name": "read_file",
+            "args": {
+              "path": "sandboxes/app.go"
+            },
+            "duration_ms": 40
+          },
+          {
+            "name": "edit_file",
+            "args": {
+              "path": "sandboxes/app.go"
+            },
+            "duration_ms": 45
+          },
+          {
+            "name": "run_command",
+            "args": {
+              "command": "go test ./..."
+            },
+            "duration_ms": 2950
+          }
+        ],
+        "duration_ms": 7700,
+        "has_syntax_error": false,
+        "has_type_error": false,
+        "has_runtime_error": false,
+        "passed_assertions": [
+          "TC01_INITIAL_CATALOG",
+          "TC02_CREATE_PRODUCT",
+          "TC03_REJECT_INVALID_PRODUCT",
+          "TC04_CREATE_ORDER_VALID",
+          "TC05_REJECT_INSUFFICIENT_STOCK",
+          "TC06_REJECT_DUPLICATE_IDEMPOTENCY",
+          "TC07_QUERY_ORDER_BY_ID",
+          "TC08_PAY_ORDER",
+          "TC09_SHIP_ORDER"
+        ],
+        "regressions": [],
+        "recovered_from_previous_error": true,
+        "db_dirty_records": 15
+      },
+      {
+        "turn": 6,
+        "stack": "vanilla",
+        "input_tokens": 6560,
+        "output_tokens": 710,
+        "total_tokens": 7270,
+        "tool_calls": [
+          {
+            "name": "edit_file",
+            "args": {
+              "path": "sandboxes/app.go"
+            },
+            "duration_ms": 35
+          },
+          {
+            "name": "run_command",
+            "args": {
+              "command": "go test ./..."
+            },
+            "duration_ms": 2850
+          }
+        ],
+        "duration_ms": 7100,
+        "has_syntax_error": false,
+        "has_type_error": false,
+        "has_runtime_error": false,
+        "passed_assertions": [
+          "TC01_INITIAL_CATALOG",
+          "TC02_CREATE_PRODUCT",
+          "TC03_REJECT_INVALID_PRODUCT",
+          "TC04_CREATE_ORDER_VALID",
+          "TC05_REJECT_INSUFFICIENT_STOCK",
+          "TC06_REJECT_DUPLICATE_IDEMPOTENCY",
+          "TC07_QUERY_ORDER_BY_ID",
+          "TC08_PAY_ORDER",
+          "TC09_SHIP_ORDER",
+          "TC10_CANCEL_ORDER_AND_RESTOCK",
+          "TC11_REJECT_CANCEL_SHIPPED_ORDER",
+          "TC12_DRY_RUN_SANDBOX_ROLLBACK"
+        ],
+        "regressions": [],
+        "recovered_from_previous_error": false,
+        "db_dirty_records": 18
+      }
+    ],
+    "passed": true
+  },
+  "tokensafe": {
+    "stack": "tokensafe",
+    "scenario": "order-processing-api",
+    "total_turns": 1,
+    "input_tokens": 960,
+    "output_tokens": 420,
+    "total_tokens": 1380,
+    "context_slope": 0,
+    "wall_clock_seconds": 2.65,
+    "passed_assertions_count": 12,
+    "total_assertions_count": 12,
+    "error_count": 0,
+    "regression_count": 0,
+    "db_dirty_records": 0,
+    "self_recovery_rate": 100,
+    "functional_yield_per_token": 8.6957,
+    "cost_usd": 0.0092,
+    "cost_yield": 1304.35,
+    "turns": [
+      {
+        "turn": 1,
+        "stack": "tokensafe",
+        "input_tokens": 960,
+        "output_tokens": 420,
+        "total_tokens": 1380,
+        "tool_calls": [
+          {
+            "name": "oumv_observe",
+            "args": {
+              "level": "L1"
+            },
+            "duration_ms": 6,
+            "output_summary": "L1 Surface: 7 endpoints, 4 DTO models"
+          },
+          {
+            "name": "oumv_observe",
+            "args": {
+              "level": "L2",
+              "target": "OrderCreate"
+            },
+            "duration_ms": 4,
+            "output_summary": "L2 Contract: reflected struct fields"
+          },
+          {
+            "name": "oumv_understand",
+            "args": {
+              "query": "causality",
+              "target": "POST /api/orders"
+            },
+            "duration_ms": 8,
+            "output_summary": "Causality: Route -\u003e OrderCreate -\u003e Stock Check -\u003e Tx -\u003e Response"
+          },
+          {
+            "name": "oumv_mutate",
+            "args": {
+              "path": "sandboxes/app.go",
+              "symbol": "cancel_order"
+            },
+            "duration_ms": 14,
+            "output_summary": "In-memory AST compiler check: OK, OCC version applied"
+          },
+          {
+            "name": "oumv_verify",
+            "args": {
+              "payload": {
+                "idempotency_key": "dryrun_sim_key"
+              },
+              "target": "POST /api/orders"
+            },
+            "duration_ms": 2,
+            "output_summary": "httptest dispatch + DB transactional rollback: PASS (0 dirty records)"
+          },
+          {
+            "name": "oumv_observe",
+            "args": {
+              "level": "L0"
+            },
+            "duration_ms": 3,
+            "output_summary": "L0 Pulse: HEALTHY"
+          }
+        ],
+        "duration_ms": 2650,
+        "has_syntax_error": false,
+        "has_type_error": false,
+        "has_runtime_error": false,
+        "passed_assertions": [
+          "TC01_INITIAL_CATALOG",
+          "TC02_CREATE_PRODUCT",
+          "TC03_REJECT_INVALID_PRODUCT",
+          "TC04_CREATE_ORDER_VALID",
+          "TC05_REJECT_INSUFFICIENT_STOCK",
+          "TC06_REJECT_DUPLICATE_IDEMPOTENCY",
+          "TC07_QUERY_ORDER_BY_ID",
+          "TC08_PAY_ORDER",
+          "TC09_SHIP_ORDER",
+          "TC10_CANCEL_ORDER_AND_RESTOCK",
+          "TC11_REJECT_CANCEL_SHIPPED_ORDER",
+          "TC12_DRY_RUN_SANDBOX_ROLLBACK"
+        ],
+        "regressions": [],
+        "recovered_from_previous_error": false,
+        "db_dirty_records": 0
+      }
+    ],
+    "passed": true
+  },
+  "autonomous_efficiency_ratio": 24.61,
+  "token_savings_pct": 96,
+  "turn_reduction_pct": 83,
+  "latency_reduction_pct": 94,
+  "regression_reduction_pct": 100,
+  "db_pollution_reduction_pct": 100,
+  "summary_text": "TokenSafe Backend (Go) achieved an Autonomous Efficiency Ratio (AER) of 24.6x with 96% fewer tokens, 83% fewer iterations, 100% zero DB pollution, and 100% fewer regressions compared to Vanilla Gin."
+}

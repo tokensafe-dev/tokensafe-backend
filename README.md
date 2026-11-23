@@ -88,6 +88,24 @@ go get github.com/tokensafe-dev/tokensafe-backend
 
 ---
 
+## Agent Usability Benchmark (AUB - Go)
+
+TokenSafe Backend (Go) achieves an **Autonomous Efficiency Ratio (AER) of 24.6x** over standard Vanilla Gin development:
+- **-96% Tokens**: 1,380 vs 33,960 tokens
+- **-83% Turns**: 1 turn to green vs 6 turns
+- **Zero DB Pollution**: In-memory transactional dry-run simulation with automatic rollback (0 dirty records vs 18)
+- **-94% Cost**: $0.0092 vs $0.1536 run cost
+- **In-Memory Compiler Guard**: Non-compiling edits blocked in-memory before disk corruption
+
+See full report: [BENCHMARK_REPORT.md](benchmark/BENCHMARK_REPORT.md).
+
+Run benchmark locally:
+```bash
+go run ./benchmark/cmd/main.go
+```
+
+---
+
 ## License
 
 MIT © 2026 TokenSafe & Contributors
