@@ -4,9 +4,20 @@
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/tokensafe-dev/tokensafe-backend)](https://goreportcard.com/report/github.com/tokensafe-dev/tokensafe-backend)
 [![Protocol Specification](https://img.shields.io/badge/OUMV-v1.0--draft-orange)](https://github.com/tokensafe-dev/oumv/blob/main/spec/SPEC.md)
+[![Agent Usability Benchmark](https://img.shields.io/badge/AUB_Benchmark-AER_24.6x-10B981)](benchmark/BENCHMARK_REPORT.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
 > `tokensafe-backend` transforms any Go backend application into an agent-ready, token-efficient live runtime. It implements the **OUMV (Observe, Understand, Mutate, Verify)** standard, allowing autonomous AI agents to inspect, reason about, safely modify, and verify backend services in sub-milliseconds without context waste.
+
+---
+
+## Highlights
+
+- **⚡ 24.6x Autonomous Efficiency Ratio (AER)**: Cuts token consumption by **96%** (1,380 vs 33,960 tokens) and agent iterations by **83%** (1 turn to green vs 6 turns).
+- **🛡️ In-Memory Compiler Pre-Flight Guard**: AST-guided symbol edits validated in memory via `go/parser` and `go/types` in <5ms—blocking non-compiling edits before touching the disk.
+- **🔄 Zero Database Pollution**: In-memory transactional dry-runs (`net/http/httptest` + `pkg/db`) execute with guaranteed `ROLLBACK`, eliminating state contamination across test cycles.
+- **🔍 Progressive Context Disclosure (L0–L4)**: Replaces 3,000+ token file crawls with compact pulse (`L0`, ~20 tokens), endpoint surfaces (`L1`, ~110 tokens), and reflected schemas (`L2`, ~60 tokens).
+- **🧩 Dual-Layer Architecture**: Use the native type-safe framework (`tokensafe.New()`) for greenfield services, or mount compatibility adapters (`Gin`, `Chi`, `net/http`) in 2 lines of code.
 
 ---
 
@@ -90,18 +101,112 @@ go get github.com/tokensafe-dev/tokensafe-backend
 
 ## Agent Usability Benchmark (AUB - Go)
 
-TokenSafe Backend (Go) achieves an **Autonomous Efficiency Ratio (AER) of 24.6x** over standard Vanilla Gin development:
-- **-96% Tokens**: 1,380 vs 33,960 tokens
-- **-83% Turns**: 1 turn to green vs 6 turns
-- **Zero DB Pollution**: In-memory transactional dry-run simulation with automatic rollback (0 dirty records vs 18)
-- **-94% Cost**: $0.0092 vs $0.1536 run cost
-- **In-Memory Compiler Guard**: Non-compiling edits blocked in-memory before disk corruption
+In our standardized **Agent Usability Benchmark (AUB)** evaluating an e-commerce order processing API against a 12-assertion Behavioral Test Oracle:
+
+$$\text{AER} = \frac{\text{FYpT}_{\text{TokenSafe}}}{\text{FYpT}_{\text{Vanilla}}} = \frac{8.6957}{0.3534} = \mathbf{24.6x}$$
+
+### Comparative Scorecard
+
+| Metric | Baseline: Vanilla Gin | Target: TokenSafe Backend (Go) | Delta / Advantage |
+| :--- | :---: | :---: | :---: |
+| **Autonomous Efficiency Ratio (AER)** | $1.0\times$ | **$24.6\times$** | **+2361% productivity** |
+| **Functional Yield per 1k Tokens (FYpT)** | `0.3534` | **`8.6957`** | **+2361% yield** |
+| **Total Tokens** | `33,960` | **`1,380`** | **-96%** |
+| • Input Tokens | `29,650` | `960` | -96% |
+| • Output Tokens | `4,310` | `420` | -90% |
+| **Agent Iterations (Turns)** | `6` | **`1`** | **-83% (1 turn to green)** |
+| **Wall Clock Execution** | `44.70s` | **`2.65s`** | **-94%** |
+| **Database State Pollution (Dirty Records)** | `18` | **`0`** | **-100% (Zero-Pollution)** |
+| **Diagnostics Errors Encountered** | `4` | **`0`** | **4 fewer errors** |
+| **Regressions Encountered** | `1` | **`0`** | **1 fewer regressions** |
+| **Self-Recovery Rate (SRR)** | `25%` | **`100%`** | **Superior** |
+| **Estimated Run Cost (USD)** | `$0.1536` | **`$0.0092`** | **-94% cost** |
+| **Cost Yield (Assertions / $)** | `78.13` | **`1304.35`** | **16.7x yield/$** |
 
 See full report: [BENCHMARK_REPORT.md](benchmark/BENCHMARK_REPORT.md).
 
 Run benchmark locally:
 ```bash
+# Execute CLI benchmark runner
 go run ./benchmark/cmd/main.go
+
+# Run test suite
+go test -v ./...
+```
+
+---
+
+## Chi & Standard HTTP Adapters
+
+For Chi:
+```go
+import chiAdapter "github.com/tokensafe-dev/tokensafe-backend/pkg/adapters/chi"
+
+r := chi.NewRouter()
+// ... register routes ...
+chiAdapter.Mount(r, rt)
+```
+
+For standard `net/http`:
+```go
+import stdAdapter "github.com/tokensafe-dev/tokensafe-backend/pkg/adapters/stdhttp"
+
+mux := http.NewServeMux()
+// ... register routes ...
+stdAdapter.Mount(mux, rt)
+```
+
+---
+
+## In-Memory Compiler Pre-Flight Guard
+
+The `pkg/mutate` patcher blocks syntax and type errors before files are written to disk:
+
+```go
+import "github.com/tokensafe-dev/tokensafe-backend/pkg/mutate"
+
+patcher := mutate.NewPatcher(".")
+
+// Applies surgical AST replacement only if the resulting code compiles
+result, err := patcher.ApplySymbolPatch(
+	"handlers/orders.go",
+	"CancelOrder",
+	newFunctionCode,
+	"sha256:current_hash",
+)
+if err != nil {
+	// Rejection reasons: OCC version mismatch, syntax error, or unresolvable types
+	log.Printf("Edit rejected by compiler guard: %v", err)
+}
+```
+
+---
+
+## Database Transactional Sandbox
+
+Execute dry-run mutations with guaranteed rollback:
+
+```go
+import "github.com/tokensafe-dev/tokensafe-backend/pkg/db"
+
+sandbox := db.NewSandbox(sqlDB)
+
+// Runs inside a transaction and ALWAYS executes tx.Rollback()
+report, err := sandbox.ExecuteDryRun(ctx, func(ctx context.Context, tx *sql.Tx) error {
+	_, err := tx.ExecContext(ctx, "INSERT INTO orders (id, total) VALUES ($1, $2)", "ord_test", 150.0)
+	return err
+})
+// DB state is 100% pristine; report contains duration and query logs
+```
+
+---
+
+## Scaffolding with TokenSafe CLI
+
+Scaffold a greenfield Go backend service with TokenSafe out-of-the-box:
+
+```bash
+tokensafe create my-service --template go
 ```
 
 ---
