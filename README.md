@@ -19,10 +19,64 @@
 
 ---
 
-## Architecture & Transports
+## Architecture: Native Core + Compatibility Adapters
 
-- **In-Process HTTP Middleware**: Mount `/__oumv/rpc` on standard `net/http`, Gin, Chi, or Echo routers.
-- **Model Context Protocol (MCP)**: Run standalone `oumv-mcp` over `stdio` to bridge directly with Claude Code, Cursor, Antigravity, and other coding agents.
+`tokensafe-backend` provides a dual-layer architecture:
+
+1. **Native Agent-First Core Framework**: For new services, providing type-safe generic routing, automatic DTO reflection, transactional DB sandboxes, and zero-configuration OUMV live RPC.
+2. **Compatibility Adapters (`pkg/adapters/*`)**: For existing Go services built on Gin, Chi, or standard `net/http`, mounting OUMV introspection in 2 lines of code.
+
+---
+
+## Quickstart (Native Framework)
+
+```go
+package main
+
+import "github.com/tokensafe-dev/tokensafe-backend"
+
+type CreateOrderReq struct {
+    Item   string  `json:"item"`
+    Amount float64 `json:"amount"`
+}
+
+type OrderResp struct {
+    ID     string `json:"id"`
+    Status string `json:"status"`
+}
+
+func main() {
+    app := tokensafe.New()
+
+    tokensafe.Post(app, "/api/v1/orders", func(c *tokensafe.Context, req CreateOrderReq) (*OrderResp, error) {
+        return &OrderResp{ID: "ord-1", Status: "created"}, nil
+    })
+
+    app.Run(":8080")
+}
+```
+
+---
+
+## Quickstart (Gin Adapter for Existing Backends)
+
+```go
+import (
+    "github.com/gin-gonic/gin"
+    ginAdapter "github.com/tokensafe-dev/tokensafe-backend/pkg/adapters/gin"
+    "github.com/tokensafe-dev/tokensafe-backend/pkg/oumv"
+)
+
+func main() {
+    r := gin.Default()
+    // ... your existing routes ...
+
+    rt := oumv.NewRuntime(oumv.Config{Name: "my-service", Handler: r})
+    ginAdapter.Mount(r, rt) // Auto-discovers routes and mounts /__oumv/rpc
+
+    r.Run(":8080")
+}
+```
 
 ---
 

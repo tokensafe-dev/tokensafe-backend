@@ -1,14 +1,11 @@
 package main
 
 import (
-	"encoding/json"
 	"fmt"
 	"log"
-	"net/http"
 
-	"github.com/tokensafe-dev/tokensafe-backend/pkg/adapters/stdhttp"
+	"github.com/tokensafe-dev/tokensafe-backend"
 	"github.com/tokensafe-dev/tokensafe-backend/pkg/db"
-	"github.com/tokensafe-dev/tokensafe-backend/pkg/oumv"
 )
 
 // Order represents an e-commerce order with database tags for OUMV L2 reflection.
@@ -24,47 +21,51 @@ func (Order) TableName() string {
 	return "orders"
 }
 
+type CreateOrderReq struct {
+	Item     string  `json:"item"`
+	Amount   float64 `json:"amount"`
+	Customer string  `json:"customerId"`
+}
+
 func main() {
-	// Initialize OUMV Runtime Adapter (UARP)
-	rt := oumv.NewRuntime(oumv.Config{
-		Name:         "demo-service",
-		Version:      "1.0.0",
-		WorkspaceDir: ".",
+	// 1. Initialize native TokenSafe Agent-First application
+	app := tokensafe.New(tokensafe.AppConfig{
+		Name:    "demo-service",
+		Version: "1.0.0",
 	})
 
-	// Wrap ServeMux with OUMV auto-introspection
-	mux := stdhttp.NewServeMux(rt)
-
-	// Business API routes (automatically registered in L1 Surface)
-	mux.HandleFunc("GET /api/v1/health", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
-		_ = json.NewEncoder(w).Encode(map[string]string{
+	// 2. Type-Safe Endpoints (L1 routes + L2 schemas automatically reflected)
+	tokensafe.Get(app, "/api/v1/health", func(c *tokensafe.Context) (*map[string]string, error) {
+		return &map[string]string{
 			"status":  "healthy",
-			"runtime": "tokensafe-backend",
-		})
+			"runtime": "tokensafe-backend (native core)",
+		}, nil
 	})
 
-	mux.HandleFunc("GET /api/v1/orders", func(w http.ResponseWriter, r *http.Request) {
-		w.Header().Set("Content-Type", "application/json")
+	tokensafe.Get(app, "/api/v1/orders", func(c *tokensafe.Context) (*[]Order, error) {
 		orders := []Order{
 			{ID: "ord-1", Item: "Widget A", Amount: 49.99, Customer: "cust-101"},
 			{ID: "ord-2", Item: "Widget B", Amount: 19.99, Customer: "cust-102"},
 		}
-		_ = json.NewEncoder(w).Encode(orders)
+		return &orders, nil
 	})
 
-	// Mount OUMV JSON-RPC endpoint at /__oumv/rpc
-	mux.Mount("/__oumv/rpc")
+	tokensafe.Post(app, "/api/v1/orders", func(c *tokensafe.Context, req CreateOrderReq) (*Order, error) {
+		newOrder := Order{
+			ID:       "ord-new",
+			Item:     req.Item,
+			Amount:   req.Amount,
+			Customer: req.Customer,
+		}
+		return &newOrder, nil
+	})
 
 	// Print reflected L2 DB model
 	tableContract := db.ReflectModel(Order{})
 	fmt.Printf("📦 DB Model Reflected: %s (%d fields)\n", tableContract.TableName, len(tableContract.Fields))
 
-	port := 8080
-	fmt.Printf("🚀 Demo backend listening on http://localhost:%d\n", port)
-	fmt.Printf("⚡ OUMV JSON-RPC endpoint active at http://localhost:%d/__oumv/rpc\n", port)
-
-	if err := http.ListenAndServe(fmt.Sprintf(":%d", port), mux); err != nil {
+	// 3. Start server with built-in OUMV live RPC endpoint at /__oumv/rpc
+	if err := app.Run(":8080"); err != nil {
 		log.Fatalf("Server failed: %v", err)
 	}
 }
