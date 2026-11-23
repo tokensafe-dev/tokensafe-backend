@@ -58,7 +58,7 @@ type App struct {
 func New(configs ...AppConfig) *App {
 	cfg := AppConfig{
 		Name:         "tokensafe-app",
-		Version:      "0.1.0",
+		Version:      "0.2.0",
 		WorkspaceDir: ".",
 		RPCPath:      "/__oumv/rpc",
 	}

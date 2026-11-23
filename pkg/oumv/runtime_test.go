@@ -27,7 +27,7 @@ func TestRuntimePillars(t *testing.T) {
 
 	rt := oumv.NewRuntime(oumv.Config{
 		Name:         "test-rt",
-		Version:      "0.1.0",
+		Version:      "0.2.0",
 		WorkspaceDir: tmpDir,
 		Handler:      mux,
 	})

@@ -49,7 +49,7 @@ func NewRuntime(cfg Config) *Runtime {
 		cfg.Name = "tokensafe-backend"
 	}
 	if cfg.Version == "" {
-		cfg.Version = "0.1.0"
+		cfg.Version = "0.2.0"
 	}
 	if cfg.WorkspaceDir == "" {
 		cfg.WorkspaceDir = "."

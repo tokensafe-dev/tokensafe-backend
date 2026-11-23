@@ -25,3 +25,6 @@ go.work
 *.swp
 *.swo
 .DS_Store
+
+# TokenSafe local cache & runtime metrics
+.tokensafe/
