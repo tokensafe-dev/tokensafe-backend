@@ -44,26 +44,52 @@
 ```go
 package main
 
-import "github.com/tokensafe-dev/tokensafe-backend"
+import (
+	"net/http"
+
+	"github.com/tokensafe-dev/tokensafe-backend"
+)
 
 type CreateOrderReq struct {
-    Item   string  `json:"item"`
-    Amount float64 `json:"amount"`
+	Item   string  `json:"item" validate:"required,min=2"`
+	Amount float64 `json:"amount" validate:"required,gt=0"`
 }
 
 type OrderResp struct {
-    ID     string `json:"id"`
-    Status string `json:"status"`
+	ID     string  `json:"id"`
+	Item   string  `json:"item"`
+	Amount float64 `json:"amount"`
+	Status string  `json:"status"`
 }
 
 func main() {
-    app := tokensafe.New()
+	app := tokensafe.New()
 
-    tokensafe.Post(app, "/api/v1/orders", func(c *tokensafe.Context, req CreateOrderReq) (*OrderResp, error) {
-        return &OrderResp{ID: "ord-1", Status: "created"}, nil
-    })
+	// 1. Type-safe POST with automatic DTO validation & custom status
+	tokensafe.Post(app, "/api/v1/orders", func(c *tokensafe.Context, req CreateOrderReq) (*OrderResp, error) {
+		c.Status(http.StatusCreated) // Returns 201 Created
+		return &OrderResp{
+			ID:     "ord-1",
+			Item:   req.Item,
+			Amount: req.Amount,
+			Status: "PENDING",
+		}, nil
+	})
 
-    app.Run(":8080")
+	// 2. Go 1.22+ Path-Value routing ({id}) with c.Param("id")
+	app.Get("/api/v1/orders/{id}", func(c *tokensafe.Context) error {
+		id := c.Param("id")
+		if id != "ord-1" {
+			return tokensafe.NewHTTPError(http.StatusNotFound, "order not found")
+		}
+		return c.JSON(http.StatusOK, map[string]string{"id": id, "status": "PENDING"})
+	})
+
+	// 3. Sub-millisecond in-memory testing without network sockets
+	res := app.Simulate(http.MethodGet, "/api/v1/orders/ord-1", nil)
+	println("In-memory response status:", res.Code)
+
+	app.Run(":8080")
 }
 ```
 
@@ -197,6 +223,28 @@ report, err := sandbox.ExecuteDryRun(ctx, func(ctx context.Context, tx *sql.Tx) 
 	return err
 })
 // DB state is 100% pristine; report contains duration and query logs
+```
+
+---
+
+## In-Memory Test Client (`app.Simulate`)
+
+Test handlers directly in memory without starting a background HTTP server or binding network ports:
+
+```go
+res := app.Simulate(http.MethodPost, "/api/v1/orders", CreateOrderReq{
+	Item:   "Laptop",
+	Amount: 1299.99,
+})
+
+if res.Code != http.StatusCreated {
+	t.Fatalf("expected 201 Created, got %d: %s", res.Code, res.String())
+}
+
+var resp OrderResp
+if err := res.JSON(&resp); err != nil {
+	t.Fatalf("failed to decode JSON: %v", err)
+}
 ```
 
 ---
