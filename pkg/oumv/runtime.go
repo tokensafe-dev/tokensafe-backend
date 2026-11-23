@@ -18,6 +18,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/tokensafe-dev/tokensafe-backend/pkg/mutate"
 	"github.com/tokensafe-dev/tokensafe-backend/pkg/protocol"
 )
 
@@ -38,6 +39,7 @@ type Runtime struct {
 	routes       []protocol.RouteInfo
 	handler      http.Handler
 	errCount1m   int64
+	patcher      *mutate.Patcher
 	mu           sync.RWMutex
 }
 
@@ -59,6 +61,7 @@ func NewRuntime(cfg Config) *Runtime {
 		workspaceDir: cfg.WorkspaceDir,
 		startTime:    time.Now(),
 		handler:      cfg.Handler,
+		patcher:      mutate.NewPatcher(cfg.WorkspaceDir),
 		routes:       make([]protocol.RouteInfo, 0),
 	}
 }
@@ -236,6 +239,20 @@ func (r *Runtime) GetSource(ctx context.Context, params *protocol.GetSourceParam
 
 // ApplyEdit executes Pillar 3B: Applies source edit with OCC and pre-flight syntax checks.
 func (r *Runtime) ApplyEdit(ctx context.Context, params *protocol.ApplyEditParams) (*protocol.ApplyEditResult, *protocol.OumvError) {
+	// If a specific symbol is targeted, use surgical AST patcher
+	if params.Symbol != "" && r.patcher != nil {
+		patchRes, patchErr := r.patcher.ApplySymbolPatch(params.Path, params.Symbol, params.Replacement, params.ExpectedVersion)
+		if patchErr != nil {
+			return nil, patchErr
+		}
+		return &protocol.ApplyEditResult{
+			Success:      true,
+			NewVersion:   patchRes.NewVersion,
+			LinesChanged: patchRes.LinesChanged,
+			Message:      "Surgical AST symbol patch applied with pre-flight compiler validation passed",
+		}, nil
+	}
+
 	cleanPath := filepath.Clean(filepath.Join(r.workspaceDir, params.Path))
 	currentData, err := os.ReadFile(cleanPath)
 	if err != nil {
