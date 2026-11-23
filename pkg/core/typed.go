@@ -11,7 +11,8 @@ type TypedHandlerFunc[Req any, Resp any] func(c *Context, req Req) (*Resp, error
 type TypedGetHandlerFunc[Resp any] func(c *Context) (*Resp, error)
 
 // PostTyped registers a type-safe POST endpoint with automatic JSON binding,
-// response serialization, and zero-boilerplate OUMV L2 schema extraction.
+// field validation, response serialization, and zero-boilerplate OUMV L2 schema extraction.
+// Default success status is 201 Created (or custom status if set via c.SetStatus).
 func PostTyped[Req any, Resp any](app *App, path string, fn TypedHandlerFunc[Req, Resp]) {
 	var emptyReq Req
 	var emptyResp Resp
@@ -22,20 +23,31 @@ func PostTyped[Req any, Resp any](app *App, path string, fn TypedHandlerFunc[Req
 	app.Handle("POST", path, func(c *Context) error {
 		var req Req
 		if err := c.BindJSON(&req); err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]string{
-				"error":   "Invalid request payload",
+			return c.JSON(http.StatusUnprocessableEntity, map[string]interface{}{
+				"error":   "Validation failed",
 				"details": err.Error(),
 			})
 		}
 
 		resp, err := fn(c, req)
 		if err != nil {
+			if httpErr, ok := err.(*HTTPError); ok {
+				return c.JSON(httpErr.StatusCode, map[string]interface{}{
+					"error":   httpErr.Message,
+					"details": httpErr.Details,
+				})
+			}
 			return c.JSON(http.StatusInternalServerError, map[string]string{
 				"error": err.Error(),
 			})
 		}
 
-		return c.JSON(http.StatusOK, resp)
+		status := http.StatusOK
+		if custom := c.CustomStatus(); custom != 0 {
+			status = custom
+		}
+
+		return c.JSON(status, resp)
 	}, reqSchema, respSchema)
 }
 
@@ -48,10 +60,22 @@ func GetTyped[Resp any](app *App, path string, fn TypedGetHandlerFunc[Resp]) {
 	app.Handle("GET", path, func(c *Context) error {
 		resp, err := fn(c)
 		if err != nil {
+			if httpErr, ok := err.(*HTTPError); ok {
+				return c.JSON(httpErr.StatusCode, map[string]interface{}{
+					"error":   httpErr.Message,
+					"details": httpErr.Details,
+				})
+			}
 			return c.JSON(http.StatusInternalServerError, map[string]string{
 				"error": err.Error(),
 			})
 		}
-		return c.JSON(http.StatusOK, resp)
+
+		status := http.StatusOK
+		if custom := c.CustomStatus(); custom != 0 {
+			status = custom
+		}
+
+		return c.JSON(status, resp)
 	}, nil, respSchema)
 }

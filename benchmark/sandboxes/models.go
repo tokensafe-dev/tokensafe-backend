@@ -21,9 +21,9 @@ type Product struct {
 
 // ProductCreate represents the request payload to create a new product.
 type ProductCreate struct {
-	Title    string  `json:"title"`
-	Price    float64 `json:"price"`
-	Stock    int     `json:"stock"`
+	Title    string  `json:"title" validate:"required,min=1"`
+	Price    float64 `json:"price" validate:"required,gt=0"`
+	Stock    int     `json:"stock" validate:"gte=0"`
 	Category string  `json:"category"`
 }
 
@@ -44,9 +44,9 @@ type OrderItemResponse struct {
 
 // OrderCreate represents the request payload to place an order.
 type OrderCreate struct {
-	IdempotencyKey string             `json:"idempotency_key"`
-	CustomerID     string             `json:"customer_id"`
-	Items          []OrderItemRequest `json:"items"`
+	IdempotencyKey string             `json:"idempotency_key" validate:"required,min=4"`
+	CustomerID     string             `json:"customer_id" validate:"required,min=2"`
+	Items          []OrderItemRequest `json:"items" validate:"required,min=1"`
 }
 
 // OrderResponse represents a serialized order.

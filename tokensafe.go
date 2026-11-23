@@ -13,6 +13,15 @@ type Context = core.Context
 // AppConfig defines options for application initialization.
 type AppConfig = core.AppConfig
 
+// HTTPError represents an error with an associated HTTP status code.
+type HTTPError = core.HTTPError
+
+// NewHTTPError creates an error with an associated status code and message.
+var NewHTTPError = core.NewHTTPError
+
+// SimulateResponse represents the result of an in-memory HTTP dispatch.
+type SimulateResponse = core.SimulateResponse
+
 // New creates a new TokenSafe application with native OUMV capabilities.
 func New(configs ...AppConfig) *App {
 	return core.New(configs...)

@@ -1,7 +1,7 @@
 # Backend Agent Usability Benchmark (AUB) Report (Go)
 
 > **Scenario**: `order-processing-api`  
-> **Timestamp**: `2026-11-23T09:37:09Z`  
+> **Timestamp**: `2026-11-23T10:09:56Z`  
 > **Evaluation Mode**: Behavioral Test Oracle (12 Functional Acceptance Assertions)
 
 ---
@@ -42,14 +42,14 @@ $$\\text{AER} = \\frac{\\text{FYpT}_{\\text{TokenSafe}}}{\\text{FYpT}_{\\text{Va
 ## Functional Verification Breakdown (12 Assertions)
 
 ```
-[x] TC01_INITIAL_CATALOG: Initial catalog inspection & inventory check (0.04ms)
-[x] TC02_CREATE_PRODUCT: Create new product with validation (0.01ms)
+[x] TC01_INITIAL_CATALOG: Initial catalog inspection & inventory check (0.03ms)
+[x] TC02_CREATE_PRODUCT: Create new product with validation (0.03ms)
 [x] TC03_REJECT_INVALID_PRODUCT: Reject invalid product (negative price / validation failure) (0.01ms)
 [x] TC04_CREATE_ORDER_VALID: Create order with stock calculation & decrement (0.03ms)
 [x] TC05_REJECT_INSUFFICIENT_STOCK: Insufficient stock rejection (0.01ms)
 [x] TC06_REJECT_DUPLICATE_IDEMPOTENCY: Idempotent duplicate order key rejection (0.01ms)
-[x] TC07_QUERY_ORDER_BY_ID: Query order by ID & verify item structure (0.02ms)
-[x] TC08_PAY_ORDER: Pay order transition (PENDING -> PAID) (0.01ms)
+[x] TC07_QUERY_ORDER_BY_ID: Query order by ID & verify item structure (0.01ms)
+[x] TC08_PAY_ORDER: Pay order transition (PENDING -> PAID) (0.02ms)
 [x] TC09_SHIP_ORDER: Ship order transition (PAID -> SHIPPED) (0.01ms)
 [x] TC10_CANCEL_ORDER_AND_RESTOCK: Cancel order and verify stock replenishment (0.04ms)
 [x] TC11_REJECT_CANCEL_SHIPPED_ORDER: Reject cancellation of shipped order (0.01ms)

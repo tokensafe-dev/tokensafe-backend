@@ -1,8 +1,6 @@
 package tokensafe_go
 
 import (
-	"encoding/json"
-	"fmt"
 	"net/http"
 	"strconv"
 	"strings"
@@ -11,13 +9,13 @@ import (
 	"github.com/tokensafe-dev/tokensafe-backend/benchmark/sandboxes"
 )
 
-// TokenSafeApp encapsulates a TokenSafe-instrumented backend with OUMV runtime.
+// TokenSafeApp encapsulates a TokenSafe-instrumented backend with native OUMV capabilities.
 type TokenSafeApp struct {
 	App *tokensafe.App
 	DB  *sandboxes.MemoryDB
 }
 
-// NewTokenSafeApp creates a TokenSafe-instrumented app with dry-run rollback support.
+// NewTokenSafeApp creates a TokenSafe-instrumented app with native path-params, DTO validation, and dry-run rollback.
 func NewTokenSafeApp(db *sandboxes.MemoryDB) *TokenSafeApp {
 	if db == nil {
 		db = sandboxes.NewMemoryDB()
@@ -34,139 +32,106 @@ func NewTokenSafeApp(db *sandboxes.MemoryDB) *TokenSafeApp {
 		DB:  db,
 	}
 
-	// Middleware: Dry-run transaction rollback interceptor
-	app.Use(func(next http.Handler) http.Handler {
+	// 1. Transactional dry-run rollback interceptor
+	app.WithDryRunHook(func(next http.Handler) http.Handler {
 		return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
-			isDryRun := r.Header.Get("X-TokenSafe-Dry-Run") == "true"
-			var snap *sandboxes.MemoryDB
-			if isDryRun {
-				snap = db.Clone()
-			}
-
+			snap := db.Clone()
 			next.ServeHTTP(w, r)
-
-			if isDryRun && snap != nil {
-				db.Restore(snap)
-			}
+			db.Restore(snap)
 		})
 	})
 
-	// 1. Products
+	// 2. Products (Type-safe routing + PathValue)
 	app.Get("/api/products", func(c *tokensafe.Context) error {
-		cat := c.Request.URL.Query().Get("category")
-		return c.JSON(http.StatusOK, db.ListProducts(cat))
+		return c.JSON(http.StatusOK, db.ListProducts(c.Param("category")))
 	})
 
-	app.Get("/api/products/", func(c *tokensafe.Context) error {
-		path := c.Request.URL.Path
-		parts := strings.Split(strings.Trim(path, "/"), "/")
-		if len(parts) < 3 {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid product id"})
-		}
-		id, err := strconv.Atoi(parts[2])
+	app.Get("/api/products/{id}", func(c *tokensafe.Context) error {
+		id, err := strconv.Atoi(c.Param("id"))
 		if err != nil {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "invalid product id"})
+			return tokensafe.NewHTTPError(http.StatusBadRequest, "invalid product id")
 		}
 		p, ok := db.GetProduct(id)
 		if !ok {
-			return c.JSON(http.StatusNotFound, map[string]string{"error": "product not found"})
+			return tokensafe.NewHTTPError(http.StatusNotFound, "product not found")
 		}
 		return c.JSON(http.StatusOK, p)
 	})
 
-	app.Post("/api/products", func(c *tokensafe.Context) error {
-		var req sandboxes.ProductCreate
-		if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
-			return c.JSON(http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
-		}
+	tokensafe.Post(app, "/api/products", func(c *tokensafe.Context, req sandboxes.ProductCreate) (*sandboxes.Product, error) {
 		p, err := db.CreateProduct(req)
 		if err != nil {
-			return c.JSON(http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
+			return nil, tokensafe.NewHTTPError(http.StatusUnprocessableEntity, err.Error())
 		}
-		return c.JSON(http.StatusCreated, p)
+		c.Status(http.StatusCreated)
+		return p, nil
 	})
 
-	// 2. Orders
+	// 3. Orders (Type-safe endpoints + Automatic validation + Clean HTTPError mapping)
 	app.Get("/api/orders", func(c *tokensafe.Context) error {
 		return c.JSON(http.StatusOK, db.ListOrders())
 	})
 
-	app.Post("/api/orders", func(c *tokensafe.Context) error {
-		var req sandboxes.OrderCreate
-		if err := json.NewDecoder(c.Request.Body).Decode(&req); err != nil {
-			return c.JSON(http.StatusUnprocessableEntity, map[string]string{"error": err.Error()})
+	app.Get("/api/orders/{id}", func(c *tokensafe.Context) error {
+		orderID := c.Param("id")
+		o, ok := db.GetOrder(orderID)
+		if !ok {
+			return tokensafe.NewHTTPError(http.StatusNotFound, "order not found")
 		}
+		return c.JSON(http.StatusOK, o)
+	})
+
+	tokensafe.Post(app, "/api/orders", func(c *tokensafe.Context, req sandboxes.OrderCreate) (*sandboxes.OrderResponse, error) {
 		order, err := db.CreateOrder(req)
 		if err != nil {
 			errMsg := err.Error()
 			if strings.HasPrefix(errMsg, "CONFLICT:") {
-				return c.JSON(http.StatusConflict, map[string]string{"error": errMsg})
+				return nil, tokensafe.NewHTTPError(http.StatusConflict, errMsg)
 			}
 			if strings.HasPrefix(errMsg, "INSUFFICIENT_STOCK:") {
-				return c.JSON(http.StatusBadRequest, map[string]string{"error": errMsg})
+				return nil, tokensafe.NewHTTPError(http.StatusBadRequest, errMsg)
 			}
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": errMsg})
+			return nil, tokensafe.NewHTTPError(http.StatusBadRequest, errMsg)
 		}
-		return c.JSON(http.StatusCreated, order)
+		c.Status(http.StatusCreated)
+		return order, nil
 	})
 
-	// Sub-resource dispatcher for /api/orders/
-	ordersHandler := func(c *tokensafe.Context) error {
-		path := c.Request.URL.Path
-		parts := strings.Split(strings.Trim(path, "/"), "/")
-		if len(parts) < 3 {
-			return c.JSON(http.StatusBadRequest, map[string]string{"error": "missing order id"})
-		}
-		orderID := parts[2]
-
-		if c.Request.Method == http.MethodGet && len(parts) == 3 {
-			o, ok := db.GetOrder(orderID)
-			if !ok {
-				return c.JSON(http.StatusNotFound, map[string]string{"error": "order not found"})
+	app.Post("/api/orders/{id}/pay", func(c *tokensafe.Context) error {
+		orderID := c.Param("id")
+		order, err := db.PayOrder(orderID)
+		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				return tokensafe.NewHTTPError(http.StatusNotFound, err.Error())
 			}
-			return c.JSON(http.StatusOK, o)
+			return tokensafe.NewHTTPError(http.StatusBadRequest, err.Error())
 		}
+		return c.JSON(http.StatusOK, order)
+	})
 
-		if c.Request.Method == http.MethodPost && len(parts) == 4 {
-			action := parts[3]
-			switch action {
-			case "pay":
-				order, err := db.PayOrder(orderID)
-				if err != nil {
-					if strings.Contains(err.Error(), "not found") {
-						return c.JSON(http.StatusNotFound, map[string]string{"error": err.Error()})
-					}
-					return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
-				}
-				return c.JSON(http.StatusOK, order)
-			case "ship":
-				order, err := db.ShipOrder(orderID)
-				if err != nil {
-					if strings.Contains(err.Error(), "not found") {
-						return c.JSON(http.StatusNotFound, map[string]string{"error": err.Error()})
-					}
-					return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
-				}
-				return c.JSON(http.StatusOK, order)
-			case "cancel":
-				order, err := db.CancelOrder(orderID)
-				if err != nil {
-					if strings.Contains(err.Error(), "not found") {
-						return c.JSON(http.StatusNotFound, map[string]string{"error": err.Error()})
-					}
-					return c.JSON(http.StatusBadRequest, map[string]string{"error": err.Error()})
-				}
-				return c.JSON(http.StatusOK, order)
-			default:
-				return c.JSON(http.StatusNotFound, map[string]string{"error": fmt.Sprintf("unknown action %s", action)})
+	app.Post("/api/orders/{id}/ship", func(c *tokensafe.Context) error {
+		orderID := c.Param("id")
+		order, err := db.ShipOrder(orderID)
+		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				return tokensafe.NewHTTPError(http.StatusNotFound, err.Error())
 			}
+			return tokensafe.NewHTTPError(http.StatusBadRequest, err.Error())
 		}
+		return c.JSON(http.StatusOK, order)
+	})
 
-		return c.JSON(http.StatusNotFound, map[string]string{"error": "endpoint not found"})
-	}
-
-	app.Get("/api/orders/", ordersHandler)
-	app.Post("/api/orders/", ordersHandler)
+	app.Post("/api/orders/{id}/cancel", func(c *tokensafe.Context) error {
+		orderID := c.Param("id")
+		order, err := db.CancelOrder(orderID)
+		if err != nil {
+			if strings.Contains(err.Error(), "not found") {
+				return tokensafe.NewHTTPError(http.StatusNotFound, err.Error())
+			}
+			return tokensafe.NewHTTPError(http.StatusBadRequest, err.Error())
+		}
+		return c.JSON(http.StatusOK, order)
+	})
 
 	return tsApp
 }

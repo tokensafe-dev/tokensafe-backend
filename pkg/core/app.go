@@ -1,9 +1,13 @@
 package core
 
 import (
+	"bytes"
 	"database/sql"
+	"encoding/json"
 	"fmt"
+	"io"
 	"net/http"
+	"net/http/httptest"
 	"strings"
 	"sync"
 	"time"
@@ -44,6 +48,7 @@ type App struct {
 	db           *sql.DB
 	routes       []RouteEntry
 	middlewares  []func(http.Handler) http.Handler
+	dryRunHook   func(http.Handler) http.Handler
 	runtime      *oumv.Runtime
 	mux          *http.ServeMux
 	mu           sync.RWMutex
@@ -120,6 +125,14 @@ func (a *App) Use(mw func(http.Handler) http.Handler) *App {
 	return a
 }
 
+// WithDryRunHook registers a custom dry-run transaction or snapshot interceptor.
+func (a *App) WithDryRunHook(hook func(http.Handler) http.Handler) *App {
+	a.mu.Lock()
+	defer a.mu.Unlock()
+	a.dryRunHook = hook
+	return a
+}
+
 // Handle registers an arbitrary HTTP method and path with full schema metadata.
 func (a *App) Handle(method, path string, handler HandlerFunc, reqDTO, respDTO map[string]interface{}) {
 	a.mu.Lock()
@@ -142,6 +155,13 @@ func (a *App) Handle(method, path string, handler HandlerFunc, reqDTO, respDTO m
 	a.mux.HandleFunc(pattern, func(w http.ResponseWriter, r *http.Request) {
 		ctx := NewContext(w, r, a.db)
 		if err := handler(ctx); err != nil {
+			if httpErr, ok := err.(*HTTPError); ok {
+				_ = ctx.JSON(httpErr.StatusCode, map[string]interface{}{
+					"error":   httpErr.Message,
+					"details": httpErr.Details,
+				})
+				return
+			}
 			http.Error(w, err.Error(), http.StatusInternalServerError)
 		}
 	})
@@ -167,9 +187,67 @@ func (a *App) Delete(path string, handler HandlerFunc) {
 	a.Handle("DELETE", path, handler, nil, nil)
 }
 
+// SimulateResponse holds the result of an in-memory HTTP dispatch.
+type SimulateResponse struct {
+	Code   int
+	Header http.Header
+	Body   []byte
+}
+
+// JSON decodes the response body into target.
+func (s *SimulateResponse) JSON(target interface{}) error {
+	return json.Unmarshal(s.Body, target)
+}
+
+// String returns response body as string.
+func (s *SimulateResponse) String() string {
+	return string(s.Body)
+}
+
+// Simulate executes an in-memory HTTP request against the application without network overhead.
+func (a *App) Simulate(method, path string, body interface{}, headers ...map[string]string) *SimulateResponse {
+	var bodyReader io.Reader
+	if body != nil {
+		if b, ok := body.([]byte); ok {
+			bodyReader = bytes.NewReader(b)
+		} else if str, ok := body.(string); ok {
+			bodyReader = strings.NewReader(str)
+		} else {
+			b, _ := json.Marshal(body)
+			bodyReader = bytes.NewReader(b)
+		}
+	}
+
+	req := httptest.NewRequest(strings.ToUpper(method), path, bodyReader)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
+
+	for _, h := range headers {
+		for k, v := range h {
+			req.Header.Set(k, v)
+		}
+	}
+
+	rec := httptest.NewRecorder()
+	a.ServeHTTP(rec, req)
+
+	return &SimulateResponse{
+		Code:   rec.Code,
+		Header: rec.Header(),
+		Body:   rec.Body.Bytes(),
+	}
+}
+
 // ServeHTTP satisfies http.Handler interface.
 func (a *App) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	var handler http.Handler = a.mux
+
+	// If dry-run requested, apply dry-run hook if configured
+	if r.Header.Get("X-TokenSafe-Dry-Run") == "true" && a.dryRunHook != nil {
+		handler = a.dryRunHook(handler)
+	}
+
 	// Apply global middlewares in reverse order
 	for i := len(a.middlewares) - 1; i >= 0; i-- {
 		handler = a.middlewares[i](handler)
