@@ -27,9 +27,20 @@ func TestRuntimePillars(t *testing.T) {
 
 	rt := oumv.NewRuntime(oumv.Config{
 		Name:         "test-rt",
-		Version:      "0.2.0",
+		Version:      "0.3.0",
 		WorkspaceDir: tmpDir,
 		Handler:      mux,
+		Runtime: &oumv.RuntimeConfig{
+			Enabled:      true,
+			Environment:  oumv.EnvDevelopment,
+			WorkspaceDir: tmpDir,
+			Capabilities: oumv.CapabilitiesConfig{
+				Observe:    true,
+				Understand: true,
+				Mutate:     true,
+				Verify:     true,
+			},
+		},
 	})
 	rt.RegisterRoute("GET", "/api/v1/ping", "PingHandler")
 

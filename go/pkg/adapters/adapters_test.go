@@ -16,6 +16,7 @@ import (
 )
 
 func TestStdHTTPAdapter(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
 	rt := oumv.NewRuntime(oumv.Config{Name: "stdhttp-test"})
 	mux := stdhttp.NewServeMux(rt)
 
@@ -39,6 +40,7 @@ func TestStdHTTPAdapter(t *testing.T) {
 }
 
 func TestChiAdapter(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
 	rt := oumv.NewRuntime(oumv.Config{Name: "chi-test"})
 	r := chiRouter.NewRouter()
 
@@ -65,6 +67,7 @@ func TestChiAdapter(t *testing.T) {
 }
 
 func TestGinAdapter(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
 	gin.SetMode(gin.TestMode)
 	rt := oumv.NewRuntime(oumv.Config{Name: "gin-test"})
 	r := gin.New()

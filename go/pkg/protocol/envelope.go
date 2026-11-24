@@ -42,6 +42,20 @@ func NewErrorResponse(id interface{}, err *OumvError) *OumvResponse {
 	}
 }
 
+// NewRequest creates a JSON-RPC 2.0 request envelope.
+func NewRequest(id interface{}, method string, params interface{}) *OumvRequest {
+	req := &OumvRequest{
+		JSONRPC: "2.0",
+		ID:      id,
+		Method:  method,
+	}
+	if params != nil {
+		raw, _ := json.Marshal(params)
+		req.Params = raw
+	}
+	return req
+}
+
 // Validate ensures the request envelope conforms to JSON-RPC 2.0.
 func (r *OumvRequest) Validate() error {
 	if r.JSONRPC != "2.0" {

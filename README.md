@@ -197,7 +197,7 @@ go test -v ./...
 
 For Chi:
 ```go
-import chiAdapter "github.com/tokensafe-dev/tokensafe-backend/pkg/adapters/chi"
+import chiAdapter "github.com/tokensafe-dev/tokensafe-backend/go/pkg/adapters/chi"
 
 r := chi.NewRouter()
 // ... register routes ...
@@ -206,11 +206,62 @@ chiAdapter.Mount(r, rt)
 
 For standard `net/http`:
 ```go
-import stdAdapter "github.com/tokensafe-dev/tokensafe-backend/pkg/adapters/stdhttp"
+import stdAdapter "github.com/tokensafe-dev/tokensafe-backend/go/pkg/adapters/stdhttp"
 
 mux := http.NewServeMux()
 // ... register routes ...
 stdAdapter.Mount(mux, rt)
+```
+
+---
+
+## Production Safety & Runtime Lifecycle Hardening
+
+OUMV is an agent-native development interface designed to give AI coding agents deep introspection and verification capabilities (route catalogs, memory metrics, runtime causality, AST symbol extraction, and transactional dry-runs). Because development tools should never unintentionally expose application internals in production, `tokensafe-backend` enforces a strict **production fail-closed lifecycle**.
+
+### Lifecycle by Environment
+
+| Environment (`APP_ENV`) | Default State | Default Network Binding | Allowed Capabilities |
+|---|---|---|---|
+| `development` / `local` | **Enabled** | `127.0.0.1` (loopback) | Observe, Understand, Mutate, Verify |
+| `test` | **Disabled** | None | Explicitly configurable |
+| `staging` | **Disabled** | None | Read-only unless explicitly configured |
+| `production` | **Disabled** | None | Disabled (endpoint unmounted, returns 404) |
+| Missing / Unknown | **Disabled** | None | Treated strictly as production |
+
+### Configuration Reference
+
+```bash
+# Local Development (enabled by default when APP_ENV=development)
+export APP_ENV=development
+export TOKENSAFE_OUMV_ENABLED=true
+export TOKENSAFE_OUMV_HOST=127.0.0.1
+export TOKENSAFE_OUMV_PATH=/__oumv/rpc
+
+# Production (disabled by default; RPC endpoint returns 404)
+export APP_ENV=production
+export TOKENSAFE_OUMV_ENABLED=false
+
+# Staging (explicit opt-in with mandatory session token)
+export APP_ENV=staging
+export TOKENSAFE_OUMV_ENABLED=true
+export TOKENSAFE_OUMV_AUTH_TOKEN="your-secure-staging-token"
+export TOKENSAFE_OUMV_OBSERVE=true
+export TOKENSAFE_OUMV_UNDERSTAND=true
+export TOKENSAFE_OUMV_MUTATE=false # Mutate disabled by default in staging/prod
+```
+
+### Security Rules Enforced at Startup
+
+1. **Production Fail-Closed**: When `APP_ENV` is unset, missing, or unrecognized, the application defaults to `production` and OUMV is completely disabled. The endpoint `/__oumv/rpc` is not mounted, returning standard 404 responses.
+2. **Non-Loopback Protection**: If `TOKENSAFE_OUMV_HOST` is bound to a non-loopback interface (e.g. `0.0.0.0`), startup will immediately fail unless `TOKENSAFE_OUMV_AUTH_TOKEN` is configured.
+3. **No Wildcard CORS with Auth**: Wildcard CORS (`*`) is strictly rejected when authentication is required or in production environments.
+4. **Path Traversal & Credential Redaction**: File inspection (`getSource`) and mutations (`applyEdit`) validate workspace boundaries, blocking path traversal (`../`) and access to sensitive files (`.env`, `.git`, SSH keys).
+
+Startup log in production:
+```text
+🔒 OUMV runtime disabled (environment: production)
+🚀 TokenSafe backend application listening on :8080
 ```
 
 ---

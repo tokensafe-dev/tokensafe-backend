@@ -24,6 +24,16 @@ func setupTestDispatcher() *transport.Dispatcher {
 		Name:    "test-backend",
 		Version: "1.0.0",
 		Handler: mux,
+		Runtime: &oumv.RuntimeConfig{
+			Enabled:      true,
+			Environment:  oumv.EnvDevelopment,
+			Capabilities: oumv.CapabilitiesConfig{
+				Observe:    true,
+				Understand: true,
+				Mutate:     true,
+				Verify:     true,
+			},
+		},
 	})
 	rt.RegisterRoute("GET", "/health", "healthHandler")
 

@@ -24,6 +24,7 @@ type TestItemResp struct {
 }
 
 func TestCoreFrameworkLifecycle(t *testing.T) {
+	t.Setenv("APP_ENV", "development")
 	app := tokensafe.New(tokensafe.AppConfig{
 		Name:    "core-test-app",
 		Version: "1.0.0",

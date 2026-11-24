@@ -19,8 +19,7 @@ const (
 )
 
 // DetectEnvironment inspects APP_ENV, ENVIRONMENT, or GO_ENV.
-// If unset, it detects whether it is running under test (EnvTest) or local dev (EnvDevelopment).
-// Explicit "production" or unrecognized values are treated as EnvProduction (fail-closed).
+// If unset, empty, or unknown, it strictly defaults to EnvProduction (fail-closed).
 func DetectEnvironment() Environment {
 	raw := os.Getenv("APP_ENV")
 	if raw == "" {
@@ -40,13 +39,8 @@ func DetectEnvironment() Environment {
 		return EnvStaging
 	case "production", "prod":
 		return EnvProduction
-	case "":
-		if len(os.Args) > 0 && (strings.HasSuffix(os.Args[0], ".test") || strings.Contains(os.Args[0], "/_test/")) {
-			return EnvTest
-		}
-		return EnvDevelopment
 	default:
-		// Default safe: any unrecognized environment is treated as production
+		// Default safe: any unrecognized, missing, or empty value is treated as production
 		return EnvProduction
 	}
 }
@@ -127,7 +121,25 @@ func ResolveRuntimeConfig(base *RuntimeConfig) (RuntimeConfig, error) {
 		},
 	}
 
-	// Apply base config if provided
+	// 1. Initial defaults based on detected environment
+	switch env {
+	case EnvDevelopment:
+		cfg.Enabled = true
+		cfg.Transport.Enabled = true
+		cfg.Capabilities.Observe = true
+		cfg.Capabilities.Understand = true
+		cfg.Capabilities.Mutate = true
+		cfg.Capabilities.Verify = true
+	case EnvTest:
+		// In Test environment, disabled unless explicitly configured
+		cfg.Enabled = false
+		cfg.Transport.Enabled = false
+	default: // Staging or Production
+		cfg.Enabled = false
+		cfg.Transport.Enabled = false
+	}
+
+	// 2. Apply programmatic base config overrides if provided
 	if base != nil {
 		if base.Environment != "" {
 			cfg.Environment = base.Environment
@@ -147,32 +159,27 @@ func ResolveRuntimeConfig(base *RuntimeConfig) (RuntimeConfig, error) {
 		if base.Transport.Path != "" {
 			cfg.Transport.Path = base.Transport.Path
 		}
-		cfg.Transport.Port = base.Transport.Port
-		cfg.Security.AuthToken = base.Security.AuthToken
-		cfg.Security.AuthenticationRequired = base.Security.AuthenticationRequired
+		if base.Transport.Port != 0 {
+			cfg.Transport.Port = base.Transport.Port
+		}
+		if base.Enabled {
+			cfg.Enabled = true
+			cfg.Transport.Enabled = base.Transport.Enabled
+		}
+		if base.Security.AuthToken != "" {
+			cfg.Security.AuthToken = base.Security.AuthToken
+			cfg.Security.AuthenticationRequired = true
+		}
+		if base.Security.AuthenticationRequired {
+			cfg.Security.AuthenticationRequired = true
+		}
 		if len(base.Security.AllowedOrigins) > 0 {
 			cfg.Security.AllowedOrigins = append([]string{}, base.Security.AllowedOrigins...)
 		}
-		cfg.Capabilities = base.Capabilities
-	}
-
-	// 1. Resolve Enabled state
-	// Environment defaults:
-	// - Development: Enabled by default
-	// - Test: Disabled by default unless explicitly configured
-	// - Staging: Disabled by default
-	// - Production: Disabled by default
-	switch cfg.Environment {
-	case EnvDevelopment, EnvTest:
-		cfg.Enabled = true
-		cfg.Transport.Enabled = true
-		cfg.Capabilities.Observe = true
-		cfg.Capabilities.Understand = true
-		cfg.Capabilities.Mutate = true
-		cfg.Capabilities.Verify = true
-	default: // Staging or Production
-		cfg.Enabled = false
-		cfg.Transport.Enabled = false
+		// If base explicitly provided non-zero capabilities, adopt them
+		if base.Capabilities != (CapabilitiesConfig{}) {
+			cfg.Capabilities = base.Capabilities
+		}
 	}
 
 	// Override with TOKENSAFE_OUMV_ENABLED if set
