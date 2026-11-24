@@ -109,6 +109,16 @@ func NewMethodNotFoundError(method string) *OumvError {
 	}
 }
 
+func NewPermissionDeniedError(msg string) *OumvError {
+	if msg == "" {
+		msg = "PERMISSION_DENIED: operation or capability is not permitted by policy"
+	}
+	return &OumvError{
+		Code:    ErrPermissionDenied,
+		Message: msg,
+	}
+}
+
 func NewInvalidParamsError(msg string) *OumvError {
 	return &OumvError{
 		Code:    ErrInvalidParams,

@@ -16,9 +16,16 @@ type Options struct {
 	RPCPath string // Default: "/__oumv/rpc"
 }
 
-// Mount auto-discovers all routes in the Chi router and mounts the OUMV JSON-RPC endpoint.
+// Mount auto-discovers all routes in the Chi router and mounts the OUMV JSON-RPC endpoint if enabled.
 func Mount(r chi.Router, rt *oumv.Runtime, opts ...Options) error {
-	rpcPath := "/__oumv/rpc"
+	if rt == nil || !rt.IsEnabled() || !rt.Config().Transport.Enabled {
+		return nil
+	}
+
+	rpcPath := rt.Config().Transport.Path
+	if rpcPath == "" {
+		rpcPath = "/__oumv/rpc"
+	}
 	if len(opts) > 0 && opts[0].RPCPath != "" {
 		rpcPath = opts[0].RPCPath
 	}
@@ -55,7 +62,13 @@ func Mount(r chi.Router, rt *oumv.Runtime, opts ...Options) error {
 
 	// 2. Mount OUMV JSON-RPC endpoint
 	dispatcher := transport.NewDispatcher(rt)
-	r.Handle(rpcPath, transport.NewHTTPHandler(dispatcher))
+	httpOpts := transport.HTTPOptions{
+		AuthToken:              rt.Config().Security.AuthToken,
+		AuthenticationRequired: rt.Config().Security.AuthenticationRequired,
+		AllowedOrigins:         rt.Config().Security.AllowedOrigins,
+		Disabled:               false,
+	}
+	r.Handle(rpcPath, transport.NewHTTPHandler(dispatcher, httpOpts))
 
 	return nil
 }

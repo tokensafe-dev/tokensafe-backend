@@ -28,6 +28,7 @@ type Config struct {
 	Version      string
 	WorkspaceDir string
 	Handler      http.Handler
+	Runtime      *RuntimeConfig
 }
 
 // Runtime implements protocol.OumvRuntimeAdapter.
@@ -40,7 +41,45 @@ type Runtime struct {
 	handler      http.Handler
 	errCount1m   int64
 	patcher      *mutate.Patcher
+	config       RuntimeConfig
 	mu           sync.RWMutex
+}
+
+// isSensitivePath checks if a path references secrets, keys, or VCS internals.
+func isSensitivePath(path string) bool {
+	base := strings.ToLower(filepath.Base(path))
+	if strings.HasPrefix(base, ".env") || base == ".git" || strings.HasPrefix(base, "id_rsa") || strings.HasPrefix(base, "id_ed25519") || strings.HasSuffix(base, ".pem") || strings.HasSuffix(base, ".key") {
+		return true
+	}
+	clean := filepath.ToSlash(path)
+	if strings.Contains(clean, "/.git/") || strings.Contains(clean, "/.tokensafe/keys") {
+		return true
+	}
+	return false
+}
+
+// validateWorkspacePath ensures targetPath stays strictly within workspace boundary and does not access secrets.
+func validateWorkspacePath(workspaceDir, targetPath string) (string, *protocol.OumvError) {
+	if strings.TrimSpace(targetPath) == "" {
+		return "", protocol.NewInvalidParamsError("path is required")
+	}
+	cleanPath := filepath.Clean(filepath.Join(workspaceDir, targetPath))
+	absWorkspace, err := filepath.Abs(workspaceDir)
+	if err != nil {
+		return "", &protocol.OumvError{Code: protocol.ErrInternalError, Message: "failed to resolve workspace directory"}
+	}
+	absTarget, err := filepath.Abs(cleanPath)
+	if err != nil {
+		return "", &protocol.OumvError{Code: protocol.ErrInternalError, Message: "failed to resolve target path"}
+	}
+	rel, err := filepath.Rel(absWorkspace, absTarget)
+	if err != nil || strings.HasPrefix(rel, "..") || rel == ".." {
+		return "", protocol.NewSecurityViolationError(fmt.Sprintf("path traversal blocked: %q escapes workspace boundary", targetPath), nil)
+	}
+	if isSensitivePath(cleanPath) {
+		return "", protocol.NewSecurityViolationError(fmt.Sprintf("access to sensitive credential or environment file blocked: %q", targetPath), nil)
+	}
+	return cleanPath, nil
 }
 
 // NewRuntime initializes a new OUMV backend runtime adapter.
@@ -49,10 +88,28 @@ func NewRuntime(cfg Config) *Runtime {
 		cfg.Name = "tokensafe-backend"
 	}
 	if cfg.Version == "" {
-		cfg.Version = "0.2.0"
+		cfg.Version = "0.3.0"
 	}
 	if cfg.WorkspaceDir == "" {
 		cfg.WorkspaceDir = "."
+	}
+
+	var rCfg RuntimeConfig
+	if cfg.Runtime != nil {
+		rCfg = *cfg.Runtime
+	} else {
+		base := &RuntimeConfig{
+			Name:         cfg.Name,
+			Version:      cfg.Version,
+			WorkspaceDir: cfg.WorkspaceDir,
+		}
+		resolved, err := ResolveRuntimeConfig(base)
+		if err == nil {
+			rCfg = resolved
+		} else {
+			// Fail safe: disabled if resolution errors out
+			rCfg = RuntimeConfig{Enabled: false}
+		}
 	}
 
 	return &Runtime{
@@ -63,11 +120,14 @@ func NewRuntime(cfg Config) *Runtime {
 		handler:      cfg.Handler,
 		patcher:      mutate.NewPatcher(cfg.WorkspaceDir),
 		routes:       make([]protocol.RouteInfo, 0),
+		config:       rCfg,
 	}
 }
 
-func (r *Runtime) Name() string    { return r.name }
-func (r *Runtime) Version() string { return r.version }
+func (r *Runtime) Name() string           { return r.name }
+func (r *Runtime) Version() string        { return r.version }
+func (r *Runtime) Config() RuntimeConfig  { return r.config }
+func (r *Runtime) IsEnabled() bool        { return r.config.Enabled }
 
 // RegisterRoute registers a route in the L1 surface catalog.
 func (r *Runtime) RegisterRoute(method, path, handlerName string, middlewares ...string) {
@@ -83,18 +143,36 @@ func (r *Runtime) RegisterRoute(method, path, handlerName string, middlewares ..
 
 // Handshake performs session initialization and capability negotiation.
 func (r *Runtime) Handshake(ctx context.Context, params *protocol.OumvHandshakeParams) (*protocol.OumvHandshakeResult, *protocol.OumvError) {
+	caps := protocol.DefaultBackendCapabilities()
+	if !r.config.Capabilities.Observe {
+		caps.Observe = protocol.ObserveCapability{}
+	}
+	if !r.config.Capabilities.Understand {
+		caps.Understand = protocol.UnderstandCapability{}
+	}
+	if !r.config.Capabilities.Mutate {
+		caps.Mutate = protocol.MutateCapability{}
+	}
+	if !r.config.Capabilities.Verify {
+		caps.Verify = protocol.VerifyCapability{}
+	}
+
 	return &protocol.OumvHandshakeResult{
 		ProtocolVersion: protocol.CurrentProtocolVersion,
 		RuntimeInfo: protocol.RuntimeInfo{
 			Name:    r.name,
 			Version: r.version,
 		},
-		Capabilities: protocol.DefaultBackendCapabilities(),
+		Capabilities: caps,
 	}, nil
 }
 
 // Observe executes Pillar 1: Progressive Context Disclosure (L0 to L4).
 func (r *Runtime) Observe(ctx context.Context, params *protocol.ObserveParams) (*protocol.ObserveResult, *protocol.OumvError) {
+	if !r.config.Capabilities.Observe {
+		return nil, protocol.NewPermissionDeniedError("observe capability is disabled by policy")
+	}
+
 	level := params.Level
 	if level == "" {
 		level = protocol.LevelL0Pulse
@@ -156,6 +234,10 @@ func (r *Runtime) Observe(ctx context.Context, params *protocol.ObserveParams) (
 
 // Understand executes Pillar 2: Runtime Causality and Impact Analysis.
 func (r *Runtime) Understand(ctx context.Context, params *protocol.UnderstandParams) (*protocol.UnderstandResult, *protocol.OumvError) {
+	if !r.config.Capabilities.Understand {
+		return nil, protocol.NewPermissionDeniedError("understand capability is disabled by policy")
+	}
+
 	switch params.Query {
 	case protocol.QueryImpact:
 		return &protocol.UnderstandResult{
@@ -188,11 +270,15 @@ func (r *Runtime) Understand(ctx context.Context, params *protocol.UnderstandPar
 
 // GetSource executes Pillar 3A: Retrieves symbol source with SHA256 OCC version token.
 func (r *Runtime) GetSource(ctx context.Context, params *protocol.GetSourceParams) (*protocol.GetSourceResult, *protocol.OumvError) {
-	if params.Path == "" {
-		return nil, protocol.NewInvalidParamsError("Path is required")
+	if !r.config.Capabilities.Mutate {
+		return nil, protocol.NewPermissionDeniedError("mutate capability is disabled by policy")
 	}
 
-	cleanPath := filepath.Clean(filepath.Join(r.workspaceDir, params.Path))
+	cleanPath, pathErr := validateWorkspacePath(r.workspaceDir, params.Path)
+	if pathErr != nil {
+		return nil, pathErr
+	}
+
 	data, err := os.ReadFile(cleanPath)
 	if err != nil {
 		return nil, protocol.NewTargetNotFoundError(params.Path)
@@ -239,6 +325,15 @@ func (r *Runtime) GetSource(ctx context.Context, params *protocol.GetSourceParam
 
 // ApplyEdit executes Pillar 3B: Applies source edit with OCC and pre-flight syntax checks.
 func (r *Runtime) ApplyEdit(ctx context.Context, params *protocol.ApplyEditParams) (*protocol.ApplyEditResult, *protocol.OumvError) {
+	if !r.config.Capabilities.Mutate {
+		return nil, protocol.NewPermissionDeniedError("mutate capability is disabled by policy")
+	}
+
+	cleanPath, pathErr := validateWorkspacePath(r.workspaceDir, params.Path)
+	if pathErr != nil {
+		return nil, pathErr
+	}
+
 	// If a specific symbol is targeted, use surgical AST patcher
 	if params.Symbol != "" && r.patcher != nil {
 		patchRes, patchErr := r.patcher.ApplySymbolPatch(params.Path, params.Symbol, params.Replacement, params.ExpectedVersion)
@@ -253,7 +348,6 @@ func (r *Runtime) ApplyEdit(ctx context.Context, params *protocol.ApplyEditParam
 		}, nil
 	}
 
-	cleanPath := filepath.Clean(filepath.Join(r.workspaceDir, params.Path))
 	currentData, err := os.ReadFile(cleanPath)
 	if err != nil {
 		return nil, protocol.NewTargetNotFoundError(params.Path)
@@ -301,6 +395,9 @@ func (r *Runtime) ApplyEdit(ctx context.Context, params *protocol.ApplyEditParam
 
 // Verify executes Pillar 4: Sub-millisecond action verification via in-memory httptest.
 func (r *Runtime) Verify(ctx context.Context, params *protocol.VerifyParams) (*protocol.VerifyResult, *protocol.OumvError) {
+	if !r.config.Capabilities.Verify {
+		return nil, protocol.NewPermissionDeniedError("verify capability is disabled by policy")
+	}
 	if r.handler == nil {
 		return nil, protocol.NewUnsupportedCapabilityError("no active HTTP handler configured for in-memory verification")
 	}

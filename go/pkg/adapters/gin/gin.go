@@ -11,9 +11,16 @@ type Options struct {
 	RPCPath string // Default: "/__oumv/rpc"
 }
 
-// Mount auto-discovers all routes in the Gin engine and mounts the OUMV JSON-RPC endpoint.
+// Mount auto-discovers all routes in the Gin engine and mounts the OUMV JSON-RPC endpoint if enabled.
 func Mount(r *gin.Engine, rt *oumv.Runtime, opts ...Options) {
-	rpcPath := "/__oumv/rpc"
+	if rt == nil || !rt.IsEnabled() || !rt.Config().Transport.Enabled {
+		return
+	}
+
+	rpcPath := rt.Config().Transport.Path
+	if rpcPath == "" {
+		rpcPath = "/__oumv/rpc"
+	}
 	if len(opts) > 0 && opts[0].RPCPath != "" {
 		rpcPath = opts[0].RPCPath
 	}
@@ -28,7 +35,13 @@ func Mount(r *gin.Engine, rt *oumv.Runtime, opts ...Options) {
 
 	// 2. Mount OUMV JSON-RPC endpoint
 	dispatcher := transport.NewDispatcher(rt)
-	handler := transport.NewHTTPHandler(dispatcher)
+	httpOpts := transport.HTTPOptions{
+		AuthToken:              rt.Config().Security.AuthToken,
+		AuthenticationRequired: rt.Config().Security.AuthenticationRequired,
+		AllowedOrigins:         rt.Config().Security.AllowedOrigins,
+		Disabled:               false,
+	}
+	handler := transport.NewHTTPHandler(dispatcher, httpOpts)
 
 	r.Any(rpcPath, gin.WrapH(handler))
 }

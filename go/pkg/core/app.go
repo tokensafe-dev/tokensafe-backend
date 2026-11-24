@@ -37,28 +37,30 @@ type AppConfig struct {
 	WorkspaceDir string
 	RPCPath      string // Default: "/__oumv/rpc"
 	DB           *sql.DB
+	OUMV         *oumv.RuntimeConfig
 }
 
 // App is the first-class agent-native Go backend framework.
 type App struct {
-	name         string
-	version      string
-	workspaceDir string
-	rpcPath      string
-	db           *sql.DB
-	routes       []RouteEntry
-	middlewares  []func(http.Handler) http.Handler
-	dryRunHook   func(http.Handler) http.Handler
-	runtime      *oumv.Runtime
-	mux          *http.ServeMux
-	mu           sync.RWMutex
+	name          string
+	version       string
+	workspaceDir  string
+	rpcPath       string
+	db            *sql.DB
+	routes        []RouteEntry
+	middlewares   []func(http.Handler) http.Handler
+	dryRunHook    func(http.Handler) http.Handler
+	runtime       *oumv.Runtime
+	runtimeConfig oumv.RuntimeConfig
+	mux           *http.ServeMux
+	mu            sync.RWMutex
 }
 
 // New creates a new TokenSafe application with native OUMV capabilities.
 func New(configs ...AppConfig) *App {
 	cfg := AppConfig{
 		Name:         "tokensafe-app",
-		Version:      "0.2.0",
+		Version:      "0.3.0",
 		WorkspaceDir: ".",
 		RPCPath:      "/__oumv/rpc",
 	}
@@ -76,6 +78,7 @@ func New(configs ...AppConfig) *App {
 			cfg.RPCPath = configs[0].RPCPath
 		}
 		cfg.DB = configs[0].DB
+		cfg.OUMV = configs[0].OUMV
 	}
 
 	app := &App{
@@ -89,17 +92,46 @@ func New(configs ...AppConfig) *App {
 		mux:          http.NewServeMux(),
 	}
 
+	// Resolve OUMV Runtime configuration
+	var baseCfg *oumv.RuntimeConfig
+	if cfg.OUMV != nil {
+		baseCfg = cfg.OUMV
+	} else {
+		baseCfg = &oumv.RuntimeConfig{
+			Name:         cfg.Name,
+			Version:      cfg.Version,
+			WorkspaceDir: cfg.WorkspaceDir,
+			Transport: oumv.TransportConfig{
+				Path: cfg.RPCPath,
+			},
+		}
+	}
+	rCfg, err := oumv.ResolveRuntimeConfig(baseCfg)
+	if err != nil {
+		panic(fmt.Sprintf("OUMV configuration error: %v", err))
+	}
+	app.runtimeConfig = rCfg
+
 	// Initialize internal OUMV runtime
 	app.runtime = oumv.NewRuntime(oumv.Config{
 		Name:         cfg.Name,
 		Version:      cfg.Version,
 		WorkspaceDir: cfg.WorkspaceDir,
 		Handler:      app,
+		Runtime:      &rCfg,
 	})
 
-	// Mount OUMV RPC endpoint
-	dispatcher := transport.NewDispatcher(app.runtime)
-	app.mux.Handle(app.rpcPath, transport.NewHTTPHandler(dispatcher))
+	// Mount OUMV RPC endpoint ONLY when enabled and transport is active
+	if rCfg.Enabled && rCfg.Transport.Enabled {
+		dispatcher := transport.NewDispatcher(app.runtime)
+		httpOpts := transport.HTTPOptions{
+			AuthToken:              rCfg.Security.AuthToken,
+			AuthenticationRequired: rCfg.Security.AuthenticationRequired,
+			AllowedOrigins:         rCfg.Security.AllowedOrigins,
+			Disabled:               false,
+		}
+		app.mux.Handle(app.rpcPath, transport.NewHTTPHandler(dispatcher, httpOpts))
+	}
 
 	return app
 }
@@ -107,6 +139,16 @@ func New(configs ...AppConfig) *App {
 // Runtime returns the internal OUMV runtime adapter.
 func (a *App) Runtime() *oumv.Runtime {
 	return a.runtime
+}
+
+// OUMVConfig returns the resolved OUMV runtime configuration.
+func (a *App) OUMVConfig() oumv.RuntimeConfig {
+	return a.runtimeConfig
+}
+
+// IsOUMVEnabled returns whether OUMV is active in this process.
+func (a *App) IsOUMVEnabled() bool {
+	return a.runtimeConfig.Enabled
 }
 
 // WithDB attaches a database connection to the application.
@@ -264,8 +306,13 @@ func (a *App) Run(addr string) error {
 		WriteTimeout: 15 * time.Second,
 	}
 
-	fmt.Printf("🚀 TokenSafe backend application listening on %s\n", addr)
-	fmt.Printf("⚡ OUMV JSON-RPC live runtime active on %s%s\n", addr, a.rpcPath)
+	if a.runtimeConfig.Enabled && a.runtimeConfig.Transport.Enabled {
+		fmt.Printf("🚀 TokenSafe backend application listening on %s\n", addr)
+		fmt.Printf("⚡ OUMV JSON-RPC live runtime active on %s%s (environment: %s)\n", addr, a.rpcPath, a.runtimeConfig.Environment)
+	} else {
+		fmt.Printf("🔒 OUMV runtime disabled (environment: %s)\n", a.runtimeConfig.Environment)
+		fmt.Printf("🚀 TokenSafe backend application listening on %s\n", addr)
+	}
 	return server.ListenAndServe()
 }
 

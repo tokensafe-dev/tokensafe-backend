@@ -59,11 +59,23 @@ func (m *ServeMux) registerPattern(pattern string) {
 	}
 }
 
-// Mount mounts the OUMV JSON-RPC endpoint (default: /__oumv/rpc) onto the mux.
+// Mount mounts the OUMV JSON-RPC endpoint (default: /__oumv/rpc) onto the mux if enabled.
 func (m *ServeMux) Mount(rpcPath string) {
+	if m.runtime == nil || !m.runtime.IsEnabled() || !m.runtime.Config().Transport.Enabled {
+		return
+	}
+	if rpcPath == "" {
+		rpcPath = m.runtime.Config().Transport.Path
+	}
 	if rpcPath == "" {
 		rpcPath = "/__oumv/rpc"
 	}
 	dispatcher := transport.NewDispatcher(m.runtime)
-	m.ServeMux.Handle(rpcPath, transport.NewHTTPHandler(dispatcher))
+	httpOpts := transport.HTTPOptions{
+		AuthToken:              m.runtime.Config().Security.AuthToken,
+		AuthenticationRequired: m.runtime.Config().Security.AuthenticationRequired,
+		AllowedOrigins:         m.runtime.Config().Security.AllowedOrigins,
+		Disabled:               false,
+	}
+	m.ServeMux.Handle(rpcPath, transport.NewHTTPHandler(dispatcher, httpOpts))
 }
