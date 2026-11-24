@@ -1,0 +1,463 @@
+{
+  "scenario": "order-processing-api",
+  "timestamp": "2026-11-23T05:11:50.456023+00:00",
+  "vanilla": {
+    "stack": "vanilla",
+    "scenario": "order-processing-api",
+    "total_turns": 6,
+    "input_tokens": 29000,
+    "output_tokens": 4370,
+    "total_tokens": 33370,
+    "context_slope": 652,
+    "wall_clock_seconds": 46.5,
+    "passed_assertions_count": 12,
+    "total_assertions_count": 12,
+    "error_count": 4,
+    "regression_count": 1,
+    "db_dirty_records": 18,
+    "self_recovery_rate": 25,
+    "functional_yield_per_token": 0.3596,
+    "cost_usd": 0.1526,
+    "cost_yield": 78.64,
+    "turns": [
+      {
+        "turn": 1,
+        "stack": "vanilla",
+        "input_tokens": 3220,
+        "output_tokens": 740,
+        "total_tokens": 3960,
+        "tool_calls": [
+          {
+            "name": "read_file",
+            "args": {
+              "path": "sandboxes/models.py"
+            },
+            "duration_ms": 35.0,
+            "output_summary": null,
+            "is_error": false
+          },
+          {
+            "name": "read_file",
+            "args": {
+              "path": "sandboxes/database.py"
+            },
+            "duration_ms": 40.0,
+            "output_summary": null,
+            "is_error": false
+          },
+          {
+            "name": "read_file",
+            "args": {
+              "path": "sandboxes/app.py"
+            },
+            "duration_ms": 55.0,
+            "output_summary": null,
+            "is_error": false
+          },
+          {
+            "name": "edit_file",
+            "args": {
+              "path": "sandboxes/app.py"
+            },
+            "duration_ms": 65.0,
+            "output_summary": null,
+            "is_error": false
+          },
+          {
+            "name": "run_command",
+            "args": {
+              "command": "pytest tests/test_orders.py"
+            },
+            "duration_ms": 3800.0,
+            "output_summary": null,
+            "is_error": true
+          }
+        ],
+        "duration_ms": 7800.0,
+        "has_syntax_error": true,
+        "has_type_error": false,
+        "has_runtime_error": false,
+        "error_message": "SyntaxError: invalid syntax in routes/orders.py:58 (misplaced parenthesis in route decorator)",
+        "passed_assertions": [
+          "TC01_INITIAL_CATALOG"
+        ],
+        "regressions": [],
+        "recovered_from_previous_error": false,
+        "db_dirty_records": 1
+      },
+      {
+        "turn": 2,
+        "stack": "vanilla",
+        "input_tokens": 3840,
+        "output_tokens": 620,
+        "total_tokens": 4460,
+        "tool_calls": [
+          {
+            "name": "read_file",
+            "args": {
+              "path": "sandboxes/app.py"
+            },
+            "duration_ms": 45.0,
+            "output_summary": null,
+            "is_error": false
+          },
+          {
+            "name": "edit_file",
+            "args": {
+              "path": "sandboxes/app.py"
+            },
+            "duration_ms": 50.0,
+            "output_summary": null,
+            "is_error": false
+          },
+          {
+            "name": "run_command",
+            "args": {
+              "command": "pytest tests/test_orders.py"
+            },
+            "duration_ms": 4100.0,
+            "output_summary": null,
+            "is_error": true
+          }
+        ],
+        "duration_ms": 6900.0,
+        "has_syntax_error": false,
+        "has_type_error": false,
+        "has_runtime_error": true,
+        "error_message": "IntegrityError: UNIQUE constraint failed: products.id (prior test left contaminated DB rows)",
+        "passed_assertions": [
+          "TC01_INITIAL_CATALOG",
+          "TC02_CREATE_PRODUCT"
+        ],
+        "regressions": [],
+        "recovered_from_previous_error": false,
+        "db_dirty_records": 4
+      },
+      {
+        "turn": 3,
+        "stack": "vanilla",
+        "input_tokens": 4450,
+        "output_tokens": 710,
+        "total_tokens": 5160,
+        "tool_calls": [
+          {
+            "name": "read_file",
+            "args": {
+              "path": "sandboxes/database.py"
+            },
+            "duration_ms": 35.0,
+            "output_summary": null,
+            "is_error": false
+          },
+          {
+            "name": "edit_file",
+            "args": {
+              "path": "sandboxes/database.py"
+            },
+            "duration_ms": 45.0,
+            "output_summary": null,
+            "is_error": false
+          },
+          {
+            "name": "run_command",
+            "args": {
+              "command": "pytest tests/test_orders.py"
+            },
+            "duration_ms": 3900.0,
+            "output_summary": null,
+            "is_error": true
+          }
+        ],
+        "duration_ms": 8200.0,
+        "has_syntax_error": false,
+        "has_type_error": true,
+        "has_runtime_error": false,
+        "error_message": "ValidationError: OrderCreate.items expected List[OrderItemRequest] but got string representation",
+        "passed_assertions": [
+          "TC01_INITIAL_CATALOG",
+          "TC02_CREATE_PRODUCT",
+          "TC03_REJECT_INVALID_PRODUCT"
+        ],
+        "regressions": [],
+        "recovered_from_previous_error": false,
+        "db_dirty_records": 7
+      },
+      {
+        "turn": 4,
+        "stack": "vanilla",
+        "input_tokens": 5120,
+        "output_tokens": 780,
+        "total_tokens": 5900,
+        "tool_calls": [
+          {
+            "name": "read_file",
+            "args": {
+              "path": "sandboxes/models.py"
+            },
+            "duration_ms": 40.0,
+            "output_summary": null,
+            "is_error": false
+          },
+          {
+            "name": "edit_file",
+            "args": {
+              "path": "sandboxes/app.py"
+            },
+            "duration_ms": 60.0,
+            "output_summary": null,
+            "is_error": false
+          },
+          {
+            "name": "run_command",
+            "args": {
+              "command": "pytest tests/test_orders.py"
+            },
+            "duration_ms": 4400.0,
+            "output_summary": null,
+            "is_error": true
+          }
+        ],
+        "duration_ms": 8600.0,
+        "has_syntax_error": false,
+        "has_type_error": false,
+        "has_runtime_error": true,
+        "error_message": "DetachedInstanceError: Parent instance <OrderDB> is not bound to a Session (Regression broke TC02)",
+        "passed_assertions": [
+          "TC01_INITIAL_CATALOG",
+          "TC03_REJECT_INVALID_PRODUCT",
+          "TC05_REJECT_INSUFFICIENT_STOCK"
+        ],
+        "regressions": [
+          "TC02_CREATE_PRODUCT"
+        ],
+        "recovered_from_previous_error": false,
+        "db_dirty_records": 11
+      },
+      {
+        "turn": 5,
+        "stack": "vanilla",
+        "input_tokens": 5890,
+        "output_tokens": 820,
+        "total_tokens": 6710,
+        "tool_calls": [
+          {
+            "name": "read_file",
+            "args": {
+              "path": "sandboxes/app.py"
+            },
+            "duration_ms": 50.0,
+            "output_summary": null,
+            "is_error": false
+          },
+          {
+            "name": "edit_file",
+            "args": {
+              "path": "sandboxes/app.py"
+            },
+            "duration_ms": 55.0,
+            "output_summary": null,
+            "is_error": false
+          },
+          {
+            "name": "run_command",
+            "args": {
+              "command": "pytest tests/test_orders.py"
+            },
+            "duration_ms": 4200.0,
+            "output_summary": null,
+            "is_error": false
+          }
+        ],
+        "duration_ms": 7900.0,
+        "has_syntax_error": false,
+        "has_type_error": false,
+        "has_runtime_error": false,
+        "error_message": null,
+        "passed_assertions": [
+          "TC01_INITIAL_CATALOG",
+          "TC02_CREATE_PRODUCT",
+          "TC03_REJECT_INVALID_PRODUCT",
+          "TC04_CREATE_ORDER_VALID",
+          "TC05_REJECT_INSUFFICIENT_STOCK",
+          "TC06_REJECT_DUPLICATE_IDEMPOTENCY",
+          "TC07_QUERY_ORDER_BY_ID",
+          "TC08_PAY_ORDER",
+          "TC09_SHIP_ORDER"
+        ],
+        "regressions": [],
+        "recovered_from_previous_error": true,
+        "db_dirty_records": 15
+      },
+      {
+        "turn": 6,
+        "stack": "vanilla",
+        "input_tokens": 6480,
+        "output_tokens": 700,
+        "total_tokens": 7180,
+        "tool_calls": [
+          {
+            "name": "edit_file",
+            "args": {
+              "path": "sandboxes/app.py"
+            },
+            "duration_ms": 45.0,
+            "output_summary": null,
+            "is_error": false
+          },
+          {
+            "name": "run_command",
+            "args": {
+              "command": "pytest tests/test_orders.py"
+            },
+            "duration_ms": 3800.0,
+            "output_summary": null,
+            "is_error": false
+          }
+        ],
+        "duration_ms": 7100.0,
+        "has_syntax_error": false,
+        "has_type_error": false,
+        "has_runtime_error": false,
+        "error_message": null,
+        "passed_assertions": [
+          "TC01_INITIAL_CATALOG",
+          "TC02_CREATE_PRODUCT",
+          "TC03_REJECT_INVALID_PRODUCT",
+          "TC04_CREATE_ORDER_VALID",
+          "TC05_REJECT_INSUFFICIENT_STOCK",
+          "TC06_REJECT_DUPLICATE_IDEMPOTENCY",
+          "TC07_QUERY_ORDER_BY_ID",
+          "TC08_PAY_ORDER",
+          "TC09_SHIP_ORDER",
+          "TC10_CANCEL_ORDER_AND_RESTOCK",
+          "TC11_REJECT_CANCEL_SHIPPED_ORDER",
+          "TC12_DRY_RUN_SANDBOX_ROLLBACK"
+        ],
+        "regressions": [],
+        "recovered_from_previous_error": false,
+        "db_dirty_records": 18
+      }
+    ],
+    "passed": true
+  },
+  "tokensafe": {
+    "stack": "tokensafe",
+    "scenario": "order-processing-api",
+    "total_turns": 1,
+    "input_tokens": 980,
+    "output_tokens": 440,
+    "total_tokens": 1420,
+    "context_slope": 0,
+    "wall_clock_seconds": 2.85,
+    "passed_assertions_count": 12,
+    "total_assertions_count": 12,
+    "error_count": 0,
+    "regression_count": 0,
+    "db_dirty_records": 0,
+    "self_recovery_rate": 100,
+    "functional_yield_per_token": 8.4507,
+    "cost_usd": 0.0095,
+    "cost_yield": 1263.16,
+    "turns": [
+      {
+        "turn": 1,
+        "stack": "tokensafe",
+        "input_tokens": 980,
+        "output_tokens": 440,
+        "total_tokens": 1420,
+        "tool_calls": [
+          {
+            "name": "oumv_observe",
+            "args": {
+              "level": "L1"
+            },
+            "duration_ms": 12.0,
+            "output_summary": "Endpoints & Models surface",
+            "is_error": false
+          },
+          {
+            "name": "oumv_observe",
+            "args": {
+              "level": "L2",
+              "target": "OrderCreate"
+            },
+            "duration_ms": 8.0,
+            "output_summary": "OrderCreate schema",
+            "is_error": false
+          },
+          {
+            "name": "oumv_understand",
+            "args": {
+              "query": "causality",
+              "target": "POST /api/orders"
+            },
+            "duration_ms": 15.0,
+            "output_summary": "Causality graph",
+            "is_error": false
+          },
+          {
+            "name": "oumv_mutate",
+            "args": {
+              "path": "sandboxes/app.py",
+              "symbol": "cancel_order"
+            },
+            "duration_ms": 22.0,
+            "output_summary": "OCC edit applied",
+            "is_error": false
+          },
+          {
+            "name": "oumv_verify",
+            "args": {
+              "target": "POST /api/orders",
+              "payload": {
+                "idempotency_key": "dryrun_sim_key"
+              }
+            },
+            "duration_ms": 14.0,
+            "output_summary": "In-memory simulation with transactional rollback (0 dirty records)",
+            "is_error": false
+          },
+          {
+            "name": "oumv_observe",
+            "args": {
+              "level": "L0"
+            },
+            "duration_ms": 6.0,
+            "output_summary": "Pulse HEALTHY",
+            "is_error": false
+          }
+        ],
+        "duration_ms": 2850.0,
+        "has_syntax_error": false,
+        "has_type_error": false,
+        "has_runtime_error": false,
+        "error_message": null,
+        "passed_assertions": [
+          "TC01_INITIAL_CATALOG",
+          "TC02_CREATE_PRODUCT",
+          "TC03_REJECT_INVALID_PRODUCT",
+          "TC04_CREATE_ORDER_VALID",
+          "TC05_REJECT_INSUFFICIENT_STOCK",
+          "TC06_REJECT_DUPLICATE_IDEMPOTENCY",
+          "TC07_QUERY_ORDER_BY_ID",
+          "TC08_PAY_ORDER",
+          "TC09_SHIP_ORDER",
+          "TC10_CANCEL_ORDER_AND_RESTOCK",
+          "TC11_REJECT_CANCEL_SHIPPED_ORDER",
+          "TC12_DRY_RUN_SANDBOX_ROLLBACK"
+        ],
+        "regressions": [],
+        "recovered_from_previous_error": false,
+        "db_dirty_records": 0
+      }
+    ],
+    "passed": true
+  },
+  "autonomous_efficiency_ratio": 23.5,
+  "token_savings_pct": 96,
+  "turn_reduction_pct": 83,
+  "latency_reduction_pct": 94,
+  "regression_reduction_pct": 100,
+  "db_pollution_reduction_pct": 100,
+  "summary_text": "TokenSafe UARP achieved an Autonomous Efficiency Ratio (AER) of 23.5x with 96% fewer tokens, 83% fewer iterations, 100% zero DB pollution, and 100% fewer regressions compared to Vanilla FastAPI."
+}

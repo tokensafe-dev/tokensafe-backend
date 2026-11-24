@@ -1,0 +1,14 @@
+{
+  "name": "@tokensafe/backend-node",
+  "version": "0.1.0",
+  "description": "TokenSafe OUMV Backend Adapter for Node.js (Express, Fastify, NestJS)",
+  "main": "dist/index.js",
+  "type": "module",
+  "scripts": {
+    "build": "tsup",
+    "test": "vitest run"
+  },
+  "keywords": ["tokensafe", "oumv", "backend", "express", "node"],
+  "author": "TokenSafe Team <support@tokensafe.dev>",
+  "license": "MIT"
+}

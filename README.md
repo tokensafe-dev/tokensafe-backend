@@ -1,13 +1,16 @@
 # TokenSafe Backend (`tokensafe-backend`)
-### Go Reference Implementation of the OUMV Protocol (UARP)
+### Unified Backend Implementations of the OUMV Protocol (UARP)
 **The Universal Agent-Runtime Protocol: Observe · Understand · Mutate · Verify**
 
-[![Go Report Card](https://goreportcard.com/badge/github.com/tokensafe-dev/tokensafe-backend)](https://goreportcard.com/report/github.com/tokensafe-dev/tokensafe-backend)
+[![Go Report Card](https://goreportcard.com/badge/github.com/tokensafe-dev/tokensafe-backend/go)](https://goreportcard.com/report/github.com/tokensafe-dev/tokensafe-backend/go)
 [![Protocol Specification](https://img.shields.io/badge/OUMV-v1.0--draft-orange)](https://github.com/tokensafe-dev/oumv/blob/main/spec/SPEC.md)
-[![Agent Usability Benchmark](https://img.shields.io/badge/AUB_Benchmark-AER_24.6x-10B981)](benchmark/BENCHMARK_REPORT.md)
+[![Agent Usability Benchmark](https://img.shields.io/badge/AUB_Benchmark-AER_24.6x-10B981)](go/benchmark/BENCHMARK_REPORT.md)
 [![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
 
-> `tokensafe-backend` transforms any Go backend application into an agent-ready, token-efficient live runtime. It implements the **OUMV (Observe, Understand, Mutate, Verify)** standard, allowing autonomous AI agents to inspect, reason about, safely modify, and verify backend services in sub-milliseconds without context waste.
+> `tokensafe-backend` is the unified backend repository for the **OUMV (Observe, Understand, Mutate, Verify)** protocol. It houses backend runtime instrumentation and adapters across major server-side technologies:
+> - **Go (`go/`)**: Native Go runtime & adapters for Gin, Chi, and `net/http` (`github.com/tokensafe-dev/tokensafe-backend/go`).
+> - **Python (`python/`)**: Python runtime & FastAPI adapter (`tokensafe-python`).
+> - **Node.js (`node/`)**: Upcoming Node.js adapters for Express, Fastify, and NestJS.
 
 ---
 
@@ -47,7 +50,7 @@ package main
 import (
 	"net/http"
 
-	"github.com/tokensafe-dev/tokensafe-backend"
+	"github.com/tokensafe-dev/tokensafe-backend/go"
 )
 
 type CreateOrderReq struct {
@@ -100,8 +103,8 @@ func main() {
 ```go
 import (
     "github.com/gin-gonic/gin"
-    ginAdapter "github.com/tokensafe-dev/tokensafe-backend/pkg/adapters/gin"
-    "github.com/tokensafe-dev/tokensafe-backend/pkg/oumv"
+    ginAdapter "github.com/tokensafe-dev/tokensafe-backend/go/pkg/adapters/gin"
+    "github.com/tokensafe-dev/tokensafe-backend/go/pkg/oumv"
 )
 
 func main() {
@@ -117,10 +120,38 @@ func main() {
 
 ---
 
+## Quickstart: Python / FastAPI (`python/`)
+
+Instrument any FastAPI application with OUMV in 2 lines of code:
+
+```python
+from fastapi import FastAPI
+from tokensafe_python import mount_tokensafe
+
+app = FastAPI(title="Store API")
+
+# Auto-introspects routes, Pydantic schemas, and mounts /__oumv/rpc with DB rollback sandbox
+mount_tokensafe(app)
+
+@app.get("/api/products")
+def list_products():
+    return [{"id": "prod-1", "name": "Coffee Beans", "price": 14.50}]
+```
+
+---
+
 ## Installation
 
+### Go Runtime (`go/`)
 ```bash
-go get github.com/tokensafe-dev/tokensafe-backend
+go get github.com/tokensafe-dev/tokensafe-backend/go
+```
+
+### Python Runtime (`python/`)
+```bash
+pip install ./python
+# or from git:
+pip install "tokensafe-backend @ git+https://github.com/tokensafe-dev/tokensafe-backend.git#subdirectory=python"
 ```
 
 ---

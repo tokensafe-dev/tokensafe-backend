@@ -1,0 +1,61 @@
+[build-system]
+requires = ["setuptools>=61.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "tokensafe-python"
+version = "0.1.0"
+description = "Universal Agent-Runtime Protocol (UARP / OUMV) Python runtime & FastAPI adapter"
+readme = "README.md"
+authors = [
+    { name = "TokenSafe Team", email = "support@tokensafe.dev" }
+]
+license = "MIT"
+requires-python = ">=3.10"
+keywords = [
+    "tokensafe",
+    "oumv",
+    "uarp",
+    "fastapi",
+    "ai-agents",
+    "agentic-ai",
+    "runtime",
+    "causality",
+    "dry-run",
+    "verification"
+]
+classifiers = [
+    "Development Status :: 4 - Beta",
+    "Intended Audience :: Developers",
+    "Topic :: Software Development :: Libraries :: Application Frameworks",
+    "Programming Language :: Python :: 3",
+    "Programming Language :: Python :: 3.10",
+    "Programming Language :: Python :: 3.11",
+    "Programming Language :: Python :: 3.12",
+    "Programming Language :: Python :: 3.13"
+]
+dependencies = [
+    "pydantic>=2.0.0",
+    "fastapi>=0.100.0",
+    "httpx>=0.24.0",
+    "starlette>=0.27.0"
+]
+
+[project.optional-dependencies]
+sqlalchemy = ["sqlalchemy>=2.0.0"]
+all = ["sqlalchemy>=2.0.0"]
+
+[project.urls]
+Homepage = "https://tokensafe.dev"
+Repository = "https://github.com/tokensafe-dev/tokensafe-python"
+Documentation = "https://tokensafe.dev"
+Issues = "https://github.com/tokensafe-dev/tokensafe-python/issues"
+
+[tool.setuptools.packages.find]
+include = ["tokensafe_python*"]
+
+[tool.pytest.ini_options]
+pythonpath = ["."]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+asyncio_default_fixture_loop_scope = "function"

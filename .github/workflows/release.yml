@@ -22,13 +22,27 @@ jobs:
         uses: actions/setup-go@v5
         with:
           go-version: '1.23'
-          cache: true
+          cache-dependency-path: go/go.sum
 
       - name: Download Go modules
+        working-directory: go
         run: go mod download
 
       - name: Run Go tests
+        working-directory: go
         run: go test -v -race ./...
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Run Python tests
+        working-directory: python
+        run: |
+          pip install --upgrade pip
+          pip install -e ".[all]" pytest pytest-asyncio anyio
+          pytest -v
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
