@@ -1,0 +1,74 @@
+{
+  "protocolVersion": "1.0.0",
+  "spec": "https://github.com/tokensafe-dev/oumv/blob/main/spec/SPEC.md",
+  "description": "Language-neutral OUMV Core conformance cases (spec §10). Any runtime claiming core compliance MUST pass every case. Markers: ${FIXTURE_FILE} (an existing valid file inside the workspace root) and ${MISSING_FILE} (a path that does not exist) are substituted by each runner. Vendored copies live in tokensafe-backend (go/pkg/oumv/testdata, python/tests) — keep in sync with this canonical source.",
+  "cases": [
+    {
+      "id": "handshake-negotiates-capabilities",
+      "method": "oumv/handshake",
+      "params": { "protocolVersion": "1.0.0" },
+      "expectResultFields": [
+        "protocolVersion",
+        "runtimeInfo.name",
+        "runtimeInfo.version",
+        "capabilities"
+      ]
+    },
+    {
+      "id": "unknown-method-is-jsonrpc-method-not-found",
+      "method": "oumv/nonexistentMethod",
+      "params": {},
+      "expectError": { "code": -32601 }
+    },
+    {
+      "id": "occ-conflict-rejected",
+      "method": "oumv/applyEdit",
+      "params": {
+        "path": "${FIXTURE_FILE}",
+        "replacement": "value = 1\n",
+        "expectedVersion": "sha256:0000000000000000000000000000000000000000000000000000000000000000"
+      },
+      "expectError": { "code": -32001 }
+    },
+    {
+      "id": "path-traversal-blocked",
+      "method": "oumv/applyEdit",
+      "params": {
+        "path": "../outside.txt",
+        "replacement": "value = 1\n"
+      },
+      "expectError": { "code": -32003 }
+    },
+    {
+      "id": "syntax-guard-rejects-broken-code",
+      "method": "oumv/applyEdit",
+      "params": {
+        "path": "${FIXTURE_FILE}",
+        "replacement": "def broken(:\n"
+      },
+      "expectError": { "code": -32002 }
+    },
+    {
+      "id": "missing-resource-rejected",
+      "method": "oumv/applyEdit",
+      "params": {
+        "path": "${MISSING_FILE}",
+        "replacement": "value = 1\n"
+      },
+      "expectError": { "code": -32009 }
+    },
+    {
+      "id": "apply-edit-returns-real-occ-version",
+      "method": "oumv/applyEdit",
+      "params": {
+        "path": "${EDIT_TARGET_FILE}",
+        "replacement": "${EDIT_CONTENT}"
+      },
+      "expectResultFields": [
+        "status",
+        "newVersion"
+      ],
+      "expectVersionMatchesContent": "${EDIT_CONTENT}"
+    }
+  ]
+}

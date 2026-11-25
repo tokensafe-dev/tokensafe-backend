@@ -88,6 +88,15 @@ func NewTargetNotFoundError(target string) *OumvError {
 	}
 }
 
+// NewResourceNotFoundError reports a missing file/workspace resource (spec §5: -32009,
+// the generic form used by source-edit operations across runtimes).
+func NewResourceNotFoundError(target string) *OumvError {
+	return &OumvError{
+		Code:    ErrResourceNotFound,
+		Message: fmt.Sprintf("RESOURCE_NOT_FOUND: %q does not exist in the workspace", target),
+	}
+}
+
 func NewActionNotFoundError(action string) *OumvError {
 	return &OumvError{
 		Code:    ErrActionNotFound,

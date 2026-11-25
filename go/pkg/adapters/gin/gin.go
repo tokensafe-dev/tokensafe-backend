@@ -1,6 +1,8 @@
 package gin
 
 import (
+	"time"
+
 	"github.com/gin-gonic/gin"
 	"github.com/tokensafe-dev/tokensafe-backend/go/pkg/oumv"
 	"github.com/tokensafe-dev/tokensafe-backend/go/pkg/transport"
@@ -33,7 +35,30 @@ func Mount(r *gin.Engine, rt *oumv.Runtime, opts ...Options) {
 		rt.RegisterRoute(route.Method, route.Path, route.Handler)
 	}
 
-	// 2. Mount OUMV JSON-RPC endpoint
+	// 2. Trace middleware: records every request execution (L4 evidence for Understand causality)
+	r.Use(func(c *gin.Context) {
+		start := time.Now()
+		c.Next()
+		route := c.FullPath()
+		if route == "" {
+			route = c.Request.URL.Path
+		}
+		errMsg := ""
+		if len(c.Errors) > 0 {
+			errMsg = c.Errors.String()
+		}
+		rt.RecordTrace(
+			c.Request.Method,
+			c.Request.URL.Path,
+			route,
+			c.HandlerName(),
+			c.Writer.Status(),
+			float64(time.Since(start).Microseconds())/1000.0,
+			errMsg,
+		)
+	})
+
+	// 3. Mount OUMV JSON-RPC endpoint
 	dispatcher := transport.NewDispatcher(rt)
 	httpOpts := transport.HTTPOptions{
 		AuthToken:              rt.Config().Security.AuthToken,

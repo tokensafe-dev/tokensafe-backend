@@ -2,6 +2,12 @@
 Main OUMV / UARP runtime coordinator.
 """
 
+import ast
+import hashlib
+import os
+import shutil
+import subprocess
+import tempfile
 import time
 import uuid
 from typing import Any, Callable, Dict, List, Optional
@@ -9,6 +15,14 @@ from tokensafe_python.core.causality import CausalityGraph
 from tokensafe_python.core.state import StateManager
 from tokensafe_python.core.db_sandbox import DBSandbox
 from tokensafe_python.core.discovery import DiscoveryManager
+from tokensafe_python.protocol.errors import (
+    OumvError,
+    CONFLICT_DETECTED,
+    SYNTAX_ERROR,
+    SECURITY_VIOLATION,
+    RESOURCE_NOT_FOUND,
+    VALIDATION_FAILED,
+)
 from tokensafe_python.protocol.rpc import JSONRPCHandler
 from tokensafe_python.protocol.types import (
     CausalityQueryResult,
@@ -35,9 +49,18 @@ class OUMVRuntime:
 
         self._routes: List[Dict[str, Any]] = []
         self._schemas: Dict[str, Any] = {}
+        self._operations: Dict[str, Dict[str, Any]] = {}
         self._action_executor: Optional[Callable] = None
 
         self._bind_rpc_methods()
+
+    def register_operation(self, contract: Dict[str, Any]) -> None:
+        """Registers a Level 3 semantic operation contract (spec §7.4/§10.4)."""
+        op_id = contract.get("id")
+        if not op_id:
+            return
+        self._operations[op_id] = contract
+        self.causality.add_node(f"operation:{op_id}", "operation", op_id, metadata=contract)
 
     def set_action_executor(self, executor: Callable):
         """Sets the low-level HTTP / ASGI executor for simulation and mutation."""
@@ -92,7 +115,7 @@ class OUMVRuntime:
             "protocolVersion": "1.0.0",
             "runtimeInfo": {
                 "name": "tokensafe-python",
-                "version": "0.1.0",
+                "version": "0.2.0",
                 "framework": self.framework,
             },
             "capabilities": {
@@ -127,6 +150,8 @@ class OUMVRuntime:
             }
         elif lvl == "L2":
             if target:
+                if target in self._operations:
+                    return {"operation": self._operations[target]}
                 if target in self._schemas:
                     return {"model": target, "schema": self._schemas[target]}
                 matching = [r for r in self._routes if target in (r["path"], f"{r['method']} {r['path']}")]
@@ -135,6 +160,7 @@ class OUMVRuntime:
             return {
                 "models": self._schemas,
                 "routes": self._routes,
+                "operations": list(self._operations.values()),
             }
         elif lvl == "L3":
             if target:
@@ -176,14 +202,144 @@ class OUMVRuntime:
             sim = await self.handle_mutation_simulate(**kwargs)
             return sim.model_dump()
 
-        path = kwargs.get("path")
+        path = kwargs.get("path") or kwargs.get("filePath")
         symbol = kwargs.get("symbol")
-        return {
+        replacement = kwargs.get("replacement")
+        if replacement is None:
+            replacement = kwargs.get("source")
+        expected_version = kwargs.get("expectedVersion") or kwargs.get("expected_version")
+
+        if replacement is None:
+            # No replacement: report the current OCC version (version check / getSource-style probe)
+            version = self._file_version(path)
+            if version is None:
+                raise OumvError(RESOURCE_NOT_FOUND, f"RESOURCE_NOT_FOUND: file not found inside project root: {path}")
+            return {"status": "CURRENT", "path": path, "symbol": symbol, "version": version}
+
+        return self._apply_source_edit(
+            path=path, symbol=symbol, replacement=replacement, expected_version=expected_version
+        )
+
+    # ---- OCC source editing (real file edits, no fabricated versions) ----
+
+    def _project_root_abs(self) -> str:
+        return os.path.abspath(self.discovery.project_root or os.getcwd())
+
+    def _resolve_project_file(self, path: str) -> Optional[str]:
+        """Resolves a project-relative path inside the project root boundary."""
+        if not path:
+            return None
+        root_abs = self._project_root_abs()
+        abs_path = os.path.normpath(os.path.join(root_abs, path))
+        if abs_path == root_abs or abs_path.startswith(root_abs + os.sep):
+            return abs_path
+        return None
+
+    def _file_version(self, path: Optional[str]) -> Optional[str]:
+        abs_path = self._resolve_project_file(path or "")
+        if not abs_path or not os.path.isfile(abs_path):
+            return None
+        with open(abs_path, "rb") as f:
+            return "sha256:" + hashlib.sha256(f.read()).hexdigest()
+
+    @staticmethod
+    def _syntax_check(abs_path: str, content: str) -> Dict[str, Any]:
+        """Pre-flight syntax validation; uncheckable languages are honestly 'skipped'."""
+        ext = os.path.splitext(abs_path)[1].lower()
+        if ext == ".py":
+            try:
+                ast.parse(content)
+                return {"status": "passed", "tool": "python-ast"}
+            except SyntaxError as e:
+                return {"status": "failed", "tool": "python-ast", "error": f"line {e.lineno}: {e.msg}"}
+        if ext in (".js", ".mjs", ".cjs"):
+            node_bin = shutil.which("node")
+            if not node_bin:
+                return {"status": "skipped", "tool": "node-check", "error": "node not found on PATH"}
+            tmp_fd, tmp_path = tempfile.mkstemp(suffix=ext, prefix="tokensafe_syntax_")
+            try:
+                with os.fdopen(tmp_fd, "w", encoding="utf-8") as f:
+                    f.write(content)
+                proc = subprocess.run(
+                    [node_bin, "--check", tmp_path],
+                    capture_output=True, text=True, timeout=3.0,
+                )
+                if proc.returncode == 0:
+                    return {"status": "passed", "tool": "node --check"}
+                err = (proc.stderr or proc.stdout or "").strip().splitlines()
+                return {"status": "failed", "tool": "node --check", "error": err[0] if err else "syntax check failed"}
+            except Exception as e:
+                return {"status": "skipped", "tool": "node-check", "error": str(e)}
+            finally:
+                try:
+                    os.unlink(tmp_path)
+                except OSError:
+                    pass
+        return {"status": "skipped", "tool": "none", "error": f"no syntax checker for {ext or 'unknown extension'}"}
+
+    def _apply_source_edit(
+        self,
+        path: str,
+        symbol: Optional[str],
+        replacement: str,
+        expected_version: Optional[str],
+    ) -> Dict[str, Any]:
+        """Real OCC workspace edit: boundary check, version check, syntax pre-flight, backup, write."""
+        if not path or not isinstance(replacement, str):
+            raise OumvError(VALIDATION_FAILED, "VALIDATION_FAILED: 'path' and 'replacement' are required for source edits")
+
+        root_abs = self._project_root_abs()
+        abs_path = self._resolve_project_file(path)
+        if abs_path is None:
+            raise OumvError(SECURITY_VIOLATION, f"SECURITY_VIOLATION: path traversal blocked: {path}")
+        if not os.path.isfile(abs_path):
+            raise OumvError(RESOURCE_NOT_FOUND, f"RESOURCE_NOT_FOUND: {path}")
+
+        with open(abs_path, "rb") as f:
+            current_bytes = f.read()
+        current_version = "sha256:" + hashlib.sha256(current_bytes).hexdigest()
+        if expected_version and expected_version != current_version:
+            raise OumvError(
+                CONFLICT_DETECTED,
+                f"CONFLICT_DETECTED: OCC version mismatch: expected {expected_version}, current is {current_version}",
+            )
+
+        syntax_check = self._syntax_check(abs_path, replacement)
+        if syntax_check["status"] == "failed":
+            raise OumvError(
+                SYNTAX_ERROR,
+                f"SYNTAX_ERROR: edit rejected ({syntax_check['tool']}): {syntax_check['error']}",
+                data={"syntaxCheck": syntax_check},
+            )
+
+        backup_path = None
+        try:
+            backup_dir = os.path.join(root_abs, ".tokensafe", "backups")
+            os.makedirs(backup_dir, exist_ok=True)
+            digest = hashlib.sha256(current_bytes).hexdigest()[:8]
+            backup_path = os.path.join(backup_dir, f"{digest}_{os.path.basename(abs_path)}.bak")
+            with open(backup_path, "wb") as f:
+                f.write(current_bytes)
+        except Exception:
+            backup_path = None
+
+        with open(abs_path, "w", encoding="utf-8") as f:
+            f.write(replacement)
+
+        new_version = "sha256:" + hashlib.sha256(replacement.encode("utf-8")).hexdigest()
+        result = {
             "status": "APPLIED",
             "path": path,
             "symbol": symbol,
-            "version": f"sha256:{uuid.uuid4().hex[:12]}",
+            "version": new_version,
+            "newVersion": new_version,
+            "mode": "RUNTIME_DIRECT_EDIT",
+            "syntaxCheck": syntax_check,
         }
+        if backup_path:
+            result["backupPath"] = backup_path
+            result["rollbackHint"] = f"Previous content backed up at {backup_path}"
+        return result
 
     async def handle_oumv_verify(self, **kwargs) -> Dict[str, Any]:
         """Verifies state/DOM assertions or simulated mutation diffs."""
@@ -209,6 +365,7 @@ class OUMVRuntime:
                 "statusCode": sim.status_code,
                 "response": sim.response,
                 "rolledBack": sim.rolled_back,
+                "rollbackStatus": sim.rollback_status,
             }
         elif "action" in kwargs and isinstance(kwargs["action"], dict):
             sim = await self.handle_mutation_simulate(**kwargs)
@@ -219,6 +376,7 @@ class OUMVRuntime:
                 "statusCode": sim.status_code,
                 "response": sim.response,
                 "rolledBack": sim.rolled_back,
+                "rollbackStatus": sim.rollback_status,
             }
         return {"status": "PASS", "details": "No assertions provided"}
 
@@ -295,6 +453,19 @@ class OUMVRuntime:
         diff = self.state.compute_diff(before_state, after_state)
         elapsed_ms = (time.perf_counter() - start_time) * 1000.0
 
+        # Evidence-based rollback reporting: only claim rolled_back when a real
+        # ROLLBACK was observed on the engine during the dry-run window.
+        if self.db_sandbox.has_engine():
+            rollback_verified = self.db_sandbox.rollback_observed()
+            rollback_status = "verified" if rollback_verified else "unverified"
+            if not rollback_verified:
+                warnings.append(
+                    "Rollback unverified: no ROLLBACK observed on the DB engine during the dry-run window."
+                )
+        else:
+            rollback_verified = False
+            rollback_status = "not_applicable"
+
         return MutationSimulateResult(
             success=status_code < 400,
             status_code=status_code,
@@ -302,7 +473,8 @@ class OUMVRuntime:
             diff=diff,
             db_queries=db_queries,
             warnings=warnings,
-            rolled_back=True,
+            rolled_back=rollback_verified,
+            rollback_status=rollback_status,
             execution_time_ms=round(elapsed_ms, 2),
         )
 

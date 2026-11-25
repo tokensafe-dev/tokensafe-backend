@@ -43,7 +43,7 @@ func (p *Patcher) ApplySymbolPatch(relPath, symbol, replacement, expectedVersion
 	cleanPath := filepath.Clean(filepath.Join(p.workspaceDir, relPath))
 	currentBytes, err := os.ReadFile(cleanPath)
 	if err != nil {
-		return nil, protocol.NewTargetNotFoundError(relPath)
+		return nil, protocol.NewResourceNotFoundError(relPath)
 	}
 
 	// 1. Optimistic Concurrency Control (OCC) Check

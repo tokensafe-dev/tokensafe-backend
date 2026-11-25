@@ -42,7 +42,24 @@ type Runtime struct {
 	errCount1m   int64
 	patcher      *mutate.Patcher
 	config       RuntimeConfig
+	traces       []requestTrace
+	traceIdx     int
 	mu           sync.RWMutex
+}
+
+// maxRequestTraces bounds the in-memory L4 trace ring buffer.
+const maxRequestTraces = 128
+
+// requestTrace is an observed request execution (runtime causality evidence).
+type requestTrace struct {
+	Method     string    `json:"method"`
+	Path       string    `json:"path"`
+	Route      string    `json:"route"`
+	Handler    string    `json:"handler"`
+	StatusCode int       `json:"statusCode"`
+	DurationMs float64   `json:"durationMs"`
+	Error      string    `json:"error,omitempty"`
+	Timestamp  time.Time `json:"timestamp"`
 }
 
 // isSensitivePath checks if a path references secrets, keys, or VCS internals.
@@ -124,10 +141,118 @@ func NewRuntime(cfg Config) *Runtime {
 	}
 }
 
-func (r *Runtime) Name() string           { return r.name }
-func (r *Runtime) Version() string        { return r.version }
-func (r *Runtime) Config() RuntimeConfig  { return r.config }
-func (r *Runtime) IsEnabled() bool        { return r.config.Enabled }
+func (r *Runtime) Name() string          { return r.name }
+func (r *Runtime) Version() string       { return r.version }
+func (r *Runtime) Config() RuntimeConfig { return r.config }
+func (r *Runtime) IsEnabled() bool       { return r.config.Enabled }
+
+// RecordTrace records an observed request execution into the bounded L4 trace
+// ring buffer. Feeds Understand (causality) with real runtime evidence and
+// increments the 1-minute error counter on 5xx. Safe for concurrent use.
+func (r *Runtime) RecordTrace(method, path, route, handler string, statusCode int, durationMs float64, reqErr string) {
+	if r == nil {
+		return
+	}
+	trace := requestTrace{
+		Method:     method,
+		Path:       path,
+		Route:      route,
+		Handler:    handler,
+		StatusCode: statusCode,
+		DurationMs: durationMs,
+		Error:      reqErr,
+		Timestamp:  time.Now(),
+	}
+
+	r.mu.Lock()
+	if len(r.traces) < maxRequestTraces {
+		r.traces = append(r.traces, trace)
+	} else {
+		r.traces[r.traceIdx] = trace
+		r.traceIdx = (r.traceIdx + 1) % maxRequestTraces
+	}
+	r.mu.Unlock()
+
+	if statusCode >= 500 {
+		atomic.AddInt64(&r.errCount1m, 1)
+	}
+}
+
+// TraceHandler wraps any http.Handler (e.g. a Gin engine, Chi router, or std mux)
+// with request tracing, feeding Understand(causality) with real runtime evidence.
+// Use it as the outermost handler: http.ListenAndServe(addr, oumv.TraceHandler(rt, engine)).
+func TraceHandler(rt *Runtime, next http.Handler) http.Handler {
+	return http.HandlerFunc(func(w http.ResponseWriter, req *http.Request) {
+		if rt == nil || !rt.IsEnabled() {
+			next.ServeHTTP(w, req)
+			return
+		}
+		start := time.Now()
+		recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+		next.ServeHTTP(recorder, req)
+		rt.RecordTrace(
+			req.Method,
+			req.URL.Path,
+			req.URL.Path,
+			"",
+			recorder.status,
+			float64(time.Since(start).Microseconds())/1000.0,
+			"",
+		)
+	})
+}
+
+// statusRecorder captures the response status code without buffering the body.
+type statusRecorder struct {
+	http.ResponseWriter
+	status      int
+	wroteHeader bool
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	if !r.wroteHeader {
+		r.status = code
+		r.wroteHeader = true
+	}
+	r.ResponseWriter.WriteHeader(code)
+}
+
+// matchingTraces returns recorded traces that match the understand target
+// ("METHOD /path", "/path", route pattern, or handler name), newest first.
+func (r *Runtime) matchingTraces(target string) []requestTrace {
+	t := strings.TrimSpace(target)
+	if t == "" {
+		return nil
+	}
+	method := ""
+	path := t
+	if parts := strings.SplitN(t, " ", 2); len(parts) == 2 && strings.ContainsAny(parts[0], "ABCDEFGHIJKLMNOPQRSTUVWXYZ") && parts[0] == strings.ToUpper(parts[0]) {
+		method = strings.ToUpper(parts[0])
+		path = parts[1]
+	}
+
+	r.mu.RLock()
+	snapshot := make([]requestTrace, len(r.traces))
+	copy(snapshot, r.traces)
+	r.mu.RUnlock()
+
+	matched := make([]requestTrace, 0, len(snapshot))
+	for _, tr := range snapshot {
+		if method != "" && tr.Method != method {
+			continue
+		}
+		if path != "" && tr.Route != path && tr.Path != path && tr.Handler != t &&
+			!strings.HasPrefix(tr.Path, path) {
+			continue
+		}
+		matched = append(matched, tr)
+	}
+	// newest first
+	for i, j := 0, len(matched)-1; i < j; i, j = i+1, j-1 {
+		matched[i], matched[j] = matched[j], matched[i]
+	}
+	return matched
+}
 
 // RegisterRoute registers a route in the L1 surface catalog.
 func (r *Runtime) RegisterRoute(method, path, handlerName string, middlewares ...string) {
@@ -233,6 +358,10 @@ func (r *Runtime) Observe(ctx context.Context, params *protocol.ObserveParams) (
 }
 
 // Understand executes Pillar 2: Runtime Causality and Impact Analysis.
+// Causality results are derived from actual recorded request traces
+// (adapters' trace middleware, or in-memory oumv/verify dispatches) —
+// never fabricated. When no trace exists, Observed=false with an
+// actionable note.
 func (r *Runtime) Understand(ctx context.Context, params *protocol.UnderstandParams) (*protocol.UnderstandResult, *protocol.OumvError) {
 	if !r.config.Capabilities.Understand {
 		return nil, protocol.NewPermissionDeniedError("understand capability is disabled by policy")
@@ -240,31 +369,120 @@ func (r *Runtime) Understand(ctx context.Context, params *protocol.UnderstandPar
 
 	switch params.Query {
 	case protocol.QueryImpact:
-		return &protocol.UnderstandResult{
-			Query:  protocol.QueryImpact,
-			Target: params.Target,
-			Impact: &protocol.ImpactResult{
-				Target:          params.Target,
-				AffectedSymbols: []string{},
-				BreakingRisk:    "LOW",
-				Summary:         fmt.Sprintf("No breaking dependencies detected for %s", params.Target),
-			},
-		}, nil
+		return r.understandImpact(params.Target), nil
 
 	case protocol.QueryCausality:
-		return &protocol.UnderstandResult{
-			Query:  protocol.QueryCausality,
-			Target: params.Target,
-			Causality: &protocol.CausalityResult{
-				Target:     params.Target,
-				StatusCode: 200,
-				RootCause:  "OK",
-				TraceChain: []string{"router.ServeHTTP", params.Target},
-			},
-		}, nil
+		return r.understandCausality(params.Target), nil
 
 	default:
 		return nil, protocol.NewUnsupportedCapabilityError(fmt.Sprintf("query %s", params.Query))
+	}
+}
+
+// understandCausality builds the causality result from the newest matching trace.
+func (r *Runtime) understandCausality(target string) *protocol.UnderstandResult {
+	matched := r.matchingTraces(target)
+
+	if len(matched) == 0 {
+		return &protocol.UnderstandResult{
+			Query:  protocol.QueryCausality,
+			Target: target,
+			Causality: &protocol.CausalityResult{
+				Target:     target,
+				Observed:   false,
+				RootCause:  "unknown",
+				TraceChain: []string{},
+				Note:       "No runtime trace observed for this target yet. Send a request through the instrumented adapter or run oumv/verify to generate one.",
+				Evidence: &protocol.EvidenceMetadata{
+					Provenance:    "runtime",
+					SourceAdapter: "tokensafe-backend-go",
+					Confidence:    "unknown",
+				},
+			},
+		}
+	}
+
+	latest := matched[0]
+	rootCause := "OK — handler completed without error (observed)"
+	if latest.StatusCode >= 500 {
+		rootCause = fmt.Sprintf("HTTP %d returned by handler %s", latest.StatusCode, latest.Handler)
+	} else if latest.StatusCode >= 400 {
+		rootCause = fmt.Sprintf("HTTP %d returned by handler %s", latest.StatusCode, latest.Handler)
+	} else if latest.Error != "" {
+		rootCause = latest.Error
+	}
+
+	chain := make([]string, 0, 4)
+	chain = append(chain, "adapter.ServeHTTP")
+	if latest.Route != "" && latest.Route != latest.Path {
+		chain = append(chain, "route "+latest.Route)
+	}
+	if latest.Handler != "" {
+		chain = append(chain, latest.Handler)
+	}
+
+	return &protocol.UnderstandResult{
+		Query:  protocol.QueryCausality,
+		Target: target,
+		Causality: &protocol.CausalityResult{
+			Target:     target,
+			StatusCode: latest.StatusCode,
+			RootCause:  rootCause,
+			TraceChain: chain,
+			Observed:   true,
+			TraceCount: len(matched),
+			LatencyMs:  latest.DurationMs,
+			LastError:  latest.Error,
+			Evidence: &protocol.EvidenceMetadata{
+				Provenance:    "runtime",
+				SourceAdapter: "tokensafe-backend-go",
+				Confidence:    "confirmed",
+			},
+		},
+	}
+}
+
+// understandImpact derives affected handlers/middlewares from the registered
+// route catalog. Breaking risk stays UNKNOWN unless real evidence supports it.
+func (r *Runtime) understandImpact(target string) *protocol.UnderstandResult {
+	t := strings.TrimSpace(target)
+	affected := make([]string, 0)
+	routeMatched := false
+
+	r.mu.RLock()
+	for _, route := range r.routes {
+		if t == "" || route.Path == t || route.HandlerName == t ||
+			(t == route.Method+" "+route.Path) {
+			routeMatched = true
+			if route.HandlerName != "" {
+				affected = append(affected, route.HandlerName)
+			}
+			for _, mw := range route.Middlewares {
+				affected = append(affected, mw)
+			}
+		}
+	}
+	r.mu.RUnlock()
+
+	observed := len(r.matchingTraces(t)) > 0
+	summary := fmt.Sprintf("Impact derived from registered route metadata for %q; runtime execution evidence: %s", t,
+		map[bool]string{true: "matching request traces observed", false: "no matching traces observed"}[observed])
+
+	return &protocol.UnderstandResult{
+		Query:  protocol.QueryImpact,
+		Target: t,
+		Impact: &protocol.ImpactResult{
+			Target:          t,
+			AffectedSymbols: affected,
+			BreakingRisk:    "UNKNOWN",
+			Summary:         summary,
+			Observed:        routeMatched || observed,
+			Evidence: &protocol.EvidenceMetadata{
+				Provenance:    "static",
+				SourceAdapter: "tokensafe-backend-go",
+				Confidence:    "probable",
+			},
+		},
 	}
 }
 
@@ -281,7 +499,7 @@ func (r *Runtime) GetSource(ctx context.Context, params *protocol.GetSourceParam
 
 	data, err := os.ReadFile(cleanPath)
 	if err != nil {
-		return nil, protocol.NewTargetNotFoundError(params.Path)
+		return nil, protocol.NewResourceNotFoundError(params.Path)
 	}
 
 	hash := sha256.Sum256(data)
@@ -342,6 +560,7 @@ func (r *Runtime) ApplyEdit(ctx context.Context, params *protocol.ApplyEditParam
 		}
 		return &protocol.ApplyEditResult{
 			Success:      true,
+			Status:       "APPLIED",
 			NewVersion:   patchRes.NewVersion,
 			LinesChanged: patchRes.LinesChanged,
 			Message:      "Surgical AST symbol patch applied with pre-flight compiler validation passed",
@@ -350,7 +569,7 @@ func (r *Runtime) ApplyEdit(ctx context.Context, params *protocol.ApplyEditParam
 
 	currentData, err := os.ReadFile(cleanPath)
 	if err != nil {
-		return nil, protocol.NewTargetNotFoundError(params.Path)
+		return nil, protocol.NewResourceNotFoundError(params.Path)
 	}
 
 	currentHash := sha256.Sum256(currentData)
@@ -387,6 +606,7 @@ func (r *Runtime) ApplyEdit(ctx context.Context, params *protocol.ApplyEditParam
 
 	return &protocol.ApplyEditResult{
 		Success:      true,
+		Status:       "APPLIED",
 		NewVersion:   newVersion,
 		LinesChanged: len(strings.Split(params.Replacement, "\n")),
 		Message:      "Edit applied with pre-flight syntax verification passed",
@@ -422,6 +642,9 @@ func (r *Runtime) Verify(ctx context.Context, params *protocol.VerifyParams) (*p
 	r.handler.ServeHTTP(rec, req)
 
 	duration := float64(time.Since(start).Microseconds()) / 1000.0
+
+	// Feed the L4 trace ring so Understand(causality) has real evidence after verification
+	r.RecordTrace(method, path, path, "", rec.Code, duration, "")
 
 	return &protocol.VerifyResult{
 		Success:    rec.Code < 400,

@@ -124,7 +124,10 @@ async def test_fastapi_mutation_simulate_and_verify(test_app):
         assert sim_res["success"] is True
         assert sim_res["status_code"] == 201
         assert sim_res["response"]["name"] == "Gaming Laptop"
-        assert sim_res["rolled_back"] is True
+        # Honest rollback reporting: this app has no DB engine wired, so no
+        # transactional rollback exists — must not be fabricated as True.
+        assert sim_res["rolled_back"] is False
+        assert sim_res["rollback_status"] == "not_applicable"
 
         # 2. Evaluate verification assertion
         assert_payload = {

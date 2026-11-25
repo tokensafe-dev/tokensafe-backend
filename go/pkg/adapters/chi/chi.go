@@ -60,7 +60,11 @@ func Mount(r chi.Router, rt *oumv.Runtime, opts ...Options) error {
 		return walkErr
 	}
 
-	// 2. Mount OUMV JSON-RPC endpoint
+	// 2. Mount OUMV JSON-RPC endpoint.
+	// NOTE: chi requires all middlewares before route registration, so Mount
+	// cannot inject request tracing on already-registered routes. For runtime
+	// causality evidence, serve through the universal wrapper instead:
+	//   http.ListenAndServe(addr, oumv.TraceHandler(rt, r))
 	dispatcher := transport.NewDispatcher(rt)
 	httpOpts := transport.HTTPOptions{
 		AuthToken:              rt.Config().Security.AuthToken,

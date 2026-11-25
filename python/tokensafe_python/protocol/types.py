@@ -79,7 +79,8 @@ class MutationSimulateResult(BaseModel):
     diff: StateDiffResult = Field(default_factory=StateDiffResult)
     db_queries: List[Dict[str, Any]] = Field(default_factory=list)
     warnings: List[str] = Field(default_factory=list)
-    rolled_back: bool = True
+    rolled_back: bool = False
+    rollback_status: str = 'unverified'  # verified | unverified | not_applicable
     execution_time_ms: float = 0.0
 
 

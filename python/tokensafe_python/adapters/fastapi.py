@@ -38,11 +38,21 @@ class TokenSafeFastAPI:
         )
 
         self._introspect_app()
+        self._register_declared_operations()
         self._setup_action_executor()
         self._mount_rpc_endpoints()
 
         if auto_discover:
             self._register_lifecycle_events()
+
+    def _register_declared_operations(self):
+        """Wires Level 3 @oumv_operation contracts (core/contracts.py) into the runtime."""
+        try:
+            from tokensafe_python.core.contracts import get_operations
+            for contract in get_operations().values():
+                self.runtime.register_operation(contract)
+        except Exception:
+            pass
 
     def _introspect_app(self):
         """Introspects FastAPI routes, path parameters, and Pydantic schemas."""

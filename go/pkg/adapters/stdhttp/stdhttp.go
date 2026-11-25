@@ -4,6 +4,7 @@ import (
 	"net/http"
 	"strings"
 	"sync"
+	"time"
 
 	"github.com/tokensafe-dev/tokensafe-backend/go/pkg/oumv"
 	"github.com/tokensafe-dev/tokensafe-backend/go/pkg/transport"
@@ -78,4 +79,40 @@ func (m *ServeMux) Mount(rpcPath string) {
 		Disabled:               false,
 	}
 	m.ServeMux.Handle(rpcPath, transport.NewHTTPHandler(dispatcher, httpOpts))
+}
+
+// ServeHTTP dispatches with request tracing so Understand(causality) gets
+// real runtime evidence (L4 traces) for every observed execution.
+func (m *ServeMux) ServeHTTP(w http.ResponseWriter, req *http.Request) {
+	if m.runtime == nil {
+		m.ServeMux.ServeHTTP(w, req)
+		return
+	}
+	start := time.Now()
+	recorder := &statusRecorder{ResponseWriter: w, status: http.StatusOK}
+	m.ServeMux.ServeHTTP(recorder, req)
+	m.runtime.RecordTrace(
+		req.Method,
+		req.URL.Path,
+		req.URL.Path,
+		"stdhttp.Handler",
+		recorder.status,
+		float64(time.Since(start).Microseconds())/1000.0,
+		"",
+	)
+}
+
+// statusRecorder captures the response status code without buffering the body.
+type statusRecorder struct {
+	http.ResponseWriter
+	status      int
+	wroteHeader bool
+}
+
+func (r *statusRecorder) WriteHeader(code int) {
+	if !r.wroteHeader {
+		r.status = code
+		r.wroteHeader = true
+	}
+	r.ResponseWriter.WriteHeader(code)
 }

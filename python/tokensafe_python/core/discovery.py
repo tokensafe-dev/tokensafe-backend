@@ -15,6 +15,11 @@ class DiscoveryManager:
         self._project_root = project_root or os.getcwd()
         self._registered_files = []
 
+    @property
+    def project_root(self) -> str:
+        """Absolute project root used for OCC source edits and discovery beacons."""
+        return self._project_root
+
     def register_runtime(
         self,
         framework: str = "fastapi",

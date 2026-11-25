@@ -6,6 +6,7 @@ import inspect
 import json
 import traceback
 from typing import Any, Callable, Dict, Optional, Union
+from tokensafe_python.protocol.errors import OumvError
 from tokensafe_python.protocol.types import (
     JSONRPCRequest,
     JSONRPCResponse,
@@ -84,6 +85,11 @@ class JSONRPCHandler:
             return JSONRPCResponse(
                 id=req.id,
                 error=JSONRPCError(code=-32602, message=f"Invalid params: {str(te)}")
+            )
+        except OumvError as oe:
+            return JSONRPCResponse(
+                id=req.id,
+                error=JSONRPCError(code=oe.code, message=oe.message, data=oe.data)
             )
         except Exception as ex:
             return JSONRPCResponse(

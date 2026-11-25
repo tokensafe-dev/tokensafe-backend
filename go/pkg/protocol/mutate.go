@@ -27,6 +27,7 @@ type ApplyEditParams struct {
 // ApplyEditResult defines the response payload for `oumv/applyEdit`.
 type ApplyEditResult struct {
 	Success      bool   `json:"success"`
+	Status       string `json:"status,omitempty"` // "APPLIED" — cross-runtime wire shape
 	NewVersion   string `json:"newVersion"`
 	LinesChanged int    `json:"linesChanged"`
 	Message      string `json:"message,omitempty"`

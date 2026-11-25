@@ -114,6 +114,8 @@ func main() {
     rt := oumv.NewRuntime(oumv.Config{Name: "my-service", Handler: r})
     ginAdapter.Mount(r, rt) // Auto-discovers routes and mounts /__oumv/rpc
 
+    // For runtime causality evidence (oumv/understand), serve through the trace wrapper:
+    // http.ListenAndServe(":8080", oumv.TraceHandler(rt, r))
     r.Run(":8080")
 }
 ```
@@ -138,6 +140,10 @@ def list_products():
     return [{"id": "prod-1", "name": "Coffee Beans", "price": 14.50}]
 ```
 
+**Honest evidence guarantees (v0.2.0+):**
+- `rolled_back` in dry-run results is `true` **only** when an actual ROLLBACK was observed on the wired SQLAlchemy engine (`rollback_status`: `verified` / `unverified` / `not_applicable`).
+- `oumv/applyEdit` performs a real OCC workspace edit (sha256 versions, `expectedVersion` conflict checks, syntax pre-flight for `.py`/`.js`, automatic backups, path-boundary jail) — no fabricated version tokens.
+
 ---
 
 ## Installation
@@ -149,6 +155,8 @@ go get github.com/tokensafe-dev/tokensafe-backend/go
 
 ### Python Runtime (`python/`)
 ```bash
+pip install tokensafe-python
+# local monorepo copy:
 pip install ./python
 # or from git:
 pip install "tokensafe-backend @ git+https://github.com/tokensafe-dev/tokensafe-backend.git#subdirectory=python"
