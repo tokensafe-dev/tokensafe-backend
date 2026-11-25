@@ -50,20 +50,11 @@ jobs:
           pip install --upgrade build
           python -m build
 
-      - name: Publish tokensafe-python to PyPI
-        working-directory: python
-        env:
-          TWINE_USERNAME: __token__
-          TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
-        run: |
-          pip install --upgrade twine
-          # PyPI publishing is optional so a missing/expired token never blocks
-          # the GitHub Release and Go runtime artifacts.
-          if [ -z "$TWINE_PASSWORD" ]; then
-            echo "::warning::PYPI_API_TOKEN is not configured — skipping PyPI publish. Add the repo secret to enable it."
-            exit 0
-          fi
-          twine upload dist/* --skip-existing
+      - name: Upload package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tokensafe-python-dist
+          path: python/dist/
 
       - name: Create GitHub Release
         uses: softprops/action-gh-release@v2
@@ -72,3 +63,57 @@ jobs:
           generate_release_notes: true
           draft: false
           prerelease: false
+
+  # PyPI publishing is optional so a missing credential never blocks the GitHub
+  # Release and the Go runtime artifacts. Two paths exist:
+  #   1. PYPI_API_TOKEN secret -> twine. An account-scoped token is required for a
+  #      brand-new project: PyPI cannot scope a token to a project that does not exist yet.
+  #   2. Trusted Publishing (OIDC) -> no secret at all, once a pending publisher is
+  #      registered on PyPI for: project `tokensafe-python`, owner `tokensafe-dev`,
+  #      repo `tokensafe-backend`, workflow `release.yml`, environment `pypi`.
+  pypi:
+    needs: release
+    runs-on: ubuntu-latest
+    environment: pypi
+    permissions:
+      contents: read
+      id-token: write
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Download package artifact
+        uses: actions/download-artifact@v4
+        with:
+          name: tokensafe-python-dist
+          path: python/dist/
+
+      - name: Publish with API token
+        if: env.PYPI_TOKEN != ''
+        working-directory: python
+        env:
+          PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          pip install --upgrade twine
+          twine upload dist/* --skip-existing
+
+      # Runs only when no token secret is configured. Failure is expected until the
+      # PyPI trusted publisher is registered, so it must not red the release run —
+      # the warning below is the signal.
+      - name: Publish via Trusted Publishing (OIDC)
+        id: publish-oidc
+        if: env.PYPI_TOKEN == ''
+        continue-on-error: true
+        env:
+          PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        uses: pypa/gh-action-pypi-publish@release/v1
+        with:
+          packages-dir: python/dist/
+          skip-existing: true
+
+      - name: Report skipped publish
+        if: env.PYPI_TOKEN == '' && steps.publish-oidc.outcome == 'failure'
+        env:
+          PYPI_TOKEN: ${{ secrets.PYPI_API_TOKEN }}
+        run: |
+          echo "::warning::PyPI publish skipped — configure PYPI_API_TOKEN or a PyPI trusted publisher (pypi.org -> Your projects -> Publishing) to enable it."
