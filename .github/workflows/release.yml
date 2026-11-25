@@ -57,6 +57,12 @@ jobs:
           TWINE_PASSWORD: ${{ secrets.PYPI_API_TOKEN }}
         run: |
           pip install --upgrade twine
+          # PyPI publishing is optional so a missing/expired token never blocks
+          # the GitHub Release and Go runtime artifacts.
+          if [ -z "$TWINE_PASSWORD" ]; then
+            echo "::warning::PYPI_API_TOKEN is not configured — skipping PyPI publish. Add the repo secret to enable it."
+            exit 0
+          fi
           twine upload dist/* --skip-existing
 
       - name: Create GitHub Release
