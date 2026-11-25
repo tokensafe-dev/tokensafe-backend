@@ -150,8 +150,11 @@ def list_products():
 
 ### Go Runtime (`go/`)
 ```bash
-go get github.com/tokensafe-dev/tokensafe-backend/go
+go get github.com/tokensafe-dev/tokensafe-backend/go@v0.4.0
 ```
+`go/` is a nested module, so it resolves against `go/vX.Y.Z` tags (the release
+workflow creates them alongside every `vX.Y.Z` release tag). A plain `vX.Y.Z`
+tag is invisible to the module proxy.
 
 ### Python Runtime (`python/`)
 ```bash
