@@ -47,9 +47,9 @@ all = ["sqlalchemy>=2.0.0"]
 
 [project.urls]
 Homepage = "https://tokensafe.dev"
-Repository = "https://github.com/tokensafe-dev/tokensafe-python"
+Repository = "https://github.com/tokensafe-dev/tokensafe-backend/tree/main/python"
 Documentation = "https://tokensafe.dev"
-Issues = "https://github.com/tokensafe-dev/tokensafe-python/issues"
+Issues = "https://github.com/tokensafe-dev/tokensafe-backend/issues"
 
 [tool.setuptools.packages.find]
 include = ["tokensafe_python*"]
