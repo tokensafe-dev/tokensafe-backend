@@ -59,6 +59,8 @@ type OumvHandshakeParams struct {
 type OumvHandshakeResult struct {
 	ProtocolVersion string           `json:"protocolVersion"`
 	Profile         string           `json:"profile"`
+	SessionID       string           `json:"sessionId"`
+	TTLSeconds      int              `json:"ttlSeconds,omitempty"`
 	RuntimeInfo     RuntimeInfo      `json:"runtimeInfo"`
 	Capabilities    OumvCapabilities `json:"capabilities"`
 }

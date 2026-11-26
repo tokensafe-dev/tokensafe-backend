@@ -39,8 +39,43 @@ func (d *Dispatcher) Handle(ctx context.Context, reqBytes []byte) *protocol.Oumv
 	return d.Dispatch(ctx, &req)
 }
 
+// sessionAware is implemented by runtimes that issue handshake sessions.
+type sessionAware interface {
+	ValidateSession(id string) bool
+	Disconnect(id string) bool
+}
+
+func sessionIDFromParams(raw json.RawMessage) string {
+	if len(raw) == 0 {
+		return ""
+	}
+	var probe struct {
+		SessionID string `json:"sessionId"`
+	}
+	if err := json.Unmarshal(raw, &probe); err != nil {
+		return ""
+	}
+	return probe.SessionID
+}
+
 // Dispatch routes a validated OumvRequest to the corresponding adapter method.
 func (d *Dispatcher) Dispatch(ctx context.Context, req *protocol.OumvRequest) *protocol.OumvResponse {
+	if sessions, ok := d.adapter.(sessionAware); ok {
+		sessionID := sessionIDFromParams(req.Params)
+
+		if req.Method == protocol.MethodDisconnect {
+			closed := sessions.Disconnect(sessionID)
+			return protocol.NewSuccessResponse(req.ID, map[string]interface{}{"closed": closed})
+		}
+
+		if req.Method != protocol.MethodHandshake && !sessions.ValidateSession(sessionID) {
+			return protocol.NewErrorResponse(req.ID, protocol.NewValidationFailedError(
+				"VALIDATION_FAILED: unknown or expired sessionId — re-run oumv/handshake",
+				map[string]string{"reason": "session_expired", "sessionId": sessionID},
+			))
+		}
+	}
+
 	switch req.Method {
 	case protocol.MethodHandshake:
 		var params protocol.OumvHandshakeParams

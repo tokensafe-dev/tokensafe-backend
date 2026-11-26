@@ -47,6 +47,7 @@ type Runtime struct {
 	config       RuntimeConfig
 	traces       []requestTrace
 	traceIdx     int
+	sessions     *SessionRegistry
 	mu           sync.RWMutex
 }
 
@@ -139,6 +140,7 @@ func NewRuntime(cfg Config) *Runtime {
 	}
 
 	return &Runtime{
+		sessions:     NewSessionRegistry(0),
 		name:         cfg.Name,
 		version:      cfg.Version,
 		workspaceDir: cfg.WorkspaceDir,
@@ -291,9 +293,17 @@ func (r *Runtime) Handshake(ctx context.Context, params *protocol.OumvHandshakeP
 		caps.Verify = protocol.VerifyCapability{}
 	}
 
+	sessionID := ""
+	ttl := 0
+	if r.sessions != nil {
+		sessionID = r.sessions.Create()
+		ttl = r.sessions.TTLSeconds()
+	}
 	return &protocol.OumvHandshakeResult{
 		ProtocolVersion: protocol.CurrentProtocolVersion,
 		Profile:         "backend",
+		SessionID:       sessionID,
+		TTLSeconds:      ttl,
 		RuntimeInfo: protocol.RuntimeInfo{
 			Name:    r.name,
 			Version: r.version,
@@ -762,6 +772,23 @@ func (r *Runtime) ApplyEdit(ctx context.Context, params *protocol.ApplyEditParam
 		LinesChanged: len(strings.Split(params.Replacement, "\n")),
 		Message:      "Edit applied with pre-flight syntax verification passed",
 	}, nil
+}
+
+// ValidateSession reports whether a handshake-issued session is still live.
+// An empty id is accepted: stateless callers are allowed by spec §3.
+func (r *Runtime) ValidateSession(id string) bool {
+	if r == nil || r.sessions == nil {
+		return id == ""
+	}
+	return r.sessions.Validate(id)
+}
+
+// Disconnect closes a session (oumv/disconnect).
+func (r *Runtime) Disconnect(id string) bool {
+	if r == nil || r.sessions == nil {
+		return false
+	}
+	return r.sessions.Delete(id)
 }
 
 // SetHandler wires the application router so oumv/verify can dispatch actions

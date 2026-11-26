@@ -5,6 +5,7 @@ import "context"
 // Standard OUMV RPC Methods
 const (
 	MethodHandshake  = "oumv/handshake"
+	MethodDisconnect = "oumv/disconnect"
 	MethodObserve    = "oumv/observe"
 	MethodUnderstand = "oumv/understand"
 	MethodGetSource  = "oumv/getSource"

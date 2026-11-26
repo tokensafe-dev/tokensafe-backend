@@ -15,6 +15,7 @@ from tokensafe_python.core.causality import CausalityGraph
 from tokensafe_python.core.state import StateManager
 from tokensafe_python.core.db_sandbox import DBSandbox
 from tokensafe_python.core.discovery import DiscoveryManager
+from tokensafe_python.core.session import SessionRegistry
 from tokensafe_python.protocol.errors import (
     OumvError,
     CONFLICT_DETECTED,
@@ -46,6 +47,7 @@ class OUMVRuntime:
         self.state = StateManager()
         self.db_sandbox = DBSandbox(engine=db_engine)
         self.discovery = DiscoveryManager(project_root=project_root)
+        self.sessions = SessionRegistry()
         self.rpc = JSONRPCHandler()
 
         self._routes: List[Dict[str, Any]] = []
@@ -99,6 +101,7 @@ class OUMVRuntime:
         # Standard OUMV Protocol (UARP v1.1)
         bindings = [
             ("oumv/handshake", self.handle_handshake),
+            ("oumv/disconnect", self.handle_disconnect),
             ("oumv/observe", self.handle_observe),
             ("oumv/understand", self.handle_understand),
             ("oumv/getSource", self.handle_get_source),
@@ -121,6 +124,13 @@ class OUMVRuntime:
         """Wraps a handler to record L4 trace evidence for every RPC execution."""
 
         async def wrapper(**kwargs):
+            session_id = kwargs.get("sessionId")
+            if method != "oumv/handshake" and method != "oumv/disconnect" and not self.sessions.validate(session_id):
+                raise OumvError(
+                    VALIDATION_FAILED,
+                    "VALIDATION_FAILED: unknown or expired sessionId — re-run oumv/handshake",
+                    data={"reason": "session_expired", "sessionId": session_id},
+                )
             start = time.perf_counter()
             error = ""
             try:
@@ -202,9 +212,12 @@ class OUMVRuntime:
 
     async def handle_handshake(self, **kwargs) -> Dict[str, Any]:
         """UARP / OUMV Protocol Handshake (session lifecycle & capability negotiation)."""
+        session_id = self.sessions.create()
         return {
             "protocolVersion": "1.1.0",
             "profile": "backend",
+            "sessionId": session_id,
+            "ttlSeconds": self.sessions.ttl,
             "runtimeInfo": {
                 "name": "tokensafe-python",
                 "version": "0.3.0",
@@ -217,6 +230,10 @@ class OUMVRuntime:
                 "verify": {"multiMetric": True, "surfaceDiff": True},
             },
         }
+
+    async def handle_disconnect(self, sessionId: Optional[str] = None, **kwargs) -> Dict[str, Any]:  # noqa: N803 - wire name
+        """Closes a handshake session (spec §3)."""
+        return {"closed": self.sessions.delete(sessionId)}
 
     async def handle_get_source(self, path: Optional[str] = None, symbol: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         """Pillar 3A: source with the sha256 OCC token (same contract as Go)."""

@@ -1,0 +1,100 @@
+"""Handshake sessions and the §9.2 descriptor (Python runtime)."""
+
+import json
+import os
+import stat
+import tempfile
+
+import httpx
+import pytest
+from fastapi import FastAPI
+
+from tokensafe_python.adapters.fastapi import mount_tokensafe
+from tokensafe_python.core import session as session_mod
+
+
+async def _rpc(app, method, params=None):
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        resp = await client.post(
+            "/__oumv/rpc",
+            json={"jsonrpc": "2.0", "id": 1, "method": method, "params": params or {}},
+        )
+    assert resp.status_code == 200
+    return resp.json()
+
+
+@pytest.mark.asyncio
+async def test_handshake_issues_a_session():
+    app = FastAPI()
+    mount_tokensafe(app, auto_discover=False)
+
+    body = await _rpc(app, "oumv/handshake")
+    result = body["result"]
+    assert result["profile"] == "backend"
+    assert result["sessionId"].startswith("sess-")
+    assert result["ttlSeconds"] > 0
+
+
+@pytest.mark.asyncio
+async def test_unknown_session_is_rejected_with_reason():
+    app = FastAPI()
+    mount_tokensafe(app, auto_discover=False)
+
+    body = await _rpc(app, "oumv/observe", {"level": "L1", "sessionId": "sess-deadbeef"})
+    error = body["error"]
+    assert error["code"] == -32011
+    assert error["data"]["reason"] == "session_expired"
+
+
+@pytest.mark.asyncio
+async def test_stateless_calls_are_allowed():
+    app = FastAPI()
+    mount_tokensafe(app, auto_discover=False)
+
+    body = await _rpc(app, "oumv/observe", {"level": "L1"})
+    assert not body.get("error")
+    assert body["result"]["level"] == "L1"
+
+
+@pytest.mark.asyncio
+async def test_disconnect_invalidates_the_session():
+    app = FastAPI()
+    mounted = mount_tokensafe(app, auto_discover=False)
+
+    session_id = (await _rpc(app, "oumv/handshake"))["result"]["sessionId"]
+    closed = await _rpc(app, "oumv/disconnect", {"sessionId": session_id})
+    assert closed["result"]["closed"] is True
+
+    after = await _rpc(app, "oumv/observe", {"level": "L1", "sessionId": session_id})
+    assert after["error"]["code"] == -32011
+    assert mounted.runtime.sessions.count() == 0
+
+
+def test_descriptor_is_written_outside_the_repo_with_0600():
+    home = tempfile.mkdtemp(prefix="tokensafe_home_")
+    workspace = tempfile.mkdtemp(prefix="tokensafe_ws_")
+    previous = os.environ.get("TOKENSAFE_HOME")
+    os.environ["TOKENSAFE_HOME"] = home
+    try:
+        path = session_mod.write_descriptor(
+            project_root=workspace,
+            url="http://127.0.0.1:8000/__oumv/rpc",
+            name="tokensafe-python",
+            version="0.3.0",
+        )
+        assert path.startswith(os.path.join(home, "runtimes"))
+        assert workspace not in path.replace(os.path.realpath(workspace), "")
+
+        mode = stat.S_IMODE(os.stat(path).st_mode)
+        assert mode == 0o600
+
+        payload = json.load(open(path, encoding="utf-8"))
+        for key in ("type", "name", "version", "url", "capabilities"):
+            assert key in payload
+        assert payload["capabilities"]["observeLevels"]
+    finally:
+        if previous is None:
+            os.environ.pop("TOKENSAFE_HOME", None)
+        else:
+            os.environ["TOKENSAFE_HOME"] = previous

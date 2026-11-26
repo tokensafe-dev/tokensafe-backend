@@ -191,6 +191,18 @@ class TokenSafeFastAPI:
 
         @self.app.on_event("startup")
         async def on_startup():
+            # Spec §9.2: the discovery descriptor lives outside the repository.
+            try:
+                from tokensafe_python.core.session import write_descriptor
+                write_descriptor(
+                    project_root=self.runtime._project_root_abs(),
+                    url=f"http://{self.host}:{self.port}{self.rpc_path}",
+                    name="tokensafe-python",
+                    version="0.3.0",
+                    session_token="",
+                )
+            except Exception:
+                pass
             self.runtime.discovery.register_runtime(
                 framework="fastapi",
                 host=self.host,
