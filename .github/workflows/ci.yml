@@ -58,12 +58,57 @@ jobs:
       - name: Run Python tests
         run: pytest -v
 
+  test-node:
+    name: Test Node Runtime
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: node
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: 'pnpm'
+          cache-dependency-path: node/pnpm-lock.yaml
+
+      - name: Install dependencies
+        run: pnpm install --no-frozen-lockfile
+
+      - name: Build
+        run: pnpm build
+
+      - name: Run tests
+        run: pnpm test
+
   certification:
     name: Certification is reproducible
     runs-on: ubuntu-latest
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
+
+      - name: Checkout OUMV conformance runner
+        uses: actions/checkout@v4
+        with:
+          repository: tokensafe-dev/oumv
+          path: vendor/oumv
+
+      - name: Install pnpm
+        uses: pnpm/action-setup@v4
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          cache: 'pnpm'
+          cache-dependency-path: node/pnpm-lock.yaml
 
       - name: Setup Go
         uses: actions/setup-go@v5
@@ -91,6 +136,19 @@ jobs:
       - name: Generate Python adapter report
         working-directory: python
         run: CERT_OUT_DIR="$GITHUB_WORKSPACE/cert-fresh" pytest -q tests/test_conformance.py
+
+      - name: Install Node adapter dependencies
+        working-directory: node
+        run: |
+          pnpm install --no-frozen-lockfile
+          pnpm build
+
+      - name: Generate Node adapter reports
+        working-directory: node
+        env:
+          CERT_OUT_DIR: ${{ github.workspace }}/cert-fresh
+          OUMV_REPO: ${{ github.workspace }}/vendor/oumv
+        run: pnpm test
 
       - name: Compare with committed reports
         run: python3 scripts/check_certification.py cert-fresh certification
