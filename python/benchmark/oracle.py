@@ -215,7 +215,7 @@ class OrderApiOracle:
                     resp = await client.post("/__oumv/rpc", json=rpc_payload)
                     assert resp.status_code == 200, f"RPC failed: {resp.text}"
                     res = resp.json()["result"]
-                    assert res["status"] == "PASS"
+                    assert res["status"] in ("PASS", "passed"), res.get("status")
                     assert res.get("rolledBack") is True
 
                     # Verify product 1 stock was NOT decremented by dry run

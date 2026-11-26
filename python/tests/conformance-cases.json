@@ -1,7 +1,7 @@
 {
   "protocolVersion": "1.1.0",
   "spec": "https://github.com/tokensafe-dev/oumv/blob/main/spec/SPEC.md",
-  "description": "Language-neutral OUMV conformance cases (spec §10). Each case declares the conformance Level (1|2|3) it certifies. A runtime attains Level N only when every case with level <= N passes; a failure at a higher level caps the claim but does not fail the lower levels. Markers substituted by each runner: ${FIXTURE_FILE} (existing valid source file inside the workspace), ${MISSING_FILE} (path that does not exist), ${EDIT_TARGET_FILE} (writable source file the runner owns), ${EDIT_TARGET_VERSION} (its sha256 OCC token), ${EDIT_CONTENT} (valid source in the runner's language), ${BROKEN_CONTENT} (syntactically broken source), ${L2_TARGET} (a registered endpoint or component id), ${L3_TARGET} (a source file, optionally path#symbol), ${VERIFY_TARGET} (a request the runtime can dispatch in-process). Vendored copies live in tokensafe-backend (go/pkg/oumv/testdata, python/tests) — keep in sync with this canonical source.",
+  "description": "Language-neutral OUMV conformance cases (spec §10). Each case declares the conformance Level (1|2|3) it certifies. A runtime attains Level N only when every case with level <= N passes; a failure at a higher level caps the claim but does not fail the lower levels. fixtureVersion 3 adds session handshake, getSource and verify-result shape coverage. Markers substituted by each runner: ${FIXTURE_FILE}, ${MISSING_FILE}, ${EDIT_TARGET_FILE}, ${EDIT_TARGET_VERSION}, ${EDIT_CONTENT}, ${BROKEN_CONTENT}, ${L2_TARGET}, ${L3_TARGET}, ${VERIFY_TARGET}.",
   "cases": [
     {
       "id": "handshake-negotiates-capabilities",
@@ -12,10 +12,24 @@
       },
       "expectResultFields": [
         "protocolVersion",
+        "profile",
         "runtimeInfo.name",
         "runtimeInfo.version",
-        "capabilities"
+        "capabilities",
+        "sessionId"
       ]
+    },
+    {
+      "id": "unknown-session-is-rejected",
+      "level": 1,
+      "method": "oumv/observe",
+      "params": {
+        "level": "L1",
+        "sessionId": "sess-unknown"
+      },
+      "expectError": {
+        "code": -32011
+      }
     },
     {
       "id": "unknown-method-is-jsonrpc-method-not-found",
@@ -84,6 +98,20 @@
       "expectSha256Field": "data.version"
     },
     {
+      "id": "get-source-returns-occ-token",
+      "level": 2,
+      "method": "oumv/getSource",
+      "params": {
+        "path": "${EDIT_TARGET_FILE}"
+      },
+      "expectResultFields": [
+        "path",
+        "source",
+        "version"
+      ],
+      "expectSha256Field": "version"
+    },
+    {
       "id": "observe-l4-returns-recorded-traces",
       "level": 3,
       "method": "oumv/observe",
@@ -125,6 +153,20 @@
       ],
       "expectResultFields": [
         "causality.target"
+      ]
+    },
+    {
+      "id": "verify-returns-status-timings-and-scope",
+      "level": 2,
+      "method": "oumv/verify",
+      "params": {
+        "target": "${VERIFY_TARGET}",
+        "action": "conformance-probe"
+      },
+      "expectResultFields": [
+        "status",
+        "timings.t_total_ms",
+        "scope.checked"
       ]
     },
     {
@@ -207,7 +249,7 @@
       "expectVersionMatchesContent": "${EDIT_CONTENT}"
     }
   ],
-  "fixtureVersion": 2,
+  "fixtureVersion": 3,
   "levelDefinitions": {
     "1": "Handshake, L0-L1 observe, action verification",
     "2": "L2-L3 observe, impact analysis, OCC mutations, surface diffs",

@@ -859,15 +859,17 @@ func (r *Runtime) Verify(ctx context.Context, params *protocol.VerifyParams) (*p
 	return &protocol.VerifyResult{
 		Success:    rec.Code < 400,
 		Status:     status,
+		Target:     params.Target,
 		StatusCode: rec.Code,
 		Diff: map[string]interface{}{
 			"responseBody": rec.Body.String(),
 			"status":       rec.Code,
 		},
-		Latency: protocol.LatencyBreakdown{
-			HandlerMs: duration,
-			TotalMs:   duration,
+		Timings: protocol.LatencyBreakdown{
+			TActionMs: duration,
+			TTotalMs:  duration,
 		},
+		DurationMs: duration,
 		Scope: &protocol.VerifyScope{
 			Checked:      []string{"in-memory dispatch against the live handler"},
 			NotExecuted:  []string{"external processes", "real network", "persistent database state"},

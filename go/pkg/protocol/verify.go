@@ -9,13 +9,13 @@ type VerifyParams struct {
 	Method  string            `json:"method,omitempty"` // overrides the method in Target
 }
 
-// LatencyBreakdown decomposes execution time across layers.
+// LatencyBreakdown decomposes execution time across layers (spec §4.4 `timings`).
 type LatencyBreakdown struct {
-	RoutingMs    float64 `json:"routingMs,omitempty"`
-	MiddlewareMs float64 `json:"middlewareMs,omitempty"`
-	HandlerMs    float64 `json:"handlerMs,omitempty"`
-	DBMs         float64 `json:"dbMs,omitempty"`
-	TotalMs      float64 `json:"totalMs"`
+	TActionMs      float64 `json:"t_action_ms"`
+	TSchemaMs      float64 `json:"t_schema_ms"`
+	TPropagationMs float64 `json:"t_propagation_ms"`
+	TDomMs         float64 `json:"t_dom_ms"`
+	TTotalMs       float64 `json:"t_total_ms"`
 }
 
 // VerifyScope states what a verification actually covered (spec §4 Pillar 4).
@@ -27,12 +27,14 @@ type VerifyScope struct {
 
 // VerifyResult defines the response payload for `oumv/verify`.
 type VerifyResult struct {
-	Success      bool                   `json:"success"`
+	Success      bool                   `json:"success,omitempty"`
 	Status       string                 `json:"status"` // "passed" | "failed"
+	Target       string                 `json:"target,omitempty"`
 	StatusCode   int                    `json:"statusCode"`
 	Diff         map[string]interface{} `json:"diff,omitempty"`   // State or payload diff
 	DBDiff       map[string]interface{} `json:"dbDiff,omitempty"` // Database table row diff
-	Latency      LatencyBreakdown       `json:"latency"`
+	Timings      LatencyBreakdown       `json:"timings"`
+	DurationMs   float64                `json:"durationMs"`
 	Scope        *VerifyScope           `json:"scope,omitempty"`
 	ErrorMessage string                 `json:"errorMessage,omitempty"`
 }

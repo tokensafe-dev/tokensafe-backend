@@ -67,14 +67,18 @@ async def test_conformance_certification(tmp_path):
     assert report["specVersion"] == "1.1.0"
 
 
-def test_fixture_file_has_level_tagged_v2_shape():
+def test_fixture_file_has_level_tagged_v3_shape():
     data = json.loads(FIXTURES.read_text(encoding="utf-8"))
-    assert data["fixtureVersion"] == 2
+    assert data["fixtureVersion"] == 3
     assert data["protocolVersion"] == "1.1.0"
     assert sorted(data["levelDefinitions"]) == ["1", "2", "3"]
 
     levels = {case["level"] for case in data["cases"]}
     assert levels == {1, 2, 3}
+    ids = {case["id"] for case in data["cases"]}
+    for required in ("unknown-session-is-rejected", "get-source-returns-occ-token",
+                     "verify-returns-status-timings-and-scope"):
+        assert required in ids
 
     # OCC is mandatory: only the dedicated guard case may omit the version.
     edit_cases = [c for c in data["cases"] if c["method"] == "oumv/applyEdit"]

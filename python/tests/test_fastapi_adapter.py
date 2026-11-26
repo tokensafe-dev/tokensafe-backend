@@ -214,4 +214,4 @@ async def test_fastapi_oumv_standard_protocol(test_app):
         )
         assert ver_resp.status_code == 200
         ver_data = ver_resp.json()["result"]
-        assert ver_data["status"] == "PASS"
+        assert ver_data["status"] == "passed"

@@ -535,10 +535,24 @@ class OUMVRuntime:
             sim = await self.handle_mutation_simulate(
                 action={"type": "http_request", "path": path, "method": method, "body": payload}
             )
+            elapsed = float(sim.execution_time_ms or 0.0)
             return {
-                "status": "PASS" if sim.success else "FAIL",
+                "status": "passed" if sim.success else "failed",
+                "target": target,
                 "diff": sim.diff.model_dump() if sim.diff else {},
-                "latencyMs": sim.execution_time_ms,
+                "timings": {
+                    "t_action_ms": elapsed,
+                    "t_schema_ms": 0.0,
+                    "t_propagation_ms": 0.0,
+                    "t_dom_ms": 0.0,
+                    "t_total_ms": elapsed,
+                },
+                "durationMs": elapsed,
+                "scope": {
+                    "checked": ["in-process ASGI dispatch against the live app"],
+                    "notExecuted": ["external processes", "real network", "persistent database state"],
+                    "notSupported": ["browser/DOM assertions"],
+                },
                 "statusCode": sim.status_code,
                 "response": sim.response,
                 "rolledBack": sim.rolled_back,
@@ -546,10 +560,24 @@ class OUMVRuntime:
             }
         elif "action" in kwargs and isinstance(kwargs["action"], dict):
             sim = await self.handle_mutation_simulate(**kwargs)
+            elapsed = float(sim.execution_time_ms or 0.0)
             return {
-                "status": "PASS" if sim.success else "FAIL",
+                "status": "passed" if sim.success else "failed",
+                "target": target,
                 "diff": sim.diff.model_dump() if sim.diff else {},
-                "latencyMs": sim.execution_time_ms,
+                "timings": {
+                    "t_action_ms": elapsed,
+                    "t_schema_ms": 0.0,
+                    "t_propagation_ms": 0.0,
+                    "t_dom_ms": 0.0,
+                    "t_total_ms": elapsed,
+                },
+                "durationMs": elapsed,
+                "scope": {
+                    "checked": ["in-process ASGI dispatch against the live app"],
+                    "notExecuted": ["external processes", "real network", "persistent database state"],
+                    "notSupported": ["browser/DOM assertions"],
+                },
                 "statusCode": sim.status_code,
                 "response": sim.response,
                 "rolledBack": sim.rolled_back,
