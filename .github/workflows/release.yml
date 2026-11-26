@@ -56,6 +56,35 @@ jobs:
           name: tokensafe-python-dist
           path: python/dist/
 
+      - name: Setup pnpm
+        uses: pnpm/action-setup@v4
+        with:
+          version: 10
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: 22.x
+          registry-url: 'https://registry.npmjs.org'
+          cache: 'pnpm'
+          cache-dependency-path: node/pnpm-lock.yaml
+
+      # Idempotent: a backend tag that does not touch the Node adapter must not fail
+      # on an npm version that already exists.
+      - name: Publish tokensafe-backend-node (only when its version is new)
+        working-directory: node
+        run: |
+          VERSION=$(node -p "require('./package.json').version")
+          if npm view "tokensafe-backend-node@$VERSION" version >/dev/null 2>&1; then
+            echo "tokensafe-backend-node@$VERSION is already published — skipping"
+          else
+            pnpm install --no-frozen-lockfile
+            pnpm build
+            pnpm publish --access public --no-git-checks
+          fi
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+
       # go/ is a nested module, so `go get .../tokensafe-backend/go` only resolves
       # against a `go/vX.Y.Z` tag — a plain `vX.Y.Z` tag is invisible to the proxy
       # (it 404s on sum.golang.org). Keep both tags in sync automatically.
