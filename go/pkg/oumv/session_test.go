@@ -5,6 +5,7 @@ import (
 	"encoding/json"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 	"time"
 
@@ -105,7 +106,7 @@ func TestSessionExpiry(t *testing.T) {
 	}
 }
 
-func TestWriteDescriptorIs0600OutsideRepo(t *testing.T) {
+func TestWriteDescriptorMergesProfileRegistry(t *testing.T) {
 	home := t.TempDir()
 	t.Setenv("TOKENSAFE_HOME", home)
 	workspace := t.TempDir()
@@ -116,11 +117,13 @@ func TestWriteDescriptorIs0600OutsideRepo(t *testing.T) {
 		WorkspaceDir: workspace,
 		Runtime:      oumv.DefaultDevelopmentRuntimeConfig(),
 	})
+	rt.SetTransports("http", "sse", "ws")
+
 	path, err := rt.WriteDescriptor("http://127.0.0.1:8080/__oumv/rpc")
 	if err != nil {
 		t.Fatalf("write descriptor: %v", err)
 	}
-	if filepath.Dir(filepath.Dir(path)) != filepath.Join(home, "runtimes") && filepath.Dir(path) != filepath.Join(home, "runtimes") {
+	if filepath.Dir(path) != filepath.Join(home, "runtimes") {
 		t.Fatalf("descriptor must live under %s/runtimes, got %s", home, path)
 	}
 	info, err := os.Stat(path)
@@ -131,20 +134,58 @@ func TestWriteDescriptorIs0600OutsideRepo(t *testing.T) {
 		t.Fatalf("descriptor must be 0600, got %o", info.Mode().Perm())
 	}
 
+	var doc map[string]json.RawMessage
 	raw, err := os.ReadFile(path)
 	if err != nil {
 		t.Fatal(err)
 	}
-	var doc map[string]interface{}
 	if err := json.Unmarshal(raw, &doc); err != nil {
 		t.Fatal(err)
 	}
+	var backend map[string]interface{}
+	if err := json.Unmarshal(doc["backend"], &backend); err != nil {
+		t.Fatalf("registry has no backend entry: %s", raw)
+	}
 	for _, key := range []string{"type", "name", "version", "url", "capabilities"} {
-		if _, ok := doc[key]; !ok {
-			t.Fatalf("descriptor missing %q: %s", key, raw)
+		if _, ok := backend[key]; !ok {
+			t.Fatalf("backend entry missing %q: %s", key, raw)
 		}
 	}
-	if doc["type"] != "backend" {
-		t.Fatalf("expected type=backend, got %v", doc["type"])
+	if backend["type"] != "backend" {
+		t.Fatalf("expected type=backend, got %v", backend["type"])
+	}
+	caps := backend["capabilities"].(map[string]interface{})
+	if transports, _ := caps["transports"].([]interface{}); len(transports) != 3 {
+		t.Fatalf("expected mounted transports http/sse/ws, got %v", caps["transports"])
+	}
+
+	// A frontend entry written by the Vite plugin must survive a backend write and
+	// a backend delete: two runtimes share one workspace registry.
+	doc["frontend"] = json.RawMessage(`{"type":"frontend","name":"react","version":"19.0.0","url":"http://localhost:5173/__oumv/rpc","capabilities":{"observeLevels":["L0","L1","L2"],"transports":["http","sse","ws"]}}`)
+	merged, err := json.Marshal(doc)
+	if err != nil {
+		t.Fatal(err)
+	}
+	if err := os.WriteFile(path, merged, 0o600); err != nil {
+		t.Fatal(err)
+	}
+
+	if _, err := rt.WriteDescriptor("http://127.0.0.1:8080/__oumv/rpc"); err != nil {
+		t.Fatalf("rewrite descriptor: %v", err)
+	}
+	raw, _ = os.ReadFile(path)
+	if !strings.Contains(string(raw), `"frontend"`) {
+		t.Fatalf("rewrite dropped the frontend entry: %s", raw)
+	}
+
+	if err := rt.DeleteDescriptor(); err != nil {
+		t.Fatalf("delete descriptor: %v", err)
+	}
+	raw, _ = os.ReadFile(path)
+	if strings.Contains(string(raw), `"backend"`) {
+		t.Fatalf("delete must remove the backend entry: %s", raw)
+	}
+	if !strings.Contains(string(raw), `"frontend"`) {
+		t.Fatalf("delete must keep the frontend entry: %s", raw)
 	}
 }

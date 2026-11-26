@@ -69,23 +69,28 @@ type OumvHandshakeResult struct {
 func DefaultBackendCapabilities() OumvCapabilities {
 	return OumvCapabilities{
 		Observe: ObserveCapability{
-			Levels:  []string{"L0", "L1", "L2", "L3", "L4"},
-			Formats: []string{"json", "yaml"},
+			Levels: []string{"L0", "L1", "L2", "L3", "L4"},
+			// JSON only: the Go runtime returns typed data, never YAML.
+			Formats: []string{"json"},
 		},
 		Understand: UnderstandCapability{
-			Causality:   true,
-			TypeGraph:   true,
+			Causality: true,
+			// Impact comes from the registered route graph, not Go type
+			// inference — advertising typeGraph would be a false claim.
+			TypeGraph:   false,
 			ImpactGraph: true,
 		},
 		Mutate: MutateCapability{
 			OCC:         true,
 			SyntaxGuard: true,
-			TypeGuard:   true,
+			TypeGuard:   false,
 		},
 		Verify: VerifyCapability{
 			MultiMetric: true,
-			DBSandbox:   true,
-			PayloadDiff: true,
+			// Verification runs the real handler in-memory; no DB sandbox and no
+			// expected/actual payload diff are produced.
+			DBSandbox:   false,
+			PayloadDiff: false,
 		},
 	}
 }

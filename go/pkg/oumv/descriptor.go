@@ -29,7 +29,8 @@ type DescriptorCapacitiy struct {
 }
 
 // DescriptorPath returns ~/.tokensafe/runtimes/<sha256(realpath(workspace))[:16]>.json
-// (TOKENSAFE_HOME overrides the root).
+// (TOKENSAFE_HOME overrides the root). The file is a registry keyed by profile, so a
+// React frontend and a Go backend in one workspace never overwrite each other.
 func DescriptorPath(workspace string) string {
 	home := os.Getenv("TOKENSAFE_HOME")
 	if home == "" {
@@ -39,18 +40,46 @@ func DescriptorPath(workspace string) string {
 			home = ".tokensafe"
 		}
 	}
+	sum := sha256.Sum256([]byte(realWorkspace(workspace)))
+	return filepath.Join(home, "runtimes", hex.EncodeToString(sum[:])[:16]+".json")
+}
+
+func realWorkspace(workspace string) string {
 	real, err := filepath.Abs(workspace)
 	if err != nil {
 		real = workspace
 	}
-	sum := sha256.Sum256([]byte(real))
-	return filepath.Join(home, "runtimes", hex.EncodeToString(sum[:])[:16]+".json")
+	if resolved, resolveErr := filepath.EvalSymlinks(real); resolveErr == nil {
+		real = resolved
+	}
+	return real
 }
 
-// WriteDescriptor writes the discovery file with mode 0600, never into the repo.
+// transportsOrDefault reports the transports this runtime actually mounted: the
+// registry must not advertise SSE/WS for a runtime that only serves HTTP.
+func (r *Runtime) transportsOrDefault() []string {
+	if len(r.transports) > 0 {
+		return r.transports
+	}
+	return []string{"http"}
+}
+
+// SetTransports records the transports an adapter mounted (http, sse, ws).
+func (r *Runtime) SetTransports(transports ...string) {
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.transports = transports
+}
+
+// WriteDescriptor registers this runtime in the workspace discovery registry
+// (mode 0600, never inside the repository), preserving other profile entries.
 func (r *Runtime) WriteDescriptor(publicURL string) (string, error) {
 	path := DescriptorPath(r.workspaceDir)
 	if err := os.MkdirAll(filepath.Dir(path), 0o755); err != nil {
+		return "", err
+	}
+	registry, err := readRegistry(path)
+	if err != nil {
 		return "", err
 	}
 	levels := []string{"L0", "L1", "L2", "L3", "L4"}
@@ -60,21 +89,74 @@ func (r *Runtime) WriteDescriptor(publicURL string) (string, error) {
 		Version:      r.version,
 		URL:          publicURL,
 		SessionToken: r.config.Security.AuthToken,
-		Workspace:    r.workspaceDir,
-		Capabilities: DescriptorCapacitiy{ObserveLevels: levels, Transports: []string{"http", "stdio"}},
+		Workspace:    realWorkspace(r.workspaceDir),
+		Capabilities: DescriptorCapacitiy{ObserveLevels: levels, Transports: r.transportsOrDefault()},
 		StartedAt:    time.Now().UTC().Format(time.RFC3339),
 	}
 	raw, err := json.MarshalIndent(descriptor, "", "  ")
 	if err != nil {
 		return "", err
 	}
-	if err := os.WriteFile(path, append(raw, '\n'), 0o600); err != nil {
-		return "", err
-	}
-	return path, nil
+	registry["backend"] = raw
+	registry["workspaceRoot"] = mustJSON(realWorkspace(r.workspaceDir))
+	registry["pid"] = mustJSON(os.Getpid())
+	registry["updatedAt"] = mustJSON(time.Now().UnixMilli())
+	return path, writeRegistry(path, registry)
 }
 
-// DeleteDescriptor removes the discovery file (clean shutdown).
+// DeleteDescriptor drops this runtime's entry (clean shutdown) and removes the
+// file once no profile is left in it.
 func (r *Runtime) DeleteDescriptor() error {
-	return os.Remove(DescriptorPath(r.workspaceDir))
+	path := DescriptorPath(r.workspaceDir)
+	registry, err := readRegistry(path)
+	if err != nil {
+		return err
+	}
+	delete(registry, "backend")
+	if _, ok := registry["frontend"]; !ok {
+		return os.Remove(path)
+	}
+	return writeRegistry(path, registry)
+}
+
+func mustJSON(value interface{}) json.RawMessage {
+	raw, err := json.Marshal(value)
+	if err != nil {
+		return json.RawMessage("null")
+	}
+	return raw
+}
+
+// readRegistry keeps unknown profile sections (written by the frontend or a newer
+// adapter) byte-for-byte, so writers of different profiles merge instead of clobber.
+func readRegistry(path string) (map[string]json.RawMessage, error) {
+	registry := map[string]json.RawMessage{}
+	raw, err := os.ReadFile(path)
+	if err != nil {
+		if os.IsNotExist(err) {
+			return registry, nil
+		}
+		return nil, err
+	}
+	if len(raw) == 0 {
+		return registry, nil
+	}
+	if err := json.Unmarshal(raw, &registry); err != nil {
+		// A corrupt registry must not block starting a runtime.
+		return map[string]json.RawMessage{}, nil
+	}
+	return registry, nil
+}
+
+func writeRegistry(path string, registry map[string]json.RawMessage) error {
+	raw, err := json.MarshalIndent(registry, "", "  ")
+	if err != nil {
+		return err
+	}
+	raw = append(raw, '\n')
+	temp := path + ".tmp"
+	if err := os.WriteFile(temp, raw, 0o600); err != nil {
+		return err
+	}
+	return os.Rename(temp, path)
 }

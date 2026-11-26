@@ -224,10 +224,13 @@ class OUMVRuntime:
                 "framework": self.framework,
             },
             "capabilities": {
-                "observe": {"levels": ["L0", "L1", "L2", "L3", "L4"], "formats": ["json", "yaml"]},
-                "understand": {"causality": True, "signalsGraph": True, "impactAnalysis": True},
+                # JSON only (no YAML emitter), no frontend signals graph: the backend
+                # answers causality from its own causality graph, not reactive signals.
+                "observe": {"levels": ["L0", "L1", "L2", "L3", "L4"], "formats": ["json"]},
+                "understand": {"causality": True, "signalsGraph": False, "impactAnalysis": True},
                 "mutate": {"occ": True, "syntaxGuard": True, "ephemeralDispatch": False},
-                "verify": {"multiMetric": True, "surfaceDiff": True},
+                # No DOM/a11y surface exists on the backend profile.
+                "verify": {"multiMetric": True, "surfaceDiff": False},
             },
         }
 
@@ -583,7 +586,11 @@ class OUMVRuntime:
                 "rolledBack": sim.rolled_back,
                 "rollbackStatus": sim.rollback_status,
             }
-        return {"status": "PASS", "details": "No assertions provided"}
+        # Nothing to check is not a pass (spec §4.4): ask for a target/action instead.
+        raise OumvError(
+            VALIDATION_FAILED,
+            "VALIDATION_FAILED: verify requires a target, an action, or assertions",
+        )
 
     async def handle_state_read(self, scope: Optional[str] = "all") -> StateReadResult:
         """Reads current runtime state, schemas, and routes."""

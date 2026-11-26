@@ -252,6 +252,7 @@ class TokenSafeFastAPI:
                     name="tokensafe-python",
                     version="0.3.0",
                     session_token="",
+                    transports=["http", "sse", "ws"],
                 )
             except Exception:
                 pass

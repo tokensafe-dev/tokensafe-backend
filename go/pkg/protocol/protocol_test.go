@@ -76,10 +76,17 @@ func TestDefaultCapabilities(t *testing.T) {
 	if len(caps.Observe.Levels) != 5 {
 		t.Errorf("expected 5 observe levels, got %d", len(caps.Observe.Levels))
 	}
-	if !caps.Mutate.OCC || !caps.Mutate.SyntaxGuard || !caps.Mutate.TypeGuard {
+	if !caps.Mutate.OCC || !caps.Mutate.SyntaxGuard {
 		t.Errorf("expected mutate safeguards to be enabled: %+v", caps.Mutate)
 	}
-	if !caps.Verify.MultiMetric || !caps.Verify.DBSandbox {
-		t.Errorf("expected verify capabilities to be enabled: %+v", caps.Verify)
+	if !caps.Verify.MultiMetric {
+		t.Errorf("expected verify multi-metric timings to be enabled: %+v", caps.Verify)
+	}
+	// Spec §10: never advertise a capability the runtime does not implement.
+	if caps.Mutate.TypeGuard || caps.Verify.DBSandbox || caps.Verify.PayloadDiff || caps.Understand.TypeGraph {
+		t.Errorf("capabilities over-claim unimplemented features: %+v", caps)
+	}
+	if len(caps.Observe.Formats) != 1 || caps.Observe.Formats[0] != "json" {
+		t.Errorf("observe must advertise json only, got %v", caps.Observe.Formats)
 	}
 }

@@ -71,7 +71,7 @@ async def test_disconnect_invalidates_the_session():
     assert mounted.runtime.sessions.count() == 0
 
 
-def test_descriptor_is_written_outside_the_repo_with_0600():
+def test_descriptor_registers_backend_without_dropping_frontend():
     home = tempfile.mkdtemp(prefix="tokensafe_home_")
     workspace = tempfile.mkdtemp(prefix="tokensafe_ws_")
     previous = os.environ.get("TOKENSAFE_HOME")
@@ -82,6 +82,7 @@ def test_descriptor_is_written_outside_the_repo_with_0600():
             url="http://127.0.0.1:8000/__oumv/rpc",
             name="tokensafe-python",
             version="0.3.0",
+            transports=["http", "sse", "ws"],
         )
         assert path.startswith(os.path.join(home, "runtimes"))
         assert workspace not in path.replace(os.path.realpath(workspace), "")
@@ -89,10 +90,36 @@ def test_descriptor_is_written_outside_the_repo_with_0600():
         mode = stat.S_IMODE(os.stat(path).st_mode)
         assert mode == 0o600
 
-        payload = json.load(open(path, encoding="utf-8"))
+        registry = json.load(open(path, encoding="utf-8"))
+        backend = registry["backend"]
         for key in ("type", "name", "version", "url", "capabilities"):
-            assert key in payload
-        assert payload["capabilities"]["observeLevels"]
+            assert key in backend
+        assert backend["type"] == "backend"
+        assert backend["capabilities"]["observeLevels"]
+        assert backend["capabilities"]["transports"] == ["http", "sse", "ws"]
+
+        # A frontend entry written by the Vite plugin shares the file (spec §9.2).
+        registry["frontend"] = {
+            "type": "frontend",
+            "name": "react",
+            "version": "19.0.0",
+            "url": "http://localhost:5173/__oumv/rpc",
+            "capabilities": {"observeLevels": ["L0", "L1", "L2"], "transports": ["http", "sse", "ws"]},
+        }
+        json.dump(registry, open(path, "w", encoding="utf-8"))
+
+        session_mod.write_descriptor(
+            project_root=workspace,
+            url="http://127.0.0.1:8000/__oumv/rpc",
+            name="tokensafe-python",
+            version="0.3.0",
+        )
+        assert "frontend" in json.load(open(path, encoding="utf-8"))
+
+        session_mod.delete_descriptor(workspace)
+        remaining = json.load(open(path, encoding="utf-8"))
+        assert "backend" not in remaining
+        assert "frontend" in remaining
     finally:
         if previous is None:
             os.environ.pop("TOKENSAFE_HOME", None)

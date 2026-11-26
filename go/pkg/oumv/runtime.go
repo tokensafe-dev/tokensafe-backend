@@ -48,6 +48,7 @@ type Runtime struct {
 	traces       []requestTrace
 	traceIdx     int
 	sessions     *SessionRegistry
+	transports   []string
 	mu           sync.RWMutex
 }
 

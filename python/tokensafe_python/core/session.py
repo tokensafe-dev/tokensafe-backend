@@ -52,6 +52,28 @@ def descriptor_path(project_root: str, home: Optional[str] = None) -> str:
     return os.path.join(root, "runtimes", f"{digest}.json")
 
 
+def _read_registry(path: str) -> dict:
+    import json
+
+    try:
+        with open(path, "r", encoding="utf-8") as handle:
+            data = json.load(handle)
+        return data if isinstance(data, dict) else {}
+    except (OSError, ValueError):
+        # A missing or corrupt registry must not block starting a runtime.
+        return {}
+
+
+def _write_registry(path: str, registry: dict) -> None:
+    import json
+    import stat
+
+    with open(path, "w", encoding="utf-8") as handle:
+        json.dump(registry, handle, indent=2)
+        handle.write("\n")
+    os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
+
+
 def write_descriptor(
     project_root: str,
     url: str,
@@ -59,34 +81,47 @@ def write_descriptor(
     version: str,
     session_token: str = "",
     observe_levels: Optional[list] = None,
+    transports: Optional[list] = None,
 ) -> str:
-    """Writes the discovery descriptor outside the repository, mode 0600."""
-    import json
-    import stat
+    """Registers this runtime in the workspace discovery registry (mode 0600).
 
+    The file is keyed by profile (spec §9.2): a React frontend served by `tokensafe dev`
+    and this backend share one file, so a backend write preserves the frontend entry.
+    """
     path = descriptor_path(project_root)
     os.makedirs(os.path.dirname(path), exist_ok=True)
-    payload = {
+    registry = _read_registry(path)
+    registry["backend"] = {
         "type": "backend",
         "name": name,
         "version": version,
         "url": url,
         "sessionToken": session_token,
-        "workspace": os.path.abspath(project_root),
+        "workspace": os.path.realpath(project_root),
         "capabilities": {
             "observeLevels": observe_levels or ["L0", "L1", "L2", "L3", "L4"],
-            "transports": ["http"],
+            "transports": transports or ["http"],
         },
         "startedAt": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
     }
-    with open(path, "w", encoding="utf-8") as handle:
-        json.dump(payload, handle, indent=2)
-    os.chmod(path, stat.S_IRUSR | stat.S_IWUSR)
+    registry["workspaceRoot"] = os.path.realpath(project_root)
+    registry["pid"] = os.getpid()
+    registry["updatedAt"] = int(time.time() * 1000)
+    _write_registry(path, registry)
     return path
 
 
 def delete_descriptor(project_root: str) -> None:
-    try:
-        os.unlink(descriptor_path(project_root))
-    except OSError:
-        pass
+    """Removes only this runtime's entry; other profiles keep the file alive."""
+    path = descriptor_path(project_root)
+    registry = _read_registry(path)
+    if not registry:
+        return
+    registry.pop("backend", None)
+    if "frontend" in registry:
+        _write_registry(path, registry)
+    else:
+        try:
+            os.unlink(path)
+        except OSError:
+            pass
