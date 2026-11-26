@@ -16,7 +16,7 @@
 
 ## Highlights
 
-- **✅ Certified OUMV adapters (spec §10)**: Gin, Chi, `net/http`, FastAPI, Express and Fastify each pass all 20 language-neutral conformance cases (fixtures v5) over their real transport — Level 3, reports committed under [`certification/`](certification/) and reproduced in CI.
+- **✅ Certified OUMV adapters (spec §10)**: Gin, Chi, `net/http`, FastAPI, Express and Fastify each pass the language-neutral conformance suite over their real transport — Level 3, reports committed under [`certification/`](certification/) and reproduced in CI. Exact counts are generated below.
 - **🛡️ In-Memory Compiler Pre-Flight Guard**: AST-guided symbol edits validated in memory via `go/parser` and `go/types` in <5ms—blocking non-compiling edits before touching the disk.
 - **🔄 Zero Database Pollution**: In-memory transactional dry-runs (`net/http/httptest` + `pkg/db`) execute with guaranteed `ROLLBACK`, eliminating state contamination across test cycles.
 - **🔍 Progressive Context Disclosure (L0–L4)**: Replaces 3,000+ token file crawls with compact pulse (`L0`, ~20 tokens), endpoint surfaces (`L1`, ~110 tokens), and reflected schemas (`L2`, ~60 tokens).
@@ -26,16 +26,18 @@
 
 ## Certification (spec §10)
 
-Every adapter is certified by running the same language-neutral fixtures (`fixtures/conformance-cases.json` v5, 20 cases across levels 1–3) over the real transport an agent uses. Reports are committed and regenerated in CI.
+<!-- certification:start -->
+**6 adapters certified at Level 3** — 20 language-neutral cases (`fixtureVersion` 5) over the transport an agent actually uses. Generated from `certification/*.json` by `scripts/render_certification.py`; CI fails when this block no longer matches the reports.
 
 | Adapter | Framework | Transport exercised | Level | Cases | Report |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `go-gin` | Gin | HTTP `POST /__oumv/rpc` | **3** | 20/20 | [certification/go-gin.json](certification/go-gin.json) |
 | `go-chi` | chi | HTTP `POST /__oumv/rpc` | **3** | 20/20 | [certification/go-chi.json](certification/go-chi.json) |
+| `go-gin` | Gin | HTTP `POST /__oumv/rpc` | **3** | 20/20 | [certification/go-gin.json](certification/go-gin.json) |
 | `go-stdhttp` | net/http | HTTP `POST /__oumv/rpc` | **3** | 20/20 | [certification/go-stdhttp.json](certification/go-stdhttp.json) |
-| `python-fastapi` | FastAPI | ASGI `POST /__oumv/rpc` | **3** | 20/20 | [certification/python-fastapi.json](certification/python-fastapi.json) |
 | `node-express` | Express | Node `POST /__oumv/rpc` | **3** | 20/20 | [certification/node-express.json](certification/node-express.json) |
 | `node-fastify` | Fastify | Node `POST /__oumv/rpc` | **3** | 20/20 | [certification/node-fastify.json](certification/node-fastify.json) |
+| `python-fastapi` | FastAPI | ASGI `POST /__oumv/rpc` | **3** | 20/20 | [certification/python-fastapi.json](certification/python-fastapi.json) |
+<!-- certification:end -->
 
 Levels are cumulative and a skipped case never counts as a pass — a missing capability caps the claim instead of inflating it. Regenerate locally:
 

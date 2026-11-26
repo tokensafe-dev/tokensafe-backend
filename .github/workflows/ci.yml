@@ -167,3 +167,6 @@ jobs:
       - name: Compare with committed reports
         run: python3 scripts/check_certification.py cert-fresh certification
 
+      - name: README certification block is current
+        run: python3 scripts/render_certification.py --check
+
