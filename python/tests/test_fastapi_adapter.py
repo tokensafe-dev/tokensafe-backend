@@ -163,7 +163,7 @@ async def test_fastapi_oumv_standard_protocol(test_app):
         )
         assert hs_resp.status_code == 200
         hs_data = hs_resp.json()["result"]
-        assert hs_data["protocolVersion"] == "1.0.0"
+        assert hs_data["protocolVersion"] == "1.1.0"
         assert hs_data["runtimeInfo"]["name"] == "tokensafe-python"
         assert "L0" in hs_data["capabilities"]["observe"]["levels"]
 
@@ -174,8 +174,8 @@ async def test_fastapi_oumv_standard_protocol(test_app):
         )
         assert obs_resp.status_code == 200
         obs_data = obs_resp.json()["result"]
-        assert obs_data["status"] == "HEALTHY"
-        assert obs_data["routesCount"] >= 2
+        assert obs_data["data"]["status"] == "HEALTHY"
+        assert obs_data["data"]["routesCount"] >= 2
 
         # 3. oumv/observe L1 (Surface)
         obs_l1_resp = await client.post(
@@ -184,7 +184,7 @@ async def test_fastapi_oumv_standard_protocol(test_app):
         )
         assert obs_l1_resp.status_code == 200
         l1_data = obs_l1_resp.json()["result"]
-        assert any(ep["path"] == "/items" for ep in l1_data["endpoints"])
+        assert any(ep["path"] == "/items" for ep in l1_data["data"]["endpoints"])
 
         # 4. oumv/understand (Causality)
         und_resp = await client.post(

@@ -68,9 +68,9 @@ async def test_l2_exposes_declared_operation_contract():
             json={"jsonrpc": "2.0", "id": 1, "method": "oumv/observe", "params": {"level": "L2", "target": "orders.cancel"}},
         )
     result = resp.json()["result"]
-    assert result["operation"]["id"] == "orders.cancel"
-    assert result["operation"]["inputSchema"] == {"order_id": "int"}
-    assert "Order status must become cancelled" in result["operation"]["verification"]
+    assert result["data"]["operation"]["id"] == "orders.cancel"
+    assert result["data"]["operation"]["inputSchema"] == {"order_id": "int"}
+    assert "Order status must become cancelled" in result["data"]["operation"]["verification"]
 
     # L2 without target lists all declared operations
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -78,7 +78,7 @@ async def test_l2_exposes_declared_operation_contract():
             "/__oumv/rpc",
             json={"jsonrpc": "2.0", "id": 2, "method": "oumv/observe", "params": {"level": "L2"}},
         )
-    operations = resp.json()["result"]["operations"]
+    operations = resp.json()["result"]["data"]["operations"]
     assert any(op["id"] == "orders.cancel" for op in operations)
 
 

@@ -56,6 +56,7 @@ async def test_real_edit_returns_true_occ_version(occ_app):
     body = await _rpc(app, "oumv/applyEdit", {
         "path": "service.py",
         "replacement": "def compute():\n    return 2\n",
+        "expectedVersion": _sha256_of(root / "service.py"),
     })
     result = body["result"]
     assert result["status"] == "APPLIED"
@@ -95,6 +96,7 @@ async def test_syntax_guard_returns_32002(occ_app):
     body = await _rpc(app, "oumv/applyEdit", {
         "path": "service.py",
         "replacement": "def broken(:\n    return 0\n",
+        "expectedVersion": _sha256_of(root / "service.py"),
     })
     err = body["error"]
     assert err["code"] == -32002
@@ -127,11 +129,27 @@ async def test_missing_file_returns_32009(occ_app):
 
 
 @pytest.mark.asyncio
+async def test_missing_expected_version_returns_32011(occ_app):
+    app, root = occ_app
+    body = await _rpc(app, "oumv/applyEdit", {
+        "path": "service.py",
+        "replacement": "def compute():\n    return 9\n",
+    })
+    err = body["error"]
+    assert err["code"] == -32011
+    assert "expectedVersion" in err["message"]
+    # Blind writes never touch the file
+    with open(root / "service.py", encoding="utf-8") as f:
+        assert f.read() == "def compute():\n    return 1\n"
+
+
+@pytest.mark.asyncio
 async def test_uncheckable_extension_reports_skipped(occ_app):
     app, root = occ_app
     body = await _rpc(app, "oumv/applyEdit", {
         "path": "notes.txt",
         "replacement": "updated text\n",
+        "expectedVersion": _sha256_of(root / "notes.txt"),
     })
     result = body["result"]
     assert result["status"] == "APPLIED"

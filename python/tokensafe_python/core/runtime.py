@@ -21,6 +21,7 @@ from tokensafe_python.protocol.errors import (
     SYNTAX_ERROR,
     SECURITY_VIOLATION,
     RESOURCE_NOT_FOUND,
+    UNSUPPORTED_CAPABILITY,
     VALIDATION_FAILED,
 )
 from tokensafe_python.protocol.rpc import JSONRPCHandler
@@ -51,6 +52,9 @@ class OUMVRuntime:
         self._schemas: Dict[str, Any] = {}
         self._operations: Dict[str, Dict[str, Any]] = {}
         self._action_executor: Optional[Callable] = None
+        # L4 evidence: bounded ring of observed RPC executions (never fabricated).
+        self._traces: List[Dict[str, Any]] = []
+        self._trace_limit = 128
 
         self._bind_rpc_methods()
 
@@ -92,93 +96,209 @@ class OUMVRuntime:
 
     def _bind_rpc_methods(self):
         """Binds JSON-RPC methods to runtime handlers."""
-        # Standard OUMV Protocol (UARP v1.0)
-        self.rpc.register("oumv/handshake", self.handle_handshake)
-        self.rpc.register("oumv/observe", self.handle_observe)
-        self.rpc.register("oumv/understand", self.handle_understand)
-        self.rpc.register("oumv/mutate", self.handle_oumv_mutate)
-        self.rpc.register("oumv/applyEdit", self.handle_oumv_mutate)
-        self.rpc.register("oumv/verify", self.handle_oumv_verify)
+        # Standard OUMV Protocol (UARP v1.1)
+        bindings = [
+            ("oumv/handshake", self.handle_handshake),
+            ("oumv/observe", self.handle_observe),
+            ("oumv/understand", self.handle_understand),
+            ("oumv/getSource", self.handle_get_source),
+            ("oumv/mutate", self.handle_oumv_mutate),
+            ("oumv/applyEdit", self.handle_oumv_mutate),
+            ("oumv/verify", self.handle_oumv_verify),
+            # Extended TokenSafe state & causality APIs
+            ("state.read", self.handle_state_read),
+            ("state.diff", self.handle_state_diff),
+            ("causality.query", self.handle_causality_query),
+            ("causality.trace", self.handle_causality_trace),
+            ("mutation.simulate", self.handle_mutation_simulate),
+            ("mutation.apply", self.handle_mutation_apply),
+            ("verification.assert", self.handle_verification_assert),
+        ]
+        for method, handler in bindings:
+            self.rpc.register(method, self._recorded(method, handler))
 
-        # Extended TokenSafe state & causality APIs
-        self.rpc.register("state.read", self.handle_state_read)
-        self.rpc.register("state.diff", self.handle_state_diff)
-        self.rpc.register("causality.query", self.handle_causality_query)
-        self.rpc.register("causality.trace", self.handle_causality_trace)
-        self.rpc.register("mutation.simulate", self.handle_mutation_simulate)
-        self.rpc.register("mutation.apply", self.handle_mutation_apply)
-        self.rpc.register("verification.assert", self.handle_verification_assert)
+    def _recorded(self, method: str, handler: Callable):
+        """Wraps a handler to record L4 trace evidence for every RPC execution."""
+
+        async def wrapper(**kwargs):
+            start = time.perf_counter()
+            error = ""
+            try:
+                return await handler(**kwargs)
+            except OumvError as exc:
+                error = exc.message
+                raise
+            except Exception as exc:  # noqa: BLE001 - recorded, then re-raised
+                error = str(exc)
+                raise
+            finally:
+                elapsed_ms = (time.perf_counter() - start) * 1000.0
+                self._record_trace(
+                    method=method,
+                    target=str(kwargs.get("target") or kwargs.get("path") or ""),
+                    duration_ms=elapsed_ms,
+                    error=error,
+                )
+
+        return wrapper
+
+    def _record_trace(self, method: str, target: str, duration_ms: float, error: str = "") -> None:
+        """Appends one observed execution to the bounded trace ring."""
+        trace = {
+            "method": method,
+            "target": target,
+            "statusCode": 500 if error else 200,
+            "durationMs": round(duration_ms, 3),
+            "error": error,
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+        }
+        if len(self._traces) >= self._trace_limit:
+            self._traces.pop(0)
+        self._traces.append(trace)
+
+    def _traces_for(self, target: Optional[str]) -> List[Dict[str, Any]]:
+        """Returns recorded traces (newest first), filtered by target when given."""
+        traces = list(reversed(self._traces))
+        if not target:
+            return traces
+        return [t for t in traces if target in (t["target"], t["method"]) or t["target"].startswith(target)]
+
+    def _read_source(self, path: Optional[str], symbol: Optional[str] = None) -> Dict[str, Any]:
+        """Reads project source with its sha256 OCC token (L3 / getSource)."""
+        abs_path = self._resolve_project_file(path or "")
+        if not abs_path or not os.path.isfile(abs_path):
+            raise OumvError(RESOURCE_NOT_FOUND, f"RESOURCE_NOT_FOUND: {path}")
+        with open(abs_path, "rb") as f:
+            data = f.read()
+        try:
+            text = data.decode("utf-8")
+        except UnicodeDecodeError:
+            raise OumvError(VALIDATION_FAILED, f"VALIDATION_FAILED: {path} is not valid UTF-8 source")
+        version = "sha256:" + hashlib.sha256(data).hexdigest()
+        start_line, end_line = 1, text.count("\n") + (0 if text.endswith("\n") else 1)
+        source = text
+        if symbol:
+            lines = text.splitlines()
+            start = next((i for i, line in enumerate(lines) if symbol in line), None)
+            if start is None:
+                raise OumvError(RESOURCE_NOT_FOUND, f"RESOURCE_NOT_FOUND: symbol {symbol!r} not found in {path}")
+            indent = len(lines[start]) - len(lines[start].lstrip())
+            end = start
+            for i in range(start + 1, len(lines)):
+                line = lines[i]
+                if line.strip() and (len(line) - len(line.lstrip())) <= indent:
+                    break
+                end = i
+            source = "\n".join(lines[start:end + 1])
+            start_line, end_line = start + 1, end + 1
+        return {
+            "path": path,
+            "symbol": symbol or "",
+            "source": source,
+            "version": version,
+            "startLine": start_line,
+            "endLine": end_line,
+        }
 
     async def handle_handshake(self, **kwargs) -> Dict[str, Any]:
-        """UARP / OUMV Protocol Handshake (Session lifecycle & capability negotiation)."""
+        """UARP / OUMV Protocol Handshake (session lifecycle & capability negotiation)."""
         return {
-            "protocolVersion": "1.0.0",
+            "protocolVersion": "1.1.0",
+            "profile": "backend",
             "runtimeInfo": {
                 "name": "tokensafe-python",
-                "version": "0.2.0",
+                "version": "0.3.0",
                 "framework": self.framework,
             },
             "capabilities": {
                 "observe": {"levels": ["L0", "L1", "L2", "L3", "L4"], "formats": ["json", "yaml"]},
-                "understand": {"causality": True, "signalsGraph": True, "impact": True},
-                "mutate": {"occ": True, "syntaxGuard": True, "simulate": True},
-                "verify": {"multiMetric": True, "surfaceDiff": True, "assertions": True},
+                "understand": {"causality": True, "signalsGraph": True, "impactAnalysis": True},
+                "mutate": {"occ": True, "syntaxGuard": True, "ephemeralDispatch": False},
+                "verify": {"multiMetric": True, "surfaceDiff": True},
             },
         }
 
+    async def handle_get_source(self, path: Optional[str] = None, symbol: Optional[str] = None, **kwargs) -> Dict[str, Any]:
+        """Pillar 3A: source with the sha256 OCC token (same contract as Go)."""
+        return self._read_source(path, symbol)
+
     async def handle_observe(self, level: str = "L0", target: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-        """Progressive context observation (L0 Pulse, L1 Surface, L2 Contract, L3 Source, L4 Traces)."""
+        """Progressive context observation (L0 Pulse, L1 Surface, L2 Contract, L3 Source, L4 Traces).
+
+        Returns the protocol envelope `{level, format, data, tokenEstimate}` so an
+        agent parses one shape across the frontend and backend profiles.
+        """
         lvl = (level or "L0").upper()
         if lvl == "L0":
-            return {
+            data: Dict[str, Any] = {
                 "status": "HEALTHY",
                 "framework": self.framework,
                 "routesCount": len(self._routes),
                 "modelsCount": len(self._schemas),
                 "timestamp": self.state.to_timestamp(),
             }
+            token_estimate = 30
         elif lvl == "L1":
-            endpoints = [
-                {"method": r["method"], "path": r["path"], "summary": r.get("summary", "")}
-                for r in self._routes
-            ]
-            models = list(self._schemas.keys())
-            return {
+            data = {
                 "framework": self.framework,
-                "endpoints": endpoints,
-                "models": models,
+                "endpoints": [
+                    {"method": r["method"], "path": r["path"], "summary": r.get("summary", "")}
+                    for r in self._routes
+                ],
+                "models": list(self._schemas.keys()),
             }
+            token_estimate = 30 + 15 * len(self._routes)
         elif lvl == "L2":
+            evidence = {"provenance": "runtime", "sourceAdapter": "tokensafe-python", "confidence": "confirmed"}
             if target:
                 if target in self._operations:
-                    return {"operation": self._operations[target]}
-                if target in self._schemas:
-                    return {"model": target, "schema": self._schemas[target]}
-                matching = [r for r in self._routes if target in (r["path"], f"{r['method']} {r['path']}")]
-                if matching:
-                    return {"routes": matching}
-            return {
-                "models": self._schemas,
-                "routes": self._routes,
-                "operations": list(self._operations.values()),
-            }
+                    data = {"target": target, "operation": self._operations[target], "evidence": evidence}
+                elif target in self._schemas:
+                    data = {"target": target, "model": target, "schema": self._schemas[target], "evidence": evidence}
+                else:
+                    matching = [r for r in self._routes if target in (r["path"], f"{r['method']} {r['path']}")]
+                    if not matching:
+                        raise OumvError(
+                            RESOURCE_NOT_FOUND,
+                            f"RESOURCE_NOT_FOUND: no operation, model or route matches {target!r}",
+                        )
+                    data = {"target": target, "routes": matching, "evidence": evidence}
+            else:
+                data = {
+                    "models": self._schemas,
+                    "routes": self._routes,
+                    "operations": list(self._operations.values()),
+                    "evidence": evidence,
+                }
+            token_estimate = 80
         elif lvl == "L3":
-            if target:
-                matching = [r for r in self._routes if target in (r["path"], f"{r['method']} {r['path']}", r.get("handler", ""))]
-                if matching:
-                    return {"target": target, "routes": matching}
-            return {"routes": self._routes}
+            if not target:
+                raise OumvError(VALIDATION_FAILED, "VALIDATION_FAILED: L3 observe requires a target (path or path#symbol)")
+            path, _, symbol = target.partition("#")
+            data = self._read_source(path, symbol or None)
+            token_estimate = 300
         elif lvl == "L4":
-            return {
-                "state": self.state.get_snapshot(),
-                "causalityNodes": len(self.causality._nodes),
-                "causalityEdges": len(self.causality._edges),
-                "routes": self._routes,
+            traces = self._traces_for(target)
+            data = {
+                "target": target or "",
+                "traces": traces,
+                "traceCount": len(traces),
+                "note": "" if traces else "no RPC traces recorded yet: call oumv/verify or execute a request first",
+                "evidence": {"provenance": "runtime", "sourceAdapter": "tokensafe-python", "confidence": "confirmed"},
             }
-        return {"error": f"Unsupported level: {level}"}
+            token_estimate = 40 + 15 * len(traces)
+        else:
+            raise OumvError(UNSUPPORTED_CAPABILITY, f"UNSUPPORTED_CAPABILITY: observe level {lvl}")
+
+        return {"level": lvl, "format": "json", "data": data, "tokenEstimate": token_estimate}
 
     async def handle_understand(self, query: str = "causality", target: Optional[str] = None, **kwargs) -> Dict[str, Any]:
-        """Understands runtime causality, why_state, or structural impact analysis."""
+        """Understands runtime causality, why_state, or structural impact analysis.
+
+        Causality is answered from recorded RPC traces when they exist and says so
+        when they do not — the static graph is reported as evidence, never as an
+        observed execution.
+        """
         if query in ("causality", "why_state"):
             endpoint = kwargs.get("endpoint")
             model = kwargs.get("model")
@@ -187,13 +307,43 @@ class OUMVRuntime:
                     endpoint = target
                 else:
                     model = target
-            res = self.causality.query(endpoint=endpoint, model=model, depth=kwargs.get("depth", 2))
-            return res.model_dump()
+            graph = self.causality.query(endpoint=endpoint, model=model, depth=kwargs.get("depth", 2))
+            traces = self._traces_for(target)
+            latest = traces[0] if traces else None
+            causality = {
+                "target": target or "",
+                "observed": bool(traces),
+                "traceCount": len(traces),
+                "traceChain": [f"{t['method']} {t['target']}".strip() for t in traces[:5]],
+                "statusCode": latest["statusCode"] if latest else 0,
+                "latencyMs": latest["durationMs"] if latest else 0.0,
+                "rootCause": (latest["error"] or "OK — no error recorded in the observed execution") if latest else "",
+                "note": "" if traces else "no RPC trace recorded for this target; static graph only",
+                "staticGraph": graph.model_dump(),
+                "evidence": {
+                    "provenance": "runtime" if traces else "static",
+                    "sourceAdapter": "tokensafe-python",
+                    "confidence": "confirmed" if traces else "probable",
+                },
+            }
+            # Keep the legacy graph keys at the top level for existing clients.
+            result: Dict[str, Any] = {"query": query, "target": target or "", "causality": causality}
+            result.update(graph.model_dump())
+            return result
         elif query == "impact":
             endpoint = kwargs.get("endpoint") or target
             model = kwargs.get("model")
             res = self.causality.query(endpoint=endpoint, model=model, depth=kwargs.get("depth", 3))
-            return {"impactAnalysis": res.model_dump()}
+            static = res.model_dump()
+            impact = {
+                "target": target or endpoint or model or "",
+                "affectedSymbols": [n.get("id") for n in static.get("nodes", []) if isinstance(n, dict)],
+                "breakingRisk": "UNKNOWN",
+                "summary": f"{len(static.get('nodes', []))} nodes, {len(static.get('edges', []))} edges in the static causality graph",
+                "observed": False,
+                "evidence": {"provenance": "static", "sourceAdapter": "tokensafe-python", "confidence": "probable"},
+            }
+            return {"query": "impact", "target": impact["target"], "impact": impact, "impactAnalysis": static}
         return {"status": "ok", "query": query}
 
     async def handle_oumv_mutate(self, **kwargs) -> Dict[str, Any]:
@@ -298,7 +448,17 @@ class OUMVRuntime:
         with open(abs_path, "rb") as f:
             current_bytes = f.read()
         current_version = "sha256:" + hashlib.sha256(current_bytes).hexdigest()
-        if expected_version and expected_version != current_version:
+
+        # Mandatory OCC: an edit of an existing file must name the version it was
+        # based on, otherwise a blind write can clobber a concurrent change.
+        if not expected_version:
+            raise OumvError(
+                VALIDATION_FAILED,
+                "VALIDATION_FAILED: expectedVersion is required to edit an existing file — "
+                "call oumv/getSource (or observe L3) and pass its version",
+                data={"path": path, "current": current_version},
+            )
+        if expected_version != current_version:
             raise OumvError(
                 CONFLICT_DETECTED,
                 f"CONFLICT_DETECTED: OCC version mismatch: expected {expected_version}, current is {current_version}",

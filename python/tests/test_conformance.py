@@ -1,103 +1,84 @@
-"""
-Language-neutral OUMV Core conformance runner (spec §10).
+"""Language-neutral OUMV conformance certification for the FastAPI adapter.
 
-Loads the vendored case file (canonical source: agent-oumv/fixtures/conformance-cases.json)
-and executes every case through the JSON-RPC endpoint of a mounted FastAPI runtime:
-handshake shape, error-code model (OCC conflict, path traversal, syntax guard,
-missing resource), and real OCC version tokens on applied edits.
+Runs the canonical case file (agent-oumv/fixtures/conformance-cases.json, vendored
+here) through the mounted JSON-RPC endpoint and asserts the conformance level the
+runtime attains. Set CERT_OUT_DIR to write the machine-readable report.
 """
 
-import hashlib
 import json
+import os
 from pathlib import Path
 
 import httpx
 import pytest
 from fastapi import FastAPI
 
+from tokensafe_python import conformance
 from tokensafe_python.adapters.fastapi import mount_tokensafe
 
 FIXTURES = Path(__file__).parent / "conformance-cases.json"
-EDIT_CONTENT = "value = 42\n"
-_CASES = json.loads(FIXTURES.read_text(encoding="utf-8"))["cases"]
-_CASE_IDS = [c["id"] for c in _CASES]
-
-
-def _substitute(value, fixture_file, missing_file, edit_target):
-    if isinstance(value, str):
-        return (
-            value.replace("${FIXTURE_FILE}", fixture_file)
-            .replace("${MISSING_FILE}", missing_file)
-            .replace("${EDIT_TARGET_FILE}", edit_target)
-            .replace("${EDIT_CONTENT}", EDIT_CONTENT)
-        )
-    return value
-
-
-def _path_exists(data, path):
-    current = data
-    for part in path.split("."):
-        if not isinstance(current, dict) or part not in current:
-            return False
-        current = current[part]
-    return True
-
-
-@pytest.fixture
-def conformance_env(tmp_path):
-    (tmp_path / "conformance_fixture.py").write_text("value = 0\n", encoding="utf-8")
-    (tmp_path / "conformance_edit_target.py").write_text("value = 41\n", encoding="utf-8")
-
-    app = FastAPI()
-    mount_tokensafe(app, auto_discover=False, project_root=str(tmp_path))
-    return app, _CASES
+EDIT_TARGET = "conformance_edit_target.py"
+EDIT_ORIGINAL = b"value = 41\n"
 
 
 @pytest.mark.asyncio
-@pytest.mark.parametrize("case_index", range(len(_CASES)), ids=_CASE_IDS)
-async def test_conformance_cases(conformance_env, case_index):
-    app, cases = conformance_env
-    case = cases[case_index]
+async def test_conformance_certification(tmp_path):
+    (tmp_path / "conformance_fixture.py").write_text("value = 0\n", encoding="utf-8")
+    (tmp_path / EDIT_TARGET).write_bytes(EDIT_ORIGINAL)
 
-    params = {
-        k: _substitute(v, "conformance_fixture.py", "conformance_missing_file.py", "conformance_edit_target.py")
-        for k, v in case.get("params", {}).items()
-    }
+    app = FastAPI()
+    mounted = mount_tokensafe(app, auto_discover=False, project_root=str(tmp_path))
+    # L2 needs a real target: a registered model and route, not a fabricated one.
+    mounted.runtime.register_schema("Order", {"type": "object", "properties": {"id": {"type": "string"}}})
+    mounted.runtime.register_route("/api/v1/orders", "GET", "list_orders")
+
+    markers = conformance.Markers(
+        fixture_file="conformance_fixture.py",
+        missing_file="conformance_missing_file.py",
+        edit_target=EDIT_TARGET,
+        edit_version=conformance.version_of(EDIT_ORIGINAL),
+        l2_target="Order",
+        l3_target=EDIT_TARGET,
+        verify_target="GET /api/v1/orders",
+    )
 
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
-        resp = await client.post(
-            "/__oumv/rpc",
-            json={"jsonrpc": "2.0", "id": case["id"], "method": case["method"], "params": params},
+
+        async def post(method, params):
+            resp = await client.post(
+                "/__oumv/rpc",
+                json={"jsonrpc": "2.0", "id": method, "method": method, "params": params},
+            )
+            assert resp.status_code == 200, resp.text
+            return resp.json()
+
+        report = await conformance.run_conformance(
+            post, FIXTURES, markers, adapter_name="python-fastapi", framework="fastapi"
         )
-    assert resp.status_code == 200
-    body = resp.json()
 
-    expect_error = case.get("expectError")
-    if expect_error:
-        assert body.get("error"), f"expected error {expect_error['code']}, got result: {body.get('result')}"
-        assert body["error"]["code"] == expect_error["code"], body["error"]
-        return
+    out_dir = os.environ.get("CERT_OUT_DIR")
+    if out_dir:
+        conformance.save_report(report, Path(out_dir) / "python-fastapi.json")
 
-    assert not body.get("error"), body.get("error")
-    result = body["result"]
-    for field in case.get("expectResultFields", []):
-        assert _path_exists(result, field), f"result missing field {field!r}: {result}"
-
-    expected_content = case.get("expectVersionMatchesContent")
-    if expected_content:
-        digest = hashlib.sha256(expected_content.replace("${EDIT_CONTENT}", EDIT_CONTENT).encode("utf-8")).hexdigest()
-        assert result["newVersion"] == f"sha256:{digest}"
-        assert result["status"] == "APPLIED"
-        # The edit must have actually reached the file with a backup of the previous content
-        assert result["backupPath"]
+    failures = [c for c in report["cases"] if c["status"] != "passed"]
+    assert not failures, failures
+    assert report["attainedLevel"] == 3, (report["attainedLevel"], report["levels"])
+    assert report["specVersion"] == "1.1.0"
 
 
-def test_fixture_file_has_expected_shape():
+def test_fixture_file_has_level_tagged_v2_shape():
     data = json.loads(FIXTURES.read_text(encoding="utf-8"))
-    assert data["protocolVersion"] == "1.0.0"
-    assert len(data["cases"]) >= 6
-    for case in data["cases"]:
-        assert case["id"]
-        assert case["method"].startswith("oumv/")
-        assert case.get("expectError") or case.get("expectResultFields")
+    assert data["fixtureVersion"] == 2
+    assert data["protocolVersion"] == "1.1.0"
+    assert sorted(data["levelDefinitions"]) == ["1", "2", "3"]
+
+    levels = {case["level"] for case in data["cases"]}
+    assert levels == {1, 2, 3}
+
+    # OCC is mandatory: only the dedicated guard case may omit the version.
+    edit_cases = [c for c in data["cases"] if c["method"] == "oumv/applyEdit"]
+    without_version = [c["id"] for c in edit_cases if "expectedVersion" not in c["params"]]
+    assert without_version == ["apply-edit-without-version-rejected"]
+    guard = next(c for c in edit_cases if c["id"] == without_version[0])
+    assert guard["expectError"]["code"] == -32011
