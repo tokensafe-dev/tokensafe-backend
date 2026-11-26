@@ -1,3 +1,4 @@
+import fs from 'node:fs';
 import { afterEach, describe, expect, it } from 'vitest';
 import { OumvRuntime, checkSyntax, extractSymbolRange, parseVerifyTarget } from '../src/runtime.js';
 import { resolveWorkspacePath } from '../src/paths.js';
@@ -58,6 +59,42 @@ describe('OumvRuntime core', () => {
     expect(
       attempt({ path: 'edit_target.js', replacement: 'export const value = 1;\n', expectedVersion: 'sha256:' + '0'.repeat(64) })
     ).toBe(-32001);
+  });
+
+  it('creates a new file with mode=create and never overwrites', () => {
+    const workspace = createWorkspace();
+    cleanup = workspace.cleanup;
+    const runtime = new OumvRuntime({ workspaceDir: workspace.dir });
+
+    const created: any = runtime.applyEdit({
+      path: 'lib/created.js',
+      replacement: 'export const created = true;\n',
+      mode: 'create',
+    });
+    expect(created.created).toBe(true);
+    expect(created.status).toBe('APPLIED');
+    expect(fs.existsSync(`${workspace.dir}/lib/created.js`)).toBe(true);
+
+    let code = 0;
+    try {
+      runtime.applyEdit({ path: 'lib/created.js', replacement: 'x = 1;\n', mode: 'create' });
+    } catch (error: any) {
+      code = error.code;
+    }
+    expect(code).toBe(-32001);
+
+    code = 0;
+    try {
+      runtime.applyEdit({
+        path: 'lib/other.js',
+        replacement: 'x = 1;\n',
+        mode: 'create',
+        expectedVersion: 'sha256:' + '0'.repeat(64),
+      });
+    } catch (error: any) {
+      code = error.code;
+    }
+    expect(code).toBe(-32011);
   });
 
   it('rejects credential files even inside the workspace', () => {

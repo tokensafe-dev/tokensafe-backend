@@ -155,3 +155,33 @@ async def test_uncheckable_extension_reports_skipped(occ_app):
     assert result["status"] == "APPLIED"
     # Honest reporting: no checker for .txt — never imply validation
     assert result["syntaxCheck"]["status"] == "skipped"
+
+
+@pytest.mark.asyncio
+async def test_apply_edit_create_mode(tmp_path):
+    """mode=create writes a new file, never overwrites, and forbids expectedVersion."""
+    app = FastAPI()
+    mounted = mount_tokensafe(app, auto_discover=False)
+    mounted.runtime.discovery._project_root = str(tmp_path)  # noqa: SLF001 - test wiring
+
+    async def call(params):
+        return await _rpc(app, "oumv/applyEdit", params)
+
+    created = await call({"path": "pkg/new_file.py", "replacement": "def value():\n    return 1\n", "mode": "create"})
+    assert not created.get("error")
+    assert created["result"]["created"] is True
+    assert (tmp_path / "pkg" / "new_file.py").exists()
+
+    conflict = await call({"path": "pkg/new_file.py", "replacement": "x = 1\n", "mode": "create"})
+    assert conflict["error"]["code"] == -32001
+    assert conflict["error"]["data"]["reason"] == "file_exists"
+
+    forbidden = await call(
+        {
+            "path": "pkg/other.py",
+            "replacement": "x = 1\n",
+            "mode": "create",
+            "expectedVersion": "sha256:" + "0" * 64,
+        }
+    )
+    assert forbidden["error"]["code"] == -32011

@@ -411,6 +411,32 @@ export class OumvRuntime {
     if (!requestedPath) throw invalidParams('INVALID_PARAMS: path is required');
     const resolved = resolveWorkspacePath(requestedPath, this.workspaceDir);
 
+    // create mode (spec §4.3): new file, no expectedVersion, never an overwrite.
+    if (String(params.mode ?? 'replace').toLowerCase() === 'create') {
+      const replacement = String(params.replacement ?? params.source ?? '');
+      if (!replacement) throw invalidParams('INVALID_PARAMS: replacement is required for mode=create');
+      if (params.expectedVersion) {
+        throw validationFailed('VALIDATION_FAILED: expectedVersion must be omitted for mode=create', {
+          reason: 'create_forbids_version',
+        });
+      }
+      if (fs.existsSync(resolved)) {
+        throw conflict('CONFLICT_DETECTED: file already exists; use mode=replace with its version', {
+          reason: 'file_exists',
+        });
+      }
+      const syntax = checkSyntax(resolved, replacement);
+      fs.mkdirSync(path.dirname(resolved), { recursive: true });
+      fs.writeFileSync(resolved, replacement, 'utf-8');
+      return {
+        status: 'APPLIED',
+        path: path.relative(this.workspaceDir, resolved).split(path.sep).join('/'),
+        newVersion: sha256(replacement),
+        syntaxCheck: syntax,
+        created: true,
+      };
+    }
+
     if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
       throw resourceNotFound(`RESOURCE_NOT_FOUND: ${requestedPath}`);
     }

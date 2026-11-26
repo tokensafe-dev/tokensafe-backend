@@ -397,9 +397,46 @@ class OUMVRuntime:
                 raise OumvError(RESOURCE_NOT_FOUND, f"RESOURCE_NOT_FOUND: file not found inside project root: {path}")
             return {"status": "CURRENT", "path": path, "symbol": symbol, "version": version}
 
+        mode = str(kwargs.get("mode") or "replace").lower()
+        if mode == "create":
+            return self._create_source_file(path=path, replacement=replacement, expected_version=expected_version)
+
         return self._apply_source_edit(
             path=path, symbol=symbol, replacement=replacement, expected_version=expected_version
         )
+
+    def _create_source_file(self, *, path: str, replacement: str, expected_version: Optional[str]) -> Dict[str, Any]:
+        """mode=create (spec §4.3): write a file that must not exist yet."""
+        if not path or not str(path).strip():
+            raise OumvError(VALIDATION_FAILED, "VALIDATION_FAILED: path is required")
+        if expected_version:
+            raise OumvError(
+                VALIDATION_FAILED,
+                "VALIDATION_FAILED: expectedVersion must be omitted for mode=create",
+                {"reason": "create_forbids_version"},
+            )
+        root = self._project_root_abs()
+        candidate = os.path.abspath(os.path.join(root, path)) if not os.path.isabs(path) else os.path.abspath(path)
+        if candidate != root and not candidate.startswith(root + os.sep):
+            raise OumvError(SECURITY_VIOLATION, f"SECURITY_VIOLATION: path traversal blocked: {path}")
+        if os.path.exists(candidate):
+            raise OumvError(
+                CONFLICT_DETECTED,
+                "CONFLICT_DETECTED: file already exists; use mode=replace with its version",
+                {"reason": "file_exists"},
+            )
+        syntax = self._syntax_check(candidate, str(replacement))
+        os.makedirs(os.path.dirname(candidate) or root, exist_ok=True)
+        with open(candidate, "w", encoding="utf-8") as handle:
+            handle.write(str(replacement))
+        version = "sha256:" + hashlib.sha256(str(replacement).encode("utf-8")).hexdigest()
+        return {
+            "status": "APPLIED",
+            "path": os.path.relpath(candidate, root),
+            "newVersion": version,
+            "syntaxCheck": syntax,
+            "created": True,
+        }
 
     # ---- OCC source editing (real file edits, no fabricated versions) ----
 

@@ -771,6 +771,45 @@ func (r *Runtime) ApplyEdit(ctx context.Context, params *protocol.ApplyEditParam
 		return nil, pathErr
 	}
 
+	// create mode (spec §4.3): the file must not exist and expectedVersion is forbidden,
+	// so an agent can add new code without falling back to shell redirects.
+	if params.Mode == "create" {
+		if strings.TrimSpace(params.Replacement) == "" {
+			return nil, protocol.NewInvalidParamsError("replacement is required for mode=create")
+		}
+		if params.ExpectedVersion != "" {
+			return nil, protocol.NewValidationFailedError(
+				"VALIDATION_FAILED: expectedVersion must be omitted for mode=create",
+				map[string]string{"reason": "create_forbids_version"},
+			)
+		}
+		if _, statErr := os.Stat(cleanPath); statErr == nil {
+			return nil, protocol.NewConflictError(
+				"CONFLICT_DETECTED: file already exists; use mode=replace with its version",
+				map[string]string{"reason": "file_exists"},
+			)
+		}
+		fset := token.NewFileSet()
+		if _, parseErr := parser.ParseFile(fset, cleanPath, []byte(params.Replacement), parser.AllErrors); parseErr != nil {
+			return nil, protocol.NewSyntaxError(fmt.Sprintf("pre-flight syntax check failed: %v", parseErr), parseErr.Error())
+		}
+		if err := os.MkdirAll(filepath.Dir(cleanPath), 0o755); err != nil {
+			return nil, &protocol.OumvError{Code: protocol.ErrInternalError, Message: "failed to create directory: " + err.Error()}
+		}
+		if err := os.WriteFile(cleanPath, []byte(params.Replacement), 0o644); err != nil {
+			return nil, &protocol.OumvError{Code: protocol.ErrInternalError, Message: "failed to persist new file: " + err.Error()}
+		}
+		newHash := sha256.Sum256([]byte(params.Replacement))
+		return &protocol.ApplyEditResult{
+			Status:      "APPLIED",
+			Path:        params.Path,
+			NewVersion:  "sha256:" + hex.EncodeToString(newHash[:]),
+			SyntaxCheck: &protocol.SyntaxCheck{Status: "passed", Tool: "go/parser"},
+			Created:     true,
+			Success:     true,
+		}, nil
+	}
+
 	currentData, err := os.ReadFile(cleanPath)
 	if err != nil {
 		return nil, protocol.NewResourceNotFoundError(params.Path)

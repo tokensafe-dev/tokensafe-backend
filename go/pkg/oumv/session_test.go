@@ -240,3 +240,60 @@ func TestHandshakeNarrowsRequestedCapabilities(t *testing.T) {
 		t.Fatalf("levels must stay untouched, got %v", empty.Capabilities.Observe.Levels)
 	}
 }
+
+func TestApplyEditCreateMode(t *testing.T) {
+	workspace := t.TempDir()
+	rt := oumv.NewRuntime(oumv.Config{Name: "create", Version: "1", WorkspaceDir: workspace, Runtime: oumv.DefaultDevelopmentRuntimeConfig()})
+	ctx := context.Background()
+
+	created, applyErr := rt.ApplyEdit(ctx, &protocol.ApplyEditParams{
+		Path:        "pkg/new_file.go",
+		Replacement: "package pkg\n\nfunc NewValue() int {\n\treturn 1\n}\n",
+		Mode:        "create",
+	})
+	if applyErr != nil {
+		t.Fatalf("create: %v", applyErr)
+	}
+	if !created.Created || created.Status != "APPLIED" || created.NewVersion == "" {
+		t.Fatalf("unexpected create result: %+v", created)
+	}
+	if _, err := os.Stat(filepath.Join(workspace, "pkg", "new_file.go")); err != nil {
+		t.Fatalf("file was not created: %v", err)
+	}
+
+	// A second create must never overwrite.
+	_, conflictErr := rt.ApplyEdit(ctx, &protocol.ApplyEditParams{
+		Path:        "pkg/new_file.go",
+		Replacement: "package pkg\n",
+		Mode:        "create",
+	})
+	if conflictErr == nil || conflictErr.Code != protocol.ErrConflictDetected {
+		t.Fatalf("expected CONFLICT_DETECTED, got %+v", conflictErr)
+	}
+	if data, ok := conflictErr.Data.(map[string]string); ok {
+		if data["reason"] != "file_exists" {
+			t.Fatalf("expected reason=file_exists, got %v", data)
+		}
+	}
+
+	// expectedVersion is forbidden for create.
+	_, validationErr := rt.ApplyEdit(ctx, &protocol.ApplyEditParams{
+		Path:            "pkg/other.go",
+		Replacement:     "package pkg\n",
+		Mode:            "create",
+		ExpectedVersion: "sha256:" + strings.Repeat("0", 64),
+	})
+	if validationErr == nil || validationErr.Code != protocol.ErrValidationFailed {
+		t.Fatalf("expected VALIDATION_FAILED, got %+v", validationErr)
+	}
+
+	// Syntax still pre-flights a brand-new file.
+	_, syntaxErr := rt.ApplyEdit(ctx, &protocol.ApplyEditParams{
+		Path:        "pkg/broken.go",
+		Replacement: "package pkg\n\nfunc Broken( {\n",
+		Mode:        "create",
+	})
+	if syntaxErr == nil || syntaxErr.Code != protocol.ErrSyntaxError {
+		t.Fatalf("expected SYNTAX_ERROR, got %+v", syntaxErr)
+	}
+}

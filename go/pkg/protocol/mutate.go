@@ -21,7 +21,10 @@ type ApplyEditParams struct {
 	Symbol          string `json:"symbol"`
 	Path            string `json:"path"`
 	Replacement     string `json:"replacement"`
-	ExpectedVersion string `json:"expectedVersion"` // "sha256:..."
+	ExpectedVersion string `json:"expectedVersion"` // "sha256:..." (mandatory for replace)
+	// Mode is "replace" (default) or "create"; create forbids expectedVersion and
+	// refuses to overwrite an existing file (spec §4.3).
+	Mode string `json:"mode,omitempty"`
 }
 
 // SyntaxCheck reports the pre-flight guard outcome (spec §4.3).
@@ -42,6 +45,8 @@ type ApplyEditResult struct {
 	SyntaxCheck  *SyntaxCheck `json:"syntaxCheck,omitempty"`
 	BackupPath   string       `json:"backupPath,omitempty"`
 	RollbackHint string       `json:"rollbackHint,omitempty"`
+
+	Created      bool `json:"created,omitempty"`
 
 	Success      bool `json:"-"`
 	LinesChanged int  `json:"-"`
