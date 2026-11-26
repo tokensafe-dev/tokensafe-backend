@@ -80,6 +80,15 @@ jobs:
           cache: 'pnpm'
           cache-dependency-path: node/pnpm-lock.yaml
 
+      # The OUMV checkout carries sources only: its dist is gitignored, and the
+      # runner the Node tests import must exist before they can certify anything.
+      - name: Build OUMV conformance runner
+        working-directory: vendor/oumv
+        run: |
+          pnpm install --no-frozen-lockfile
+          pnpm --filter @oumv/schema build
+          pnpm --filter @oumv/conformance build
+
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
 
