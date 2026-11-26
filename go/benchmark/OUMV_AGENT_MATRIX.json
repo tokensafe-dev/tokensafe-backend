@@ -3953,5 +3953,17 @@
     "harness_dirty": true,
     "price_snapshot": "2026-11-26"
   },
-  "generated_at": "2026-11-26T19:30:29Z"
+  "generated_at": "2026-11-26T19:30:29Z",
+  "post_run_correction": {
+    "date": "2026-11-26",
+    "scope": "tokensafe arm only (baseline and oumv rows unaffected)",
+    "status": "superseded — re-run pending",
+    "defects": [
+      "arm exposed smart_read_file/scoped_search/repo_map only; apply_edits with inline verify was missing, so edits were blind write_file + go test retries",
+      "arm prompt was a tool menu with no procedure and no stopping rule; the oumv arm had a numbered 4-step loop",
+      "smart_read_file returned a folded whole-file skeleton headered 'Full body' when the symbol was not a declaration in that file (Go route closures), so read_file usage matched baseline (12,636 vs 13,102 chars/run) and the arm added 6,335 chars/run",
+      "2 of 9 runs hit max_steps repeating an identical build error"
+    ],
+    "fixed_in": "tokensafe: smart_read_file symbol resolution (enclosing handler ±window, endpoint targets, honest miss), scoped_search per-file budget + grouped render, batch_editor occurrence lines on ambiguous hunks, arm loop scoped_search -> smart_read_file -> apply_edits+verify"
+  }
 }

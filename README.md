@@ -219,7 +219,8 @@ from a throwaway copy of the module; the real 12-assertion oracle is re-run afte
 Tokens and cost come from the provider's `usage` payload, not from bytes. All arms get the same
 file/search/command tools and the same bug report (including a repro); `oumv` adds `observe`,
 `getSource`, `applyEdit`, `verify` and `understand` from the Go adapter; `tokensafe` adds the
-product's real MCP tools (`smart_read_file`, `scoped_search`, `repo_map`).
+product's real MCP tools (`smart_read_file`, `scoped_search`, `repo_map` in this run; the arm
+now also runs `apply_edits` with inline `verify`).
 
 | Arm | Solved | Mean steps | Mean input tokens | Mean output tokens | Cost |
 | :--- | ---: | ---: | ---: | ---: | ---: |
@@ -228,10 +229,13 @@ product's real MCP tools (`smart_read_file`, `scoped_search`, `repo_map`).
 | `oumv` | 9/9 | 4.0 | 10,532 | 1,523 | $0.0240 |
 | **Delta (oumv vs baseline)** | — | **−9.1%** | **−45.8%** | −4.5% | **−33.1%** |
 
-The TokenSafe arm is not a strawman: it runs the product's MCP server with its AST skeleton
-reader, scoped search and architecture map. On a 155-line sandbox its startup and whole-symbol
-reads dominate, and it missed 2 of 9 runs on `max_steps` — the report states that plainly
-instead of hiding it. The OUMV arm solved all 9 runs in both matrices.
+The TokenSafe arm is not a strawman — it runs the product's MCP server — but this row is
+**superseded**: the run exposed only the read half of the toolkit (no `apply_edits`) and its
+`smart_read_file` returned a folded whole-file skeleton for closure handlers, so it saved no
+read tokens (12,635 vs 13,102 chars/run) and 2 of 9 runs died at `max_steps`. Both are fixed
+in `tokensafe` since 2026-11-26; the row must not be quoted until it is re-measured. The
+report's correction section has the full diagnosis. The OUMV arm solved all 9 runs in both
+matrices.
 
 Protocol-level numbers (deterministic, no model — `tokensafe bench-oumv --mechanics`): one
 `observe L3` call resolves an endpoint to its handler body in **721 chars**, where search +
