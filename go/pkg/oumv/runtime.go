@@ -1,13 +1,16 @@
 package oumv
 
 import (
+	"bytes"
 	"context"
 	"crypto/sha256"
 	"encoding/hex"
+	"encoding/json"
 	"fmt"
 	"go/ast"
 	"go/parser"
 	"go/token"
+	"io"
 	"net/http"
 	"net/http/httptest"
 	"os"
@@ -794,8 +797,22 @@ func (r *Runtime) Verify(ctx context.Context, params *protocol.VerifyParams) (*p
 		method = parts[0]
 		path = parts[1]
 	}
+	if strings.TrimSpace(params.Method) != "" {
+		method = strings.ToUpper(strings.TrimSpace(params.Method))
+	}
 
-	req := httptest.NewRequest(method, path, nil)
+	// Request bodies are supported: a POST/PUT endpoint can only be verified with
+	// the payload it expects.
+	var body io.Reader
+	if params.Payload != nil {
+		if raw, marshalErr := json.Marshal(params.Payload); marshalErr == nil {
+			body = bytes.NewReader(raw)
+		}
+	}
+	req := httptest.NewRequest(method, path, body)
+	if body != nil {
+		req.Header.Set("Content-Type", "application/json")
+	}
 	for k, v := range params.Headers {
 		req.Header.Set(k, v)
 	}
@@ -808,8 +825,13 @@ func (r *Runtime) Verify(ctx context.Context, params *protocol.VerifyParams) (*p
 	// Feed the L4 trace ring so Understand(causality) has real evidence after verification
 	r.RecordTrace(method, path, path, "", rec.Code, duration, "")
 
+	status := "failed"
+	if rec.Code < 400 {
+		status = "passed"
+	}
 	return &protocol.VerifyResult{
 		Success:    rec.Code < 400,
+		Status:     status,
 		StatusCode: rec.Code,
 		Diff: map[string]interface{}{
 			"responseBody": rec.Body.String(),
@@ -818,6 +840,11 @@ func (r *Runtime) Verify(ctx context.Context, params *protocol.VerifyParams) (*p
 		Latency: protocol.LatencyBreakdown{
 			HandlerMs: duration,
 			TotalMs:   duration,
+		},
+		Scope: &protocol.VerifyScope{
+			Checked:      []string{"in-memory dispatch against the live handler"},
+			NotExecuted:  []string{"external processes", "real network", "persistent database state"},
+			NotSupported: []string{"browser/DOM assertions"},
 		},
 	}, nil
 }
