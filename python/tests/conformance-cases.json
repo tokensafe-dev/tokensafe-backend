@@ -1,7 +1,7 @@
 {
   "protocolVersion": "1.1.0",
   "spec": "https://github.com/tokensafe-dev/oumv/blob/main/spec/SPEC.md",
-  "description": "Language-neutral OUMV conformance cases (spec \u00a710). Each case declares the conformance Level (1|2|3) it certifies. A runtime attains Level N only when every case with level <= N passes; a failure at a higher level caps the claim but does not fail the lower levels. fixtureVersion 3 added session handshake, getSource and verify-result shape coverage; fixtureVersion 4 requires the observe `format` field the spec envelope mandates. Markers substituted by each runner: ${FIXTURE_FILE}, ${MISSING_FILE}, ${EDIT_TARGET_FILE}, ${EDIT_TARGET_VERSION}, ${EDIT_CONTENT}, ${BROKEN_CONTENT}, ${L2_TARGET}, ${L3_TARGET}, ${VERIFY_TARGET}.",
+  "description": "Language-neutral OUMV conformance cases (spec \u00a710). Each case declares the conformance Level (1|2|3) it certifies. A runtime attains Level N only when every case with level <= N passes; a failure at a higher level caps the claim but does not fail the lower levels. fixtureVersion 3 added session handshake, getSource and verify-result shape coverage; fixtureVersion 4 requires the observe `format` field the spec envelope mandates; fixtureVersion 5 covers applyEdit mode=create (new file, no overwrite). Markers substituted by each runner: ${FIXTURE_FILE}, ${MISSING_FILE}, ${EDIT_TARGET_FILE}, ${EDIT_TARGET_VERSION}, ${EDIT_CONTENT}, ${BROKEN_CONTENT}, ${L2_TARGET}, ${L3_TARGET}, ${VERIFY_TARGET}.",
   "cases": [
     {
       "id": "handshake-negotiates-capabilities",
@@ -252,9 +252,39 @@
         "newVersion"
       ],
       "expectVersionMatchesContent": "${EDIT_CONTENT}"
+    },
+    {
+      "id": "create-new-file",
+      "level": 2,
+      "method": "oumv/applyEdit",
+      "params": {
+        "path": "${NEW_FILE}",
+        "replacement": "${EDIT_CONTENT}",
+        "mode": "create"
+      },
+      "expectResultFields": [
+        "status",
+        "path",
+        "newVersion",
+        "created"
+      ],
+      "expectVersionMatchesContent": "${EDIT_CONTENT}"
+    },
+    {
+      "id": "create-existing-file-rejected",
+      "level": 2,
+      "method": "oumv/applyEdit",
+      "params": {
+        "path": "${FIXTURE_FILE}",
+        "replacement": "${EDIT_CONTENT}",
+        "mode": "create"
+      },
+      "expectError": {
+        "code": -32001
+      }
     }
   ],
-  "fixtureVersion": 4,
+  "fixtureVersion": 5,
   "levelDefinitions": {
     "1": "Handshake, L0-L1 observe, action verification",
     "2": "L2-L3 observe, impact analysis, OCC mutations, surface diffs",

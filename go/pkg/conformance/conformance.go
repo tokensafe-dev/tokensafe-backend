@@ -55,6 +55,7 @@ type Markers struct {
 	FixtureFile   string
 	MissingFile   string
 	EditTarget    string
+	NewFile       string
 	EditVersion   string
 	EditContent   string
 	BrokenContent string
@@ -278,6 +279,7 @@ func (m Markers) substitute(params map[string]interface{}) map[string]interface{
 		"${MISSING_FILE}":        m.MissingFile,
 		"${EDIT_TARGET_FILE}":    m.EditTarget,
 		"${EDIT_TARGET_VERSION}": m.EditVersion,
+		"${NEW_FILE}":            m.NewFile,
 		"${EDIT_CONTENT}":        m.EditContent,
 		"${BROKEN_CONTENT}":      m.BrokenContent,
 		"${L2_TARGET}":           m.L2Target,

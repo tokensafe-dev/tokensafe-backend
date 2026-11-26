@@ -40,6 +40,7 @@ export function createWorkspace(): Workspace {
       fixtureFile: 'fixture.js',
       missingFile: 'missing.js',
       editTarget: 'edit_target.js',
+      newFile: 'created_new_file.js',
       editVersion: sha(EDIT_SOURCE),
       editContent: EDIT_REPLACEMENT,
       brokenContent: BROKEN_SOURCE,

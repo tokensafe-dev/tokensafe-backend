@@ -2,9 +2,9 @@
   "adapterName": "python-fastapi",
   "framework": "fastapi",
   "specVersion": "1.1.0",
-  "fixtureVersion": 4,
-  "total": 18,
-  "passed": 18,
+  "fixtureVersion": 5,
+  "total": 20,
+  "passed": 20,
   "failed": 0,
   "attainedLevel": 3,
   "levels": {
@@ -120,7 +120,19 @@
       "level": 2,
       "status": "passed",
       "error": ""
+    },
+    {
+      "id": "create-new-file",
+      "level": 2,
+      "status": "passed",
+      "error": ""
+    },
+    {
+      "id": "create-existing-file-rejected",
+      "level": 2,
+      "status": "passed",
+      "error": ""
     }
   ],
-  "generatedAt": "2026-11-26T15:24:16Z"
+  "generatedAt": "2026-11-26T17:00:59Z"
 }

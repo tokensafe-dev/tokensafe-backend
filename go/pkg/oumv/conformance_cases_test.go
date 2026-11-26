@@ -52,6 +52,7 @@ func TestConformanceCases(t *testing.T) {
 		FixtureFile:   fixtureFile,
 		MissingFile:   missingFile,
 		EditTarget:    editTarget,
+		NewFile:       "created_new_file.go",
 		EditVersion:   conformance.Version(originalEditTarget),
 		EditContent:   editContent,
 		BrokenContent: brokenContent,

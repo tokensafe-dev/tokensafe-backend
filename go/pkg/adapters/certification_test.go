@@ -81,6 +81,7 @@ func workspace(t *testing.T, tmpDir, l2Target string) conformance.Markers {
 		FixtureFile:   fixtureFile,
 		MissingFile:   missingFile,
 		EditTarget:    editTarget,
+		NewFile:       "created_new_file.go",
 		EditVersion:   conformance.Version(original),
 		EditContent:   "package cert\n\nfunc Value() int {\n\treturn 42\n}\n",
 		BrokenContent: "package cert\n\nfunc Broken( {\n",

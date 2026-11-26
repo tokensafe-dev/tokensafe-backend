@@ -24,6 +24,7 @@ class Markers:
 
     fixture_file: str
     missing_file: str
+    new_file: str
     edit_target: str
     edit_version: str
     edit_content: str = "value = 42\n"
@@ -35,6 +36,7 @@ class Markers:
     def substitute(self, params: Dict[str, Any]) -> Dict[str, Any]:
         replacements = {
             "${FIXTURE_FILE}": self.fixture_file,
+    "${NEW_FILE}": self.new_file,
             "${MISSING_FILE}": self.missing_file,
             "${EDIT_TARGET_FILE}": self.edit_target,
             "${EDIT_TARGET_VERSION}": self.edit_version,

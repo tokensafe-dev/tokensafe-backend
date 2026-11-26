@@ -36,6 +36,7 @@ async def test_conformance_certification(tmp_path):
         fixture_file="conformance_fixture.py",
         missing_file="conformance_missing_file.py",
         edit_target=EDIT_TARGET,
+        new_file="conformance_created_file.py",
         edit_version=conformance.version_of(EDIT_ORIGINAL),
         l2_target="Order",
         l3_target=EDIT_TARGET,
@@ -67,9 +68,9 @@ async def test_conformance_certification(tmp_path):
     assert report["specVersion"] == "1.1.0"
 
 
-def test_fixture_file_has_level_tagged_v4_shape():
+def test_fixture_file_has_level_tagged_v5_shape():
     data = json.loads(FIXTURES.read_text(encoding="utf-8"))
-    assert data["fixtureVersion"] == 4
+    assert data["fixtureVersion"] == 5
     assert data["protocolVersion"] == "1.1.0"
     assert sorted(data["levelDefinitions"]) == ["1", "2", "3"]
 
@@ -80,9 +81,17 @@ def test_fixture_file_has_level_tagged_v4_shape():
                      "verify-returns-status-timings-and-scope"):
         assert required in ids
 
-    # OCC is mandatory: only the dedicated guard case may omit the version.
+    # OCC is mandatory for replace: a case may omit the version only when it either
+    # asserts the guard itself, or asks for mode=create (which forbids it).
     edit_cases = [c for c in data["cases"] if c["method"] == "oumv/applyEdit"]
-    without_version = [c["id"] for c in edit_cases if "expectedVersion" not in c["params"]]
-    assert without_version == ["apply-edit-without-version-rejected"]
-    guard = next(c for c in edit_cases if c["id"] == without_version[0])
+    without_version = sorted(c["id"] for c in edit_cases if "expectedVersion" not in c["params"])
+    assert without_version == [
+        "apply-edit-without-version-rejected",
+        "create-existing-file-rejected",
+        "create-new-file",
+    ]
+    guard = next(c for c in edit_cases if c["id"] == "apply-edit-without-version-rejected")
     assert guard["expectError"]["code"] == -32011
+    create_case = next(c for c in edit_cases if c["id"] == "create-new-file")
+    assert create_case["params"]["mode"] == "create"
+    assert create_case["expectResultFields"][-1] == "created"
