@@ -1,6 +1,7 @@
 package transport
 
 import (
+	"bytes"
 	"crypto/subtle"
 	"encoding/json"
 	"io"
@@ -132,9 +133,37 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 	defer r.Body.Close()
 
-	resp := h.dispatcher.Handle(r.Context(), body)
-
+	trimmed := bytes.TrimSpace(body)
 	w.Header().Set("Content-Type", "application/json")
 	w.WriteHeader(http.StatusOK)
+
+	// Spec §2.2: a JSON-RPC batch (array) is supported; notifications (no id) get
+	// no response entry.
+	if len(trimmed) > 0 && trimmed[0] == '[' {
+		var items []json.RawMessage
+		if err := json.Unmarshal(trimmed, &items); err != nil {
+			_ = json.NewEncoder(w).Encode(protocol.NewErrorResponse(nil, &protocol.OumvError{
+				Code:    protocol.ErrParseError,
+				Message: "Parse error: " + err.Error(),
+			}))
+			return
+		}
+		responses := make([]*protocol.OumvResponse, 0, len(items))
+		for _, item := range items {
+			var probe struct {
+				ID interface{} `json:"id"`
+			}
+			_ = json.Unmarshal(item, &probe)
+			resp := h.dispatcher.Handle(r.Context(), item)
+			if probe.ID == nil && resp.Error == nil {
+				continue // notification
+			}
+			responses = append(responses, resp)
+		}
+		_ = json.NewEncoder(w).Encode(responses)
+		return
+	}
+
+	resp := h.dispatcher.Handle(r.Context(), body)
 	_ = json.NewEncoder(w).Encode(resp)
 }
