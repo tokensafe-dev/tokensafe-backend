@@ -1,4 +1,7 @@
-# OUMV agent matrix v3 (Go, measured)
+# OUMV agent matrix v3
+
+> **Superseded by [OUMV_AGENT_MATRIX_V4.md](OUMV_AGENT_MATRIX_V4.md)** (45 sessions, 5 runs per cell, after the lean tool profile, `verify="auto"` and the patcher fix). Kept because the schema A/B below is the only measurement of the trim, and because v4's arm configuration differs.
+
 
 > Measured with `tokensafe bench-oumv --target go --tasks all --arms baseline,tokensafe,oumv
 > --runs 3 --budget 5`. Every token and cost number comes from the provider's `usage`

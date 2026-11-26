@@ -214,26 +214,29 @@ tokens, zero-loss gates) measures the TokenSafe tools, not OUMV.
 
 ### Measured agent matrix (Go, DeepSeek)
 
-3 regression tasks × 3 runs × 3 arms on `deepseek-chat` at temperature 0, real 12-assertion
+3 regression tasks × 5 runs × 3 arms on `deepseek-chat` at temperature 0, a real 12-assertion
 oracle re-run after every step, tokens from the provider's `usage` payload. `baseline` gets
 file/search/command tools, `tokensafe` the product's own MCP server (`scoped_search` →
-`smart_read_file` → `apply_edits` with inline `verify="auto"`), `oumv` the shipped Go
-adapter (`observe L3` → `getSource` → `applyEdit` → `verify`).
+`smart_read_file` → `apply_edits` with inline `verify="auto"`), `oumv` the shipped Go adapter
+(`observe L3` → `getSource` → `applyEdit` → `verify`).
 
 | Arm | Solved | Mean steps | Mean input | Mean output | Cost/run |
 | :--- | ---: | ---: | ---: | ---: | ---: |
-| `baseline` | 9/9 | 4.7 | 21,532 | 1,614 | $0.0037 |
-| `tokensafe` | 9/9 | 4.4 | 17,183 | 652 | $0.0026 |
-| `oumv` | 9/9 | 4.0 | 10,848 | 1,570 | $0.0027 |
-| **tokensafe vs baseline** | — | −4.8% | **−20.2%** | −59.6% | **−30.2%** |
-| **oumv vs baseline** | — | −14.3% | **−49.6%** | −2.7% | **−25.6%** |
+| `baseline` | 15/15 | 4.5 | 19,538 | 1,599 | $0.0035 |
+| `tokensafe` | 15/15 | 4.7 | 17,616 | 750 | $0.0025 |
+| `oumv` | 15/15 | 4.3 | **12,323** | 1,735 | $0.0032 |
+| **tokensafe vs baseline** | — | +4.5% | **−9.8%** | **−53.1%** | **−28.7%** |
+| **oumv vs baseline** | — | −4.5% | **−36.9%** | +8.5% | −10.8% |
 
-The earlier run that showed the TokenSafe arm losing (7/9, 3.6× the tokens) measured an
-incomplete toolkit — no `apply_edits`, a procedure-free prompt, and a `smart_read_file`
-that returned a folded skeleton for closure handlers. It is corrected in
+The two arms trade opposite sides of the bill: TokenSafe sends a hunk per edit and reads more
+(`apply_edits` + `smart_read_file` anchors), OUMV reads the handler once from `observe L3` but
+resends the whole file on `applyEdit` — which costs ~2.3× the output tokens, and output is the
+expensive side ($1.10/Mtok vs $0.07–0.27 for input). A `mode=patch` on the wire would close it.
+
+Method, per-task table, comparison runs and limits:
+[OUMV_AGENT_MATRIX_V4.md](go/benchmark/OUMV_AGENT_MATRIX_V4.md). Generated from the run
+artifacts by `go/benchmark/render_agent_matrix.py`; the earlier losing row is corrected in
 [OUMV_AGENT_MATRIX.md](go/benchmark/OUMV_AGENT_MATRIX.md#correction-post-run-diagnosis-2026-11-26).
-Full per-task tables, the schema A/B and the limits (including per-run variance at n=3):
-[OUMV_AGENT_MATRIX_V3.md](go/benchmark/OUMV_AGENT_MATRIX_V3.md).
 
 Protocol-level numbers (deterministic, no model — `tokensafe bench-oumv --mechanics`): one
 `observe L3` call resolves an endpoint to its handler body in **721 chars**, where search +
