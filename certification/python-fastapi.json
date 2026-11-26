@@ -2,9 +2,9 @@
   "adapterName": "python-fastapi",
   "framework": "fastapi",
   "specVersion": "1.1.0",
-  "fixtureVersion": 2,
-  "total": 15,
-  "passed": 15,
+  "fixtureVersion": 3,
+  "total": 18,
+  "passed": 18,
   "failed": 0,
   "attainedLevel": 3,
   "levels": {
@@ -15,6 +15,12 @@
   "cases": [
     {
       "id": "handshake-negotiates-capabilities",
+      "level": 1,
+      "status": "passed",
+      "error": ""
+    },
+    {
+      "id": "unknown-session-is-rejected",
       "level": 1,
       "status": "passed",
       "error": ""
@@ -50,6 +56,12 @@
       "error": ""
     },
     {
+      "id": "get-source-returns-occ-token",
+      "level": 2,
+      "status": "passed",
+      "error": ""
+    },
+    {
       "id": "observe-l4-returns-recorded-traces",
       "level": 3,
       "status": "passed",
@@ -64,6 +76,12 @@
     {
       "id": "understand-causality-after-execution",
       "level": 3,
+      "status": "passed",
+      "error": ""
+    },
+    {
+      "id": "verify-returns-status-timings-and-scope",
+      "level": 2,
       "status": "passed",
       "error": ""
     },
@@ -104,5 +122,5 @@
       "error": ""
     }
   ],
-  "generatedAt": "2026-11-26T09:23:31Z"
+  "generatedAt": "2026-11-26T14:03:08Z"
 }
