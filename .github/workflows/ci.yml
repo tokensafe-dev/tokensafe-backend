@@ -147,6 +147,7 @@ jobs:
         working-directory: vendor/oumv
         run: |
           pnpm install --no-frozen-lockfile
+          pnpm --filter @oumv/protocol build
           pnpm --filter @oumv/schema build
           pnpm --filter @oumv/conformance build
 
