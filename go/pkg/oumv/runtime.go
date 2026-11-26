@@ -105,7 +105,13 @@ func NewRuntime(cfg Config) *Runtime {
 		cfg.Name = "tokensafe-backend"
 	}
 	if cfg.Version == "" {
-		cfg.Version = "0.3.0"
+		// AutoMount-style callers pass only a Runtime config; honour the version it
+		// declares instead of pinning a stale default in the handshake.
+		if cfg.Runtime != nil && cfg.Runtime.Version != "" {
+			cfg.Version = cfg.Runtime.Version
+		} else {
+			cfg.Version = "0.4.2"
+		}
 	}
 	if cfg.WorkspaceDir == "" {
 		cfg.WorkspaceDir = "."
