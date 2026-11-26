@@ -1,6 +1,7 @@
 package gin
 
 import (
+	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
@@ -76,6 +77,10 @@ func Mount(r *gin.Engine, rt *oumv.Runtime, opts ...Options) {
 	}
 	handler := transport.NewHTTPHandler(dispatcher, httpOpts)
 
+	dispatcherForWS := transport.NewDispatcher(rt)
+	eventsPath := strings.TrimSuffix(rpcPath, "/rpc") + "/events"
+	r.GET(eventsPath, gin.WrapH(transport.NewSSEHandler(rt)))
+	r.GET(rpcPath, gin.WrapH(transport.NewWSHandler(dispatcherForWS)))
 	r.Any(rpcPath, gin.WrapH(handler))
 }
 

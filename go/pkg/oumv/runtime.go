@@ -471,6 +471,33 @@ func (r *Runtime) findRoute(target string) (protocol.RouteInfo, bool) {
 	return protocol.RouteInfo{}, false
 }
 
+// RecentTracesSince returns recorded traces newer than since, oldest first.
+// It powers the SSE `trace` event stream (spec §2.3).
+func (r *Runtime) RecentTracesSince(since time.Time) []protocol.TraceEntry {
+	r.mu.RLock()
+	snapshot := make([]requestTrace, len(r.traces))
+	copy(snapshot, r.traces)
+	r.mu.RUnlock()
+
+	out := make([]protocol.TraceEntry, 0, len(snapshot))
+	for _, tr := range snapshot {
+		if !tr.Timestamp.After(since) {
+			continue
+		}
+		out = append(out, protocol.TraceEntry{
+			Method:     tr.Method,
+			Path:       tr.Path,
+			Route:      tr.Route,
+			Handler:    tr.Handler,
+			StatusCode: tr.StatusCode,
+			DurationMs: tr.DurationMs,
+			Error:      tr.Error,
+			Timestamp:  tr.Timestamp.UTC().Format(time.RFC3339Nano),
+		})
+	}
+	return out
+}
+
 // tracesForTarget returns recorded traces for a target (all traces when the
 // target is empty), newest first, plus a note when nothing matched.
 func (r *Runtime) tracesForTarget(target string) ([]protocol.TraceEntry, string) {

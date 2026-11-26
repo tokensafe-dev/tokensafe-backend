@@ -5,6 +5,7 @@ import (
 	"net/http"
 	"reflect"
 	"runtime"
+	"strings"
 
 	"github.com/go-chi/chi/v5"
 	"github.com/tokensafe-dev/tokensafe-backend/go/pkg/oumv"
@@ -76,6 +77,13 @@ func Mount(r chi.Router, rt *oumv.Runtime, opts ...Options) error {
 		Disabled:               false,
 	}
 	r.Handle(rpcPath, transport.NewHTTPHandler(dispatcher, httpOpts))
+	eventsPath := strings.TrimSuffix(rpcPath, "/rpc") + "/events"
+	r.Get(eventsPath, func(w http.ResponseWriter, req *http.Request) {
+		transport.NewSSEHandler(rt).ServeHTTP(w, req)
+	})
+	r.Get(rpcPath, func(w http.ResponseWriter, req *http.Request) {
+		transport.NewWSHandler(transport.NewDispatcher(rt)).ServeHTTP(w, req)
+	})
 
 	return nil
 }

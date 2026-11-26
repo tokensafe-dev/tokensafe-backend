@@ -79,6 +79,9 @@ func (m *ServeMux) Mount(rpcPath string) {
 		Disabled:               false,
 	}
 	m.ServeMux.Handle(rpcPath, transport.NewHTTPHandler(dispatcher, httpOpts))
+	eventsPath := strings.TrimSuffix(rpcPath, "/rpc") + "/events"
+	m.ServeMux.Handle("GET "+eventsPath, transport.NewSSEHandler(m.runtime))
+	m.ServeMux.Handle("GET "+rpcPath, transport.NewWSHandler(transport.NewDispatcher(m.runtime)))
 	// Wire the mux for in-memory oumv/verify (no extra configuration needed).
 	m.runtime.SetHandler(m)
 }
