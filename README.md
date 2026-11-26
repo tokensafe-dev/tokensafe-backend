@@ -196,9 +196,14 @@ pip install "tokensafe-backend @ git+https://github.com/tokensafe-dev/tokensafe-
 > ⚠️ **Simulated run — not a measured agent session.** The 12-assertion oracle below is
 > real (it executes the handler through `httptest`), but the token/turn numbers come from
 > **fixture traces** (`go/benchmark/traces/traces.go`), not from an LLM agent. Treat them as
-> a model of the intended workflow, not as a benchmark result. A measured three-arm run
-> (no TokenSafe / TokenSafe / OUMV protocol) is tracked as P5 in the roadmap; until then no
-> numbers from this section are published as product claims.
+> a model of the intended workflow, not as a benchmark result.
+>
+> The measured comparison now lives in
+> [`go/benchmark/THREE_ARM_REPORT.md`](go/benchmark/THREE_ARM_REPORT.md): three arms
+> (baseline / TokenSafe tools / OUMV protocol), where the OUMV arm's payload bytes are
+> counted from real JSON-RPC round trips and the other two are explicitly labelled
+> SIMULATED. Regenerate with
+> `cd go && CERT_OUT_DIR=/tmp/out go test ./benchmark/three_arm`.
 
 In our standardized **Agent Usability Benchmark (AUB)** evaluating an e-commerce order processing API against a 12-assertion Behavioral Test Oracle:
 
