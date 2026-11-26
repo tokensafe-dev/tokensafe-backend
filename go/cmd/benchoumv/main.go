@@ -13,6 +13,8 @@ import (
 	"fmt"
 	"net/http"
 	"os"
+	"reflect"
+	stdruntime "runtime"
 
 	"github.com/tokensafe-dev/tokensafe-backend/go/benchmark/sandboxes/vanilla_gin"
 	"github.com/tokensafe-dev/tokensafe-backend/go/pkg/oumv"
@@ -26,6 +28,12 @@ func main() {
 	cfg := oumv.DefaultDevelopmentRuntimeConfig()
 	rt := oumv.NewRuntime(oumv.Config{Name: "aub-sandbox", Version: "bench", Runtime: cfg})
 	for _, route := range app.Engine.Routes() {
+		pc := reflect.ValueOf(route.HandlerFunc).Pointer()
+		if fn := stdruntime.FuncForPC(pc); fn != nil {
+			file, line := fn.FileLine(pc)
+			rt.RegisterRouteSource(route.Method, route.Path, route.Handler, file, line)
+			continue
+		}
 		rt.RegisterRoute(route.Method, route.Path, route.Handler)
 	}
 	rt.SetHandler(http.HandlerFunc(app.ServeHTTP))

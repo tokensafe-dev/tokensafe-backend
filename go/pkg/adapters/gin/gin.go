@@ -1,6 +1,8 @@
 package gin
 
 import (
+	"reflect"
+	stdruntime "runtime"
 	"strings"
 	"time"
 
@@ -28,10 +30,20 @@ func Mount(r *gin.Engine, rt *oumv.Runtime, opts ...Options) {
 		rpcPath = opts[0].RPCPath
 	}
 
-	// 1. Introspect all registered routes for L1 Surface
+	// 1. Introspect all registered routes for L1 Surface. When the handler func is
+	// available, register its source location too, so observe L3 also accepts the
+	// endpoint target (e.g. "POST /api/products").
 	for _, route := range r.Routes() {
 		if route.Path == rpcPath {
 			continue
+		}
+		if route.HandlerFunc != nil {
+			pc := reflect.ValueOf(route.HandlerFunc).Pointer()
+			if fn := stdruntime.FuncForPC(pc); fn != nil {
+				file, line := fn.FileLine(pc)
+				rt.RegisterRouteSource(route.Method, route.Path, route.Handler, file, line)
+				continue
+			}
 		}
 		rt.RegisterRoute(route.Method, route.Path, route.Handler)
 	}

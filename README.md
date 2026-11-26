@@ -10,7 +10,7 @@
 > `tokensafe-backend` is the unified backend repository for the **OUMV (Observe, Understand, Mutate, Verify)** protocol. It houses backend runtime instrumentation and adapters across major server-side technologies:
 > - **Go (`go/`)**: Native Go runtime & adapters for Gin, Chi, and `net/http` (`github.com/tokensafe-dev/tokensafe-backend/go`).
 > - **Python (`python/`)**: Python runtime & FastAPI adapter, published as `tokensafe-backend-python`.
-> - **Node.js (`node/`)**: `tokensafe-backend-node` — Express and Fastify adapters, certified Level 3 (18/18).
+> - **Node.js (`node/`)**: `tokensafe-backend-node` — Express and Fastify adapters, certified Level 3 (20/20).
 
 ---
 
@@ -199,15 +199,37 @@ pip install "tokensafe-backend @ git+https://github.com/tokensafe-dev/tokensafe-
 
 | Run | Result | Evidence |
 | :--- | :--- | :--- |
-| Conformance | 6 adapters at Level 3, 18/18 each | `certification/*.json`, regenerated in CI |
+| Conformance | 6 adapters at Level 3, 20/20 each | `certification/*.json`, regenerated in CI |
 | Three-arm, order-processing sandbox | `oumv` arm **measured** (740 payload tokens, 5 round trips, oracle 12/12) vs `baseline` **simulated** (33,960 trace tokens, 6 turns, 12/12) | [THREE_ARM_REPORT.md](go/benchmark/THREE_ARM_REPORT.md) |
-| Agent benchmark (DeepSeek, real agent) | **not published** — harness lives in `tokensafe/src/bench`; the n=1 pilot was deleted | — |
+| Agent benchmark (DeepSeek, real agent) | **Go: 9/9 solved in both arms · OUMV −52.9% input tokens, −36.2% cost, 3.9 vs 4.8 steps** | [OUMV_AGENT_MATRIX.md](go/benchmark/OUMV_AGENT_MATRIX.md) |
 
 The three-arm run is a methodology demonstration, not a speed-up claim: only the OUMV
 arm executes real JSON-RPC against the sandbox, the baseline numbers are fixture traces.
-The only fully measured product benchmark is the tool-level token study in
-`tokensafe/docs/BENCHMARK_REAL.json` (15 real repositories, −84.8% tokens, zero-loss
-gates), and it measures the TokenSafe tools, not OUMV.
+The measured agent matrix above is the only published OUMV productivity result; the
+tool-level study in `tokensafe/docs/BENCHMARK_REAL.json` (15 real repositories, −84.8%
+tokens, zero-loss gates) measures the TokenSafe tools, not OUMV.
+
+### Measured agent matrix (Go, DeepSeek)
+
+3 regression tasks × 3 runs × 2 arms on `deepseek-chat` at temperature 0. Each session starts
+from a throwaway copy of the module; the real 12-assertion oracle is re-run after every step.
+Tokens and cost come from the provider's `usage` payload, not from bytes. Both arms get the
+same file/search/command tools and the same bug report (including a repro); the `oumv` arm
+additionally gets `observe`, `getSource`, `applyEdit`, `verify` and `understand` from the Go
+adapter.
+
+| Arm | Solved | Mean steps | Mean input tokens | Mean output tokens | Cost |
+| :--- | ---: | ---: | ---: | ---: | ---: |
+| `baseline` | 9/9 | 4.8 | 21,731 | 1,661 | $0.0385 |
+| `oumv` | 9/9 | 3.9 | 10,231 | 1,530 | $0.0245 |
+| **Delta** | — | **−18.8%** | **−52.9%** | −7.9% | **−36.2%** |
+
+Protocol-level numbers (deterministic, no model — `tokensafe bench-oumv --mechanics`): one
+`observe L3` call resolves an endpoint to its handler body in **721 chars**, where search +
+read costs **5,115 chars**; an in-process `verify` takes **1.2 ms** (27 ms including the helper
+process) against **~3.1 s** for the test-oracle run; a stale `expectedVersion` is rejected
+with `-32001` and a syntactically broken edit with `-32002`. Full per-run table and limits:
+[OUMV_AGENT_MATRIX.md](go/benchmark/OUMV_AGENT_MATRIX.md).
 
 ### Agent Usability Benchmark (AUB - Go, simulated traces)
 

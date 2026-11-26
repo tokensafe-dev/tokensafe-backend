@@ -41,6 +41,7 @@ type Runtime struct {
 	workspaceDir string
 	startTime    time.Time
 	routes       []protocol.RouteInfo
+	routeSources map[string]routeSource
 	handler      http.Handler
 	errCount1m   int64
 	patcher      *mutate.Patcher
@@ -54,6 +55,13 @@ type Runtime struct {
 
 // maxRequestTraces bounds the in-memory L4 trace ring buffer.
 const maxRequestTraces = 128
+
+// routeSource is where a registered handler lives on disk, so an endpoint target
+// can be resolved to source (spec §4 target grammar: `"METHOD /path"`).
+type routeSource struct {
+	file string
+	line int
+}
 
 // requestTrace is an observed request execution (runtime causality evidence).
 type requestTrace struct {
@@ -149,6 +157,7 @@ func NewRuntime(cfg Config) *Runtime {
 		handler:      cfg.Handler,
 		patcher:      mutate.NewPatcher(cfg.WorkspaceDir),
 		routes:       make([]protocol.RouteInfo, 0),
+		routeSources: make(map[string]routeSource),
 		config:       rCfg,
 	}
 }
@@ -278,6 +287,55 @@ func (r *Runtime) RegisterRoute(method, path, handlerName string, middlewares ..
 	})
 }
 
+// RegisterRouteSource registers a route together with where its handler lives on
+// disk. Adapters that hold the handler function (gin, net/http muxes) pass the
+// reflection-derived file/line; L3 can then resolve the endpoint target itself.
+func (r *Runtime) RegisterRouteSource(method, path, handlerName, file string, line int, middlewares ...string) {
+	if file != "" {
+		if abs, err := filepath.Abs(file); err == nil {
+			file = abs
+		}
+	}
+	r.mu.Lock()
+	defer r.mu.Unlock()
+	r.routes = append(r.routes, protocol.RouteInfo{
+		Method:      method,
+		Path:        path,
+		HandlerName: handlerName,
+		Middlewares: middlewares,
+	})
+	if file != "" && line > 0 {
+		r.routeSources[routeKey(method, path)] = routeSource{file: file, line: line}
+	}
+}
+
+func routeKey(method, path string) string {
+	return strings.ToUpper(strings.TrimSpace(method)) + " " + path
+}
+
+func (r *Runtime) routeSourceFor(method, path string) (routeSource, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	ref, ok := r.routeSources[routeKey(method, path)]
+	return ref, ok
+}
+
+// findRouteExact matches path and (when given) method without the fuzzy handler
+// matching findRoute allows.
+func (r *Runtime) findRouteExact(method, path string) (protocol.RouteInfo, bool) {
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, route := range r.routes {
+		if route.Path != path {
+			continue
+		}
+		if method == "" || strings.EqualFold(route.Method, method) {
+			return route, true
+		}
+	}
+	return protocol.RouteInfo{}, false
+}
+
 // Handshake performs session initialization and capability negotiation.
 func (r *Runtime) Handshake(ctx context.Context, params *protocol.OumvHandshakeParams) (*protocol.OumvHandshakeResult, *protocol.OumvError) {
 	caps := protocol.DefaultBackendCapabilities()
@@ -404,8 +462,8 @@ func (r *Runtime) Observe(ctx context.Context, params *protocol.ObserveParams) (
 			return nil, protocol.NewResourceNotFoundError(params.Target)
 		}
 		return &protocol.ObserveResult{
-			Level: protocol.LevelL2Contract,
-			Format:        "json",
+			Level:  protocol.LevelL2Contract,
+			Format: "json",
 			Data: protocol.L2ContractData{
 				Target:      params.Target,
 				Method:      route.Method,
@@ -414,7 +472,7 @@ func (r *Runtime) Observe(ctx context.Context, params *protocol.ObserveParams) (
 				Middlewares: route.Middlewares,
 				// Mounted routers expose handler names, not request/response structs;
 				// saying so is honest, inventing DTOs is not.
-				Note: "route contract from live router registration; request/response DTOs are not reflectable from a mounted router — use observe L3 for the handler source",
+				Note: "route contract from live router registration; request/response DTOs are not reflectable from a mounted router — observe L3 with this endpoint target for the handler source",
 				Evidence: &protocol.EvidenceMetadata{
 					Provenance:    "runtime",
 					SourceAdapter: r.name,
@@ -428,14 +486,53 @@ func (r *Runtime) Observe(ctx context.Context, params *protocol.ObserveParams) (
 		if params.Target == "" {
 			return nil, protocol.NewInvalidParamsError("target of the form path (or path#symbol) required for L3 source")
 		}
+		// §4 target grammar: an endpoint target is valid for L3 too. Resolving it
+		// here is what turns "POST /api/products" into the handler source, instead
+		// of making the agent search the workspace for the route.
+		if method, endpoint, isEndpoint := parseEndpointTarget(params.Target); isEndpoint {
+			route, found := r.findRouteExact(method, endpoint)
+			if !found {
+				return nil, protocol.NewResourceNotFoundError(params.Target)
+			}
+			ref, hasRef := r.routeSourceFor(route.Method, route.Path)
+			if !hasRef {
+				return nil, protocol.NewInvalidParamsError(
+					"endpoint " + params.Target + " has no source location: the adapter registered the route without RegisterRouteSource")
+			}
+			data, readErr := os.ReadFile(ref.file)
+			if readErr != nil {
+				return nil, protocol.NewResourceNotFoundError(params.Target)
+			}
+			source, start, end := sliceFunctionAt(data, ref.line)
+			hash := sha256.Sum256(data)
+			displayPath := ref.file
+			if root, absErr := filepath.Abs(r.workspaceDir); absErr == nil {
+				if rel, relErr := filepath.Rel(root, ref.file); relErr == nil && !strings.HasPrefix(rel, "..") {
+					displayPath = rel
+				}
+			}
+			return &protocol.ObserveResult{
+				Level:  protocol.LevelL3Source,
+				Format: "json",
+				Data: protocol.L3SourceData{
+					Symbol:    handlerShortName(route.HandlerName),
+					Path:      displayPath,
+					Source:    source,
+					Version:   "sha256:" + hex.EncodeToString(hash[:]),
+					StartLine: start,
+					EndLine:   end,
+				},
+				TokenEstimate: 300,
+			}, nil
+		}
 		path, symbol := splitSourceTarget(params.Target)
 		src, srcErr := r.GetSource(ctx, &protocol.GetSourceParams{Path: path, Symbol: symbol})
 		if srcErr != nil {
 			return nil, srcErr
 		}
 		return &protocol.ObserveResult{
-			Level: protocol.LevelL3Source,
-			Format:        "json",
+			Level:  protocol.LevelL3Source,
+			Format: "json",
 			Data: protocol.L3SourceData{
 				Symbol:    src.Symbol,
 				Path:      src.Path,
@@ -454,8 +551,8 @@ func (r *Runtime) Observe(ctx context.Context, params *protocol.ObserveParams) (
 			note = "no request traces recorded yet: call the endpoint, or use oumv/verify which feeds the trace ring"
 		}
 		return &protocol.ObserveResult{
-			Level: protocol.LevelL4Traces,
-			Format:        "json",
+			Level:  protocol.LevelL4Traces,
+			Format: "json",
 			Data: protocol.L4TracesData{
 				Target:     params.Target,
 				Traces:     traces,
@@ -834,12 +931,12 @@ func (r *Runtime) ApplyEdit(ctx context.Context, params *protocol.ApplyEditParam
 			return nil, patchErr
 		}
 		return &protocol.ApplyEditResult{
-			Status:      "APPLIED",
-			Path:        params.Path,
-			Symbol:      params.Symbol,
-			NewVersion:  patchRes.NewVersion,
-			SyntaxCheck: &protocol.SyntaxCheck{Status: "passed", Tool: "go/parser"},
-			Success:     true,
+			Status:       "APPLIED",
+			Path:         params.Path,
+			Symbol:       params.Symbol,
+			NewVersion:   patchRes.NewVersion,
+			SyntaxCheck:  &protocol.SyntaxCheck{Status: "passed", Tool: "go/parser"},
+			Success:      true,
 			LinesChanged: patchRes.LinesChanged,
 		}, nil
 	}
@@ -874,12 +971,12 @@ func (r *Runtime) ApplyEdit(ctx context.Context, params *protocol.ApplyEditParam
 	newVersion := "sha256:" + hex.EncodeToString(newHash[:])
 
 	return &protocol.ApplyEditResult{
-		Status:      "APPLIED",
-		Path:        params.Path,
-		Symbol:      params.Symbol,
-		NewVersion:  newVersion,
-		SyntaxCheck: &protocol.SyntaxCheck{Status: "passed", Tool: "go/parser"},
-		Success:     true,
+		Status:       "APPLIED",
+		Path:         params.Path,
+		Symbol:       params.Symbol,
+		NewVersion:   newVersion,
+		SyntaxCheck:  &protocol.SyntaxCheck{Status: "passed", Tool: "go/parser"},
+		Success:      true,
 		LinesChanged: len(strings.Split(params.Replacement, "\n")),
 	}, nil
 }
@@ -986,4 +1083,63 @@ func (r *Runtime) Verify(ctx context.Context, params *protocol.VerifyParams) (*p
 			NotSupported: []string{"browser/DOM assertions"},
 		},
 	}, nil
+}
+
+// ---- endpoint → source resolution (L3 with a route target) ----------------
+
+var httpMethods = map[string]bool{
+	"GET": true, "POST": true, "PUT": true, "PATCH": true,
+	"DELETE": true, "HEAD": true, "OPTIONS": true,
+}
+
+// parseEndpointTarget implements the §4 target grammar for the two endpoint
+// forms: "METHOD /path" and "/path".
+func parseEndpointTarget(target string) (method, path string, ok bool) {
+	trimmed := strings.TrimSpace(target)
+	if strings.HasPrefix(trimmed, "/") {
+		return "", trimmed, true
+	}
+	parts := strings.SplitN(trimmed, " ", 2)
+	if len(parts) == 2 && strings.HasPrefix(parts[1], "/") && httpMethods[strings.ToUpper(parts[0])] {
+		return strings.ToUpper(parts[0]), parts[1], true
+	}
+	return "", "", false
+}
+
+// handlerShortName strips the package path from a fully-qualified handler name.
+func handlerShortName(name string) string {
+	if i := strings.LastIndex(name, "/"); i >= 0 {
+		return name[i+1:]
+	}
+	return name
+}
+
+// sliceFunctionAt returns the innermost function (declaration or closure) that
+// encloses a line. Handlers registered by a builder are closures, so the smallest
+// enclosing function is the handler body, not the whole builder.
+func sliceFunctionAt(data []byte, line int) (string, int, int) {
+	lines := strings.Split(string(data), "\n")
+	fset := token.NewFileSet()
+	node, err := parser.ParseFile(fset, "handler.go", data, parser.ParseComments)
+	if err != nil {
+		return string(data), 1, len(lines)
+	}
+	bestStart, bestEnd := 0, 0
+	ast.Inspect(node, func(n ast.Node) bool {
+		switch n.(type) {
+		case *ast.FuncDecl, *ast.FuncLit:
+		default:
+			return true
+		}
+		start := fset.Position(n.Pos()).Line
+		end := fset.Position(n.End()).Line
+		if start <= line && line <= end && (bestStart == 0 || end-start < bestEnd-bestStart) {
+			bestStart, bestEnd = start, end
+		}
+		return true
+	})
+	if bestStart == 0 || bestStart > len(lines) || bestEnd > len(lines) {
+		return string(data), 1, len(lines)
+	}
+	return strings.Join(lines[bestStart-1:bestEnd], "\n"), bestStart, bestEnd
 }
