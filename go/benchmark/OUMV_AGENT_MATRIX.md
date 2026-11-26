@@ -11,32 +11,33 @@
 | Price snapshot | 2026-11-26: input $0.27 / Mtok (cache miss), $0.07 (cache hit), output $1.1 |
 | Runs | 3 per task per arm |
 | Budget cap | $5.0 per target (hard stop) |
-| Harness revision | working tree (bench harness uncommitted at run time) |
+| Harness revision | cc92633f91be1d898ca5c762ebac18a98114a6f0 |
 
-Both arms get the same file/search/command tools and the same bug report, including a
-repro. The `oumv` arm additionally gets `oumv/observe`, `oumv/getSource`, `oumv/applyEdit`,
-`oumv/verify` and `oumv/understand` from the shipped adapter. Each session starts from a
-throwaway copy of the sandbox with one deliberate regression, and the oracle is re-run
-after every step.
+All three arms get the same file/search/command tools and the same bug report, including
+a repro. `oumv` adds observe/getSource/applyEdit/verify/understand from the shipped
+adapter; `tokensafe` adds the product's own smart_read_file/scoped_search/repo_map over
+the real MCP server. Each session starts from a throwaway copy of the sandbox with one
+deliberate regression, and the oracle is re-run after every step.
 
 ## Go
 
 | Arm | Runs | Solved | Mean steps | Mean wall clock | Mean input tokens | Mean output tokens | Cost |
 | :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
-| `baseline` | 9 | 9/9 | 4.8 | 27.8s | 21,731 | 1,661 | $0.0385 |
-| `oumv` | 9 | 9/9 | 3.9 | 27.2s | 10,231 | 1,530 | $0.0245 |
+| `baseline` | 9 | 9/9 | 4.4 | 28.6s | 19,435 | 1,594 | $0.0358 |
+| `tokensafe` | 9 | 7/9 | 10.7 | 54.3s | 70,962 | 3,018 | $0.0893 |
+| `oumv` | 9 | 9/9 | 4.0 | 29.4s | 10,532 | 1,523 | $0.0240 |
 
-**OUMV vs baseline:** input tokens -52.9%, output tokens -7.9%, steps -18.8%, cost -36.2%, solved 9/9 vs 9/9.
+**OUMV vs baseline:** input tokens -45.8%, output tokens -4.5%, steps -9.1%, cost -33.1%, solved 9/9 vs 9/9.
 
 ### Per task
 
-| Task | Baseline input | OUMV input | Delta | Baseline steps | OUMV steps |
-| :--- | ---: | ---: | ---: | ---: | ---: |
-| `product-create-status` | 15,181 | 6,592 | -56.6% | 4 | 3 |
-| `order-conflict-status` | 25,429 | 6,917 | -72.8% | 5.7 | 3 |
-| `product-validation-status` | 24,582 | 17,184 | -30.1% | 4.7 | 5.7 |
+| Task | baseline input | tokensafe input | oumv input | OUMV vs baseline | baseline steps | tokensafe steps | oumv steps |
+| :--- | ---: | ---: | ---: | ---: | ---: | ---: | ---: |
+| `product-create-status` | 11,142 | 74,335 | 6,587 | -40.9% | 3.3 | 11.3 | 3 |
+| `order-conflict-status` | 20,064 | 100,672 | 6,917 | -65.5% | 5 | 13.3 | 3 |
+| `product-validation-status` | 27,097 | 37,878 | 18,091 | -33.2% | 5 | 7.3 | 6 |
 
-Solved: **18/18 sessions** across both arms.
+Solved: **25/27 sessions** across all arms.
 
 ## Protocol mechanics (deterministic, no model)
 
@@ -49,8 +50,12 @@ Solved: **18/18 sessions** across both arms.
 - One model (`deepseek-chat`, temperature 0), one vendor; three tasks per target.
 - The sandbox is small (a 155-line Go app): discovery cost is lower than in a large repo, so
   these numbers are a floor for the discovery saving, not a ceiling.
+- The `tokensafe` arm is the product's real MCP toolset, not a strawman, but MCP startup and
+  full-symbol reads dominate on a tiny workspace — it is slower and less reliable here, and
+  the matrix reports that as measured.
 - `oumv/verify` starts a fresh app per call by design, so stateful failures are confirmed
   with the test oracle in both arms. Multi-step verify is a spec-backlog item.
-- Mutation in OUMV v1.0 replaces the whole file, so edit-side token savings are not part of
-  this matrix; the measured wins are discovery, verification and guarded writes.
+- `verify.steps` and `applyEdit mode=symbol` ship in v1.1 but these tasks are one-line
+  status changes; the agents used whole-file edits, so edit-side savings are not measured
+  by this matrix.
 

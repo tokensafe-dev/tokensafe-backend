@@ -204,7 +204,7 @@ pip install "tokensafe-backend @ git+https://github.com/tokensafe-dev/tokensafe-
 | :--- | :--- | :--- |
 | Conformance | 6 adapters at Level 3, 25/25 each | `certification/*.json`, regenerated in CI |
 | Three-arm, order-processing sandbox | `oumv` arm **measured** (740 payload tokens, 5 round trips, oracle 12/12) vs `baseline` **simulated** (33,960 trace tokens, 6 turns, 12/12) | [THREE_ARM_REPORT.md](go/benchmark/THREE_ARM_REPORT.md) |
-| Agent benchmark (DeepSeek, real agent) | **Go: 9/9 solved in both arms · OUMV −52.9% input tokens, −36.2% cost, 3.9 vs 4.8 steps** | [OUMV_AGENT_MATRIX.md](go/benchmark/OUMV_AGENT_MATRIX.md) |
+| Agent benchmark (DeepSeek, real agent) | **Go, 3 arms: OUMV 9/9, −45.8% input tokens / −33.1% cost vs baseline; TokenSafe-tools arm 7/9** | [OUMV_AGENT_MATRIX.md](go/benchmark/OUMV_AGENT_MATRIX.md) |
 
 The three-arm run is a methodology demonstration, not a speed-up claim: only the OUMV
 arm executes real JSON-RPC against the sandbox, the baseline numbers are fixture traces.
@@ -214,18 +214,24 @@ tokens, zero-loss gates) measures the TokenSafe tools, not OUMV.
 
 ### Measured agent matrix (Go, DeepSeek)
 
-3 regression tasks × 3 runs × 2 arms on `deepseek-chat` at temperature 0. Each session starts
+3 regression tasks × 3 runs × 3 arms on `deepseek-chat` at temperature 0. Each session starts
 from a throwaway copy of the module; the real 12-assertion oracle is re-run after every step.
-Tokens and cost come from the provider's `usage` payload, not from bytes. Both arms get the
-same file/search/command tools and the same bug report (including a repro); the `oumv` arm
-additionally gets `observe`, `getSource`, `applyEdit`, `verify` and `understand` from the Go
-adapter.
+Tokens and cost come from the provider's `usage` payload, not from bytes. All arms get the same
+file/search/command tools and the same bug report (including a repro); `oumv` adds `observe`,
+`getSource`, `applyEdit`, `verify` and `understand` from the Go adapter; `tokensafe` adds the
+product's real MCP tools (`smart_read_file`, `scoped_search`, `repo_map`).
 
 | Arm | Solved | Mean steps | Mean input tokens | Mean output tokens | Cost |
 | :--- | ---: | ---: | ---: | ---: | ---: |
-| `baseline` | 9/9 | 4.8 | 21,731 | 1,661 | $0.0385 |
-| `oumv` | 9/9 | 3.9 | 10,231 | 1,530 | $0.0245 |
-| **Delta** | — | **−18.8%** | **−52.9%** | −7.9% | **−36.2%** |
+| `baseline` | 9/9 | 4.4 | 19,435 | 1,594 | $0.0358 |
+| `tokensafe` | 7/9 | 10.7 | 70,962 | 3,018 | $0.0893 |
+| `oumv` | 9/9 | 4.0 | 10,532 | 1,523 | $0.0240 |
+| **Delta (oumv vs baseline)** | — | **−9.1%** | **−45.8%** | −4.5% | **−33.1%** |
+
+The TokenSafe arm is not a strawman: it runs the product's MCP server with its AST skeleton
+reader, scoped search and architecture map. On a 155-line sandbox its startup and whole-symbol
+reads dominate, and it missed 2 of 9 runs on `max_steps` — the report states that plainly
+instead of hiding it. The OUMV arm solved all 9 runs in both matrices.
 
 Protocol-level numbers (deterministic, no model — `tokensafe bench-oumv --mechanics`): one
 `observe L3` call resolves an endpoint to its handler body in **721 chars**, where search +
