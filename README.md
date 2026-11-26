@@ -391,9 +391,12 @@ tokensafe create my-service --template go
 | Path | License |
 | :--- | :--- |
 | Repository and Go module (`go/`) | [Apache-2.0](LICENSE) |
-| Python runtime (`python/`) | [MIT](python/LICENSE) |
+| Python runtime (`python/`) | [Apache-2.0](python/LICENSE) from 0.5.0 |
 
-`python/` keeps MIT because that grant was issued before the repository adopted Apache-2.0; it
-is irrevocable for the published files. The Python package metadata still declares MIT and
-must stay that way for existing versions. "OUMV Certified" and the certification badge are
-marks and are not licensed by either grant.
+The Python runtime shipped under MIT up to and including 0.3.0. That grant is irrevocable for
+copies already distributed — the last MIT commit stays forkable under MIT forever — but new
+versions ship under Apache-2.0, matching the Go module and the rest of the stack. Versions
+≤0.3.0 keep their MIT metadata; nothing is back-dated.
+
+"OUMV Certified" and the certification badge are marks and are not licensed by either grant —
+see [TRADEMARK.md](https://github.com/tokensafe-dev/oumv/blob/main/TRADEMARK.md).

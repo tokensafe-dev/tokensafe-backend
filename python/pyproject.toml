@@ -4,13 +4,13 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "tokensafe-backend-python"
-version = "0.3.0"
+version = "0.5.0"
 description = "Universal Agent-Runtime Protocol (UARP / OUMV) Python runtime & FastAPI adapter"
 readme = "README.md"
 authors = [
     { name = "TokenSafe Team", email = "support@tokensafe.dev" }
 ]
-license = "MIT"
+license = "Apache-2.0"
 requires-python = ">=3.10"
 keywords = [
     "tokensafe",
