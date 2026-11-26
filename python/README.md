@@ -5,7 +5,8 @@ FastAPI adapter and runtime for the Universal Agent-Runtime Protocol (UARP / OUM
 ### Installation
 
 ```bash
-pip install tokensafe-python
+pip install "tokensafe-backend-python @ git+https://github.com/tokensafe-dev/tokensafe-backend.git#subdirectory=python"
+# or from a local clone: pip install ./python
 ```
 
 ### Usage with FastAPI

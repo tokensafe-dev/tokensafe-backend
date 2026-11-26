@@ -182,7 +182,7 @@ tag is invisible to the module proxy.
 
 ### Python Runtime (`python/`)
 ```bash
-pip install tokensafe-python
+pip install "tokensafe-backend-python @ git+https://github.com/tokensafe-dev/tokensafe-backend.git#subdirectory=python"
 # local monorepo copy:
 pip install ./python
 # or from git:
