@@ -80,15 +80,6 @@ jobs:
           cache: 'pnpm'
           cache-dependency-path: node/pnpm-lock.yaml
 
-      # The OUMV checkout carries sources only: its dist is gitignored, and the
-      # runner the Node tests import must exist before they can certify anything.
-      - name: Build OUMV conformance runner
-        working-directory: vendor/oumv
-        run: |
-          pnpm install --no-frozen-lockfile
-          pnpm --filter @oumv/schema build
-          pnpm --filter @oumv/conformance build
-
       - name: Install dependencies
         run: pnpm install --no-frozen-lockfile
 
@@ -149,6 +140,15 @@ jobs:
       - name: Generate Python adapter report
         working-directory: python
         run: CERT_OUT_DIR="$GITHUB_WORKSPACE/cert-fresh" pytest -q tests/test_conformance.py
+
+      # The OUMV checkout carries sources only: its dist is gitignored, and the
+      # runner the Node tests import must exist before they can certify anything.
+      - name: Build OUMV conformance runner
+        working-directory: vendor/oumv
+        run: |
+          pnpm install --no-frozen-lockfile
+          pnpm --filter @oumv/schema build
+          pnpm --filter @oumv/conformance build
 
       - name: Install Node adapter dependencies
         working-directory: node
