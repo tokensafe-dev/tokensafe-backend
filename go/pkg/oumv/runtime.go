@@ -284,6 +284,7 @@ func (r *Runtime) Handshake(ctx context.Context, params *protocol.OumvHandshakeP
 
 	return &protocol.OumvHandshakeResult{
 		ProtocolVersion: protocol.CurrentProtocolVersion,
+		Profile:         "backend",
 		RuntimeInfo: protocol.RuntimeInfo{
 			Name:    r.name,
 			Version: r.version,

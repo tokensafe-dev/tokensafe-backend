@@ -58,6 +58,7 @@ type OumvHandshakeParams struct {
 // OumvHandshakeResult is returned by the runtime adapter acknowledging the session.
 type OumvHandshakeResult struct {
 	ProtocolVersion string           `json:"protocolVersion"`
+	Profile         string           `json:"profile"`
 	RuntimeInfo     RuntimeInfo      `json:"runtimeInfo"`
 	Capabilities    OumvCapabilities `json:"capabilities"`
 }

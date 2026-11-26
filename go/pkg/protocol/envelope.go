@@ -6,7 +6,7 @@ import (
 )
 
 // CurrentProtocolVersion represents the supported OUMV specification version.
-const CurrentProtocolVersion = "1.0.0"
+const CurrentProtocolVersion = "1.1.0"
 
 // OumvRequest represents a standard JSON-RPC 2.0 request envelope.
 type OumvRequest struct {
