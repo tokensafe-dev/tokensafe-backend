@@ -22,6 +22,8 @@ export { Dispatcher, success, failure, parsePayload, dispatchAll } from './trans
 export { createHttpHandler, isAuthorized } from './transport/http.js';
 export { createSseHandler } from './transport/sse.js';
 export { attachWebSocket } from './transport/ws.js';
+export { attachStdio } from './transport/stdio.js';
+export type { StdioAttachment, StdioOptions } from './transport/stdio.js';
 export { mountTokensafe, tracingMiddleware } from './adapters/express.js';
 export type { ExpressAdapter, ExpressAdapterOptions } from './adapters/express.js';
 export { registerTokensafe } from './adapters/fastify.js';

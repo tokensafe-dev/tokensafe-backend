@@ -117,7 +117,7 @@ export class OumvRuntime {
 
   constructor(options: OumvRuntimeOptions = {}) {
     this.name = options.name || 'tokensafe-node';
-    this.version = options.version || '0.1.0';
+    this.version = options.version || '0.2.0';
     this.workspaceDir = path.resolve(options.workspaceDir || process.cwd());
     this.transportPath = options.transportPath || '/__oumv/rpc';
     this.maxBodyBytes = options.maxBodyBytes ?? 8 * 1024 * 1024;

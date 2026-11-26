@@ -8,9 +8,9 @@
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 > `tokensafe-backend` is the unified backend repository for the **OUMV (Observe, Understand, Mutate, Verify)** protocol. It houses backend runtime instrumentation and adapters across major server-side technologies:
-> - **Go (`go/`)**: Native Go runtime & adapters for Gin, Chi, and `net/http` (`github.com/tokensafe-dev/tokensafe-backend/go`).
-> - **Python (`python/`)**: Python runtime & FastAPI adapter, published as `tokensafe-backend-python`.
-> - **Node.js (`node/`)**: `tokensafe-backend-node` — Express and Fastify adapters, certified Level 3 (20/20).
+> - **Go (`go/`)**: Native Go runtime & adapters for Gin, Chi, and `net/http` (`github.com/tokensafe-dev/tokensafe-backend/go`); `oumv.ListenAndServe` writes the §9.2 discovery descriptor with the real bound port.
+> - **Python (`python/`)**: Python runtime & FastAPI adapter, published as `tokensafe-backend-python`; HTTP + SSE + WebSocket + stdio.
+> - **Node.js (`node/`)**: `tokensafe-backend-node` — Express and Fastify adapters over HTTP, SSE, WebSocket and stdio, certified Level 3 (20/20).
 
 ---
 
@@ -39,14 +39,17 @@
 | `python-fastapi` | FastAPI | ASGI `POST /__oumv/rpc` | **3** | 20/20 | [certification/python-fastapi.json](certification/python-fastapi.json) |
 <!-- certification:end -->
 
-Levels are cumulative and a skipped case never counts as a pass — a missing capability caps the claim instead of inflating it. Regenerate locally:
+Levels are cumulative and a skipped case never counts as a pass — a missing capability caps the claim instead of inflating it. The same fixtures also run over **stdio** (§2.5) against the Node and Python runtimes: [`certification/transports/node-stdio.json`](certification/transports/node-stdio.json) and [`python-stdio.json`](certification/transports/python-stdio.json), both Level 3, 20/20. Regenerate locally:
 
 ```bash
 # Go adapters (writes certification/*.json)
 cd go && CERT_OUT_DIR=../certification go test ./pkg/adapters -run TestAdapterCertification
 
-# Python/FastAPI
-cd python && CERT_OUT_DIR=../certification .venv/bin/python -m pytest tests/test_conformance.py
+# Python/FastAPI — HTTP and stdio
+cd python && CERT_OUT_DIR=../certification .venv/bin/python -m pytest -q tests/test_conformance.py tests/test_stdio.py
+
+# Node adapters — HTTP and stdio
+cd node && CERT_OUT_DIR=../certification OUMV_REPO=../../agent-oumv pnpm test
 ```
 
 ---

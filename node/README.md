@@ -44,8 +44,21 @@ const ws = oumv.attachWebSocket();
 | understand | impact from the registered route table, causality from real traces (`observed: false` + note when there are none) |
 | mutate | `getSource`/`applyEdit` with mandatory `expectedVersion`, guarded in the normative order `-32003 → -32009 → -32002 → -32011 → -32001`; backups under `.tokensafe/backups/` |
 | verify | loopback HTTP dispatch against the live handler with `timings`/`durationMs`/`scope`, and the result feeds the L4 ring |
-| transports | HTTP POST + batch, SSE (`GET …/events`, `Last-Event-ID`), WebSocket upgrade on `/__oumv/rpc` |
+| transports | HTTP POST + batch, SSE (`GET …/events`, `Last-Event-ID`), WebSocket upgrade on `/__oumv/rpc`, stdio NDJSON |
 | discovery | `~/.tokensafe/runtimes/<hash16>.json` registry entry (0600, outside the repo), profile-keyed |
+
+## stdio (headless)
+
+Same runtime, no listener:
+
+```bash
+tokensafe-oumv-stdio --workspace /path/to/app
+tokensafe-oumv-stdio --app ./src/app.js --workspace /path/to/app   # Express or Fastify
+```
+
+One JSON-RPC object per line, responses on stdout, diagnostics on stderr. With
+`--app` the module's default export is mounted (routes + in-process verify work);
+without it, the file-based pillar (`observe L3`, `getSource`, `applyEdit`) still does.
 
 ## Certification
 
@@ -54,8 +67,9 @@ CERT_OUT_DIR=../certification OUMV_REPO=../../agent-oumv pnpm test
 ```
 
 The fixture suite (owner: `tokensafe-dev/oumv`) runs over real HTTP against both
-adapters. Committed reports: `../certification/node-express.json` and
-`node-fastify.json` — Level 3, 18/18, fixtureVersion 4.
+adapters and over stdio against the shared runtime. Committed reports:
+`../certification/node-express.json`, `node-fastify.json` (Level 3, 20/20,
+fixtureVersion 5) and `../certification/transports/node-stdio.json` (Level 3, 20/20).
 
 Notes: paths are workspace-jailed and credential files are refused; a Node backend
 adapter is development-time tooling and must not be exposed publicly without the

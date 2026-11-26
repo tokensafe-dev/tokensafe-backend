@@ -22,6 +22,13 @@ def load_reports(directory: Path) -> dict[str, dict]:
     reports: dict[str, dict] = {}
     for path in sorted(directory.glob("*.json")):
         reports[path.name] = json.loads(path.read_text(encoding="utf-8"))
+    # Same adapters over extra transports (stdio, WS) live in a subdirectory: they
+    # are transport evidence, not additional adapters, so the README table ignores
+    # them while this check still reproduces them.
+    transports = directory / "transports"
+    if transports.is_dir():
+        for path in sorted(transports.glob("*.json")):
+            reports[f"transports/{path.name}"] = json.loads(path.read_text(encoding="utf-8"))
     return reports
 
 

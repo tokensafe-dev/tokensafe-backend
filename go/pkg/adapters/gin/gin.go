@@ -108,3 +108,10 @@ func AutoMount(r *gin.Engine) *oumv.Runtime {
 	Mount(r, rt)
 	return rt
 }
+
+// AutoMountAndServe replaces r.Run(addr): it mounts the runtime and serves through
+// oumv.ListenAndServe, so the §9.2 discovery descriptor carries the real bound port
+// and disappears on shutdown.
+func AutoMountAndServe(r *gin.Engine, addr string) error {
+	return oumv.ListenAndServe(AutoMount(r), addr, r)
+}

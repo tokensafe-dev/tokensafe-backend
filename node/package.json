@@ -1,12 +1,15 @@
 {
   "name": "tokensafe-backend-node",
-  "version": "0.1.0",
-  "description": "OUMV adapter for Node.js backends (Express, Fastify): observe, understand, mutate with OCC, verify \u2014 over HTTP, SSE and WebSocket",
+  "version": "0.2.0",
+  "description": "OUMV adapter for Node.js backends (Express, Fastify): observe, understand, mutate with OCC, verify \u2014 over HTTP, SSE, WebSocket and stdio",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.cjs",
   "module": "./dist/index.js",
   "types": "./dist/index.d.ts",
+  "bin": {
+    "tokensafe-oumv-stdio": "./dist/stdio.cjs"
+  },
   "files": [
     "dist",
     "README.md"

@@ -100,3 +100,14 @@ func AutoMount(r chi.Router) (*oumv.Runtime, error) {
 	}
 	return rt, nil
 }
+
+// AutoMountAndServe replaces http.ListenAndServe(addr, r): it mounts the runtime
+// and serves through oumv.ListenAndServe, so the §9.2 discovery descriptor carries
+// the real bound port and disappears on shutdown.
+func AutoMountAndServe(r chi.Router, addr string) error {
+	rt, err := AutoMount(r)
+	if err != nil {
+		return err
+	}
+	return oumv.ListenAndServe(rt, addr, r)
+}
