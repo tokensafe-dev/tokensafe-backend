@@ -5,8 +5,9 @@
 
 ## Correction (post-run diagnosis, 2026-11-26)
 
-The `tokensafe` row below ran an **incomplete and mis-prompted** version of the product's
-toolkit, so it overstates the cost of using TokenSafe. Diagnosed from the recorded traces:
+The `tokensafe` row below ran an **incomplete, mis-prompted** version of the product's
+toolkit. It has been re-measured twice since: **9/9 solved in both runs, no arm losing**
+(see `OUMV_AGENT_MATRIX_V3.md` for the numbers). What the first run actually measured:
 
 - The arm exposed only the read half of the toolkit (`smart_read_file`, `scoped_search`,
   `repo_map`) and no `apply_edits`, so every edit was a blind `write_file` + `go test`
@@ -22,13 +23,14 @@ toolkit, so it overstates the cost of using TokenSafe. Diagnosed from the record
   all**, plus ~5 KB/run of the arm's own output.
 - Two of nine runs died at `max_steps` repeating an identical build error.
 
-Fixed since this run: `smart_read_file` resolves the symbol against the file's
-declarations first and returns the enclosing handler (±window with line numbers) or an
-honest miss; it accepts endpoint targets (`POST /api/orders`); `scoped_search` groups hits
-per file and caps a hot file's share of the budget; the arm now runs the product's real
-loop (`scoped_search` → `smart_read_file` → `apply_edits` + inline `verify`). The
-`baseline` and `oumv` rows are unaffected. **The `tokensafe` row is superseded and must not
-be quoted until it is re-measured.**
+Fixed since: `smart_read_file` resolves the symbol against the file's declarations and
+returns the enclosing handler (±window with line numbers) or an honest miss, and accepts
+endpoint targets; files below 200 lines come back raw instead of as a skeleton that
+forces a second call; `scoped_search` groups hits per file and caps a hot file's budget;
+`apply_edits` takes `verify="auto"` (the project's own test command, scoped to the edited
+packages) with its own timeout budget; the arm runs the product's real loop. The
+`baseline` and `oumv` rows below are unaffected. **The `tokensafe` row is superseded and
+must not be quoted.**
 
 ## Method
 

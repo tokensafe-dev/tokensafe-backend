@@ -214,35 +214,32 @@ tokens, zero-loss gates) measures the TokenSafe tools, not OUMV.
 
 ### Measured agent matrix (Go, DeepSeek)
 
-3 regression tasks × 3 runs × 3 arms on `deepseek-chat` at temperature 0. Each session starts
-from a throwaway copy of the module; the real 12-assertion oracle is re-run after every step.
-Tokens and cost come from the provider's `usage` payload, not from bytes. All arms get the same
-file/search/command tools and the same bug report (including a repro); `oumv` adds `observe`,
-`getSource`, `applyEdit`, `verify` and `understand` from the Go adapter; `tokensafe` adds the
-product's real MCP tools (`smart_read_file`, `scoped_search`, `repo_map` in this run; the arm
-now also runs `apply_edits` with inline `verify`).
+3 regression tasks × 3 runs × 3 arms on `deepseek-chat` at temperature 0, real 12-assertion
+oracle re-run after every step, tokens from the provider's `usage` payload. `baseline` gets
+file/search/command tools, `tokensafe` the product's own MCP server (`scoped_search` →
+`smart_read_file` → `apply_edits` with inline `verify="auto"`), `oumv` the shipped Go
+adapter (`observe L3` → `getSource` → `applyEdit` → `verify`).
 
-| Arm | Solved | Mean steps | Mean input tokens | Mean output tokens | Cost |
+| Arm | Solved | Mean steps | Mean input | Mean output | Cost/run |
 | :--- | ---: | ---: | ---: | ---: | ---: |
-| `baseline` | 9/9 | 4.4 | 19,435 | 1,594 | $0.0358 |
-| `tokensafe` | 7/9 | 10.7 | 70,962 | 3,018 | $0.0893 |
-| `oumv` | 9/9 | 4.0 | 10,532 | 1,523 | $0.0240 |
-| **Delta (oumv vs baseline)** | — | **−9.1%** | **−45.8%** | −4.5% | **−33.1%** |
+| `baseline` | 9/9 | 4.7 | 21,532 | 1,614 | $0.0037 |
+| `tokensafe` | 9/9 | 4.4 | 17,183 | 652 | $0.0026 |
+| `oumv` | 9/9 | 4.0 | 10,848 | 1,570 | $0.0027 |
+| **tokensafe vs baseline** | — | −4.8% | **−20.2%** | −59.6% | **−30.2%** |
+| **oumv vs baseline** | — | −14.3% | **−49.6%** | −2.7% | **−25.6%** |
 
-The TokenSafe arm is not a strawman — it runs the product's MCP server — but this row is
-**superseded**: the run exposed only the read half of the toolkit (no `apply_edits`) and its
-`smart_read_file` returned a folded whole-file skeleton for closure handlers, so it saved no
-read tokens (12,635 vs 13,102 chars/run) and 2 of 9 runs died at `max_steps`. Both are fixed
-in `tokensafe` since 2026-11-26; the row must not be quoted until it is re-measured. The
-report's correction section has the full diagnosis. The OUMV arm solved all 9 runs in both
-matrices.
+The earlier run that showed the TokenSafe arm losing (7/9, 3.6× the tokens) measured an
+incomplete toolkit — no `apply_edits`, a procedure-free prompt, and a `smart_read_file`
+that returned a folded skeleton for closure handlers. It is corrected in
+[OUMV_AGENT_MATRIX.md](go/benchmark/OUMV_AGENT_MATRIX.md#correction-post-run-diagnosis-2026-11-26).
+Full per-task tables, the schema A/B and the limits (including per-run variance at n=3):
+[OUMV_AGENT_MATRIX_V3.md](go/benchmark/OUMV_AGENT_MATRIX_V3.md).
 
 Protocol-level numbers (deterministic, no model — `tokensafe bench-oumv --mechanics`): one
 `observe L3` call resolves an endpoint to its handler body in **721 chars**, where search +
 read costs **5,115 chars**; an in-process `verify` takes **1.2 ms** (27 ms including the helper
 process) against **~3.1 s** for the test-oracle run; a stale `expectedVersion` is rejected
-with `-32001` and a syntactically broken edit with `-32002`. Full per-run table and limits:
-[OUMV_AGENT_MATRIX.md](go/benchmark/OUMV_AGENT_MATRIX.md).
+with `-32001` and a syntactically broken edit with `-32002`.
 
 ### Agent Usability Benchmark (AUB - Go, simulated traces)
 
