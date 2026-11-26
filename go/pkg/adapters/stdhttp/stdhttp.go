@@ -78,7 +78,9 @@ func (m *ServeMux) Mount(rpcPath string) {
 		AllowedOrigins:         m.runtime.Config().Security.AllowedOrigins,
 		Disabled:               false,
 	}
-	m.ServeMux.Handle(rpcPath, transport.NewHTTPHandler(dispatcher, httpOpts))
+	// POST/OPTIONS for JSON-RPC; GET on the same path is the WebSocket upgrade.
+	m.ServeMux.Handle("POST "+rpcPath, transport.NewHTTPHandler(dispatcher, httpOpts))
+	m.ServeMux.Handle("OPTIONS "+rpcPath, transport.NewHTTPHandler(dispatcher, httpOpts))
 	eventsPath := strings.TrimSuffix(rpcPath, "/rpc") + "/events"
 	m.ServeMux.Handle("GET "+eventsPath, transport.NewSSEHandler(m.runtime))
 	m.ServeMux.Handle("GET "+rpcPath, transport.NewWSHandler(transport.NewDispatcher(m.runtime)))

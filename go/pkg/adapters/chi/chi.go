@@ -76,7 +76,9 @@ func Mount(r chi.Router, rt *oumv.Runtime, opts ...Options) error {
 		AllowedOrigins:         rt.Config().Security.AllowedOrigins,
 		Disabled:               false,
 	}
-	r.Handle(rpcPath, transport.NewHTTPHandler(dispatcher, httpOpts))
+	// POST/OPTIONS for JSON-RPC; GET on the same path is the WebSocket upgrade.
+	r.Post(rpcPath, transport.NewHTTPHandler(dispatcher, httpOpts).ServeHTTP)
+	r.Options(rpcPath, transport.NewHTTPHandler(dispatcher, httpOpts).ServeHTTP)
 	eventsPath := strings.TrimSuffix(rpcPath, "/rpc") + "/events"
 	r.Get(eventsPath, func(w http.ResponseWriter, req *http.Request) {
 		transport.NewSSEHandler(rt).ServeHTTP(w, req)

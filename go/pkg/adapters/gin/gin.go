@@ -81,7 +81,9 @@ func Mount(r *gin.Engine, rt *oumv.Runtime, opts ...Options) {
 	eventsPath := strings.TrimSuffix(rpcPath, "/rpc") + "/events"
 	r.GET(eventsPath, gin.WrapH(transport.NewSSEHandler(rt)))
 	r.GET(rpcPath, gin.WrapH(transport.NewWSHandler(dispatcherForWS)))
-	r.Any(rpcPath, gin.WrapH(handler))
+	// POST/OPTIONS only: GET on this path is the WebSocket upgrade.
+	r.POST(rpcPath, gin.WrapH(handler))
+	r.OPTIONS(rpcPath, gin.WrapH(handler))
 }
 
 // AutoMount creates a development runtime rooted at the current working directory
