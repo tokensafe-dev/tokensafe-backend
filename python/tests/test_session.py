@@ -98,3 +98,26 @@ def test_descriptor_is_written_outside_the_repo_with_0600():
             os.environ.pop("TOKENSAFE_HOME", None)
         else:
             os.environ["TOKENSAFE_HOME"] = previous
+
+
+@pytest.mark.asyncio
+async def test_auth_token_is_enforced_when_configured(monkeypatch):
+    monkeypatch.setenv("TOKENSAFE_OUMV_AUTH_TOKEN", "secret-token")
+    app = FastAPI()
+    mount_tokensafe(app, auto_discover=False)
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+        denied = await client.post(
+            "/__oumv/rpc",
+            json={"jsonrpc": "2.0", "id": 1, "method": "oumv/handshake", "params": {}},
+        )
+        allowed = await client.post(
+            "/__oumv/rpc",
+            headers={"X-OUMV-Session-Token": "secret-token"},
+            json={"jsonrpc": "2.0", "id": 2, "method": "oumv/handshake", "params": {}},
+        )
+
+    assert denied.status_code == 401
+    assert allowed.status_code == 200
+    assert allowed.json()["result"]["sessionId"]

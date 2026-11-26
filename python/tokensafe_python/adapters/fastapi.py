@@ -5,6 +5,7 @@ and safe dry-run mutation simulation.
 """
 
 import json
+import os
 from typing import Any, Dict, Optional, Tuple
 from fastapi import FastAPI, Request
 from fastapi.responses import JSONResponse
@@ -158,6 +159,20 @@ class TokenSafeFastAPI:
 
         @self.app.post(self.rpc_path, include_in_schema=False)
         async def handle_rpc(request: Request):
+            # Spec §2.2: a token, when configured, is required. Loopback development
+            # may run without one, so the check is opt-in via env (or explicit token).
+            expected = os.environ.get("TOKENSAFE_OUMV_AUTH_TOKEN", "").strip()
+            if expected:
+                provided = (request.headers.get("x-oumv-session-token") or "").strip()
+                auth = request.headers.get("authorization", "")
+                if auth.lower().startswith("bearer "):
+                    provided = auth[7:].strip() or provided
+                if provided != expected:
+                    return JSONResponse(
+                        content={"jsonrpc": "2.0", "id": None,
+                                 "error": {"code": -32007, "message": "PERMISSION_DENIED: invalid OUMV auth token"}},
+                        status_code=401,
+                    )
             try:
                 body = await request.json()
             except Exception as e:
