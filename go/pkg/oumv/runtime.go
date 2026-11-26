@@ -293,6 +293,12 @@ func (r *Runtime) Handshake(ctx context.Context, params *protocol.OumvHandshakeP
 	if !r.config.Capabilities.Verify {
 		caps.Verify = protocol.VerifyCapability{}
 	}
+	// §3.1: honour the client's request by narrowing the advertised set. Arrays
+	// are filters (levels/formats); boolean flags express requirements, so the
+	// runtime answers with what it actually serves and the client decides.
+	if params != nil && params.RequestedCapabilities != nil {
+		caps = narrowCapabilities(caps, *params.RequestedCapabilities)
+	}
 
 	sessionID := ""
 	ttl := 0
@@ -311,6 +317,34 @@ func (r *Runtime) Handshake(ctx context.Context, params *protocol.OumvHandshakeP
 		},
 		Capabilities: caps,
 	}, nil
+}
+
+// narrowCapabilities intersects the advertised observe levels/formats with the
+// client's request. An empty intersection is reported as [] ("cannot serve"),
+// never widened back to the implemented set.
+func narrowCapabilities(impl, requested protocol.OumvCapabilities) protocol.OumvCapabilities {
+	out := impl
+	if len(requested.Observe.Levels) > 0 {
+		out.Observe.Levels = intersectStrings(impl.Observe.Levels, requested.Observe.Levels)
+	}
+	if len(requested.Observe.Formats) > 0 {
+		out.Observe.Formats = intersectStrings(impl.Observe.Formats, requested.Observe.Formats)
+	}
+	return out
+}
+
+func intersectStrings(implemented, requested []string) []string {
+	wanted := map[string]bool{}
+	for _, item := range requested {
+		wanted[item] = true
+	}
+	out := make([]string, 0, len(implemented))
+	for _, item := range implemented {
+		if wanted[item] {
+			out = append(out, item)
+		}
+	}
+	return out
 }
 
 // Observe executes Pillar 1: Progressive Context Disclosure (L0 to L4).
@@ -761,11 +795,13 @@ func (r *Runtime) ApplyEdit(ctx context.Context, params *protocol.ApplyEditParam
 			return nil, patchErr
 		}
 		return &protocol.ApplyEditResult{
-			Success:      true,
-			Status:       "APPLIED",
-			NewVersion:   patchRes.NewVersion,
+			Status:      "APPLIED",
+			Path:        params.Path,
+			Symbol:      params.Symbol,
+			NewVersion:  patchRes.NewVersion,
+			SyntaxCheck: &protocol.SyntaxCheck{Status: "passed", Tool: "go/parser"},
+			Success:     true,
 			LinesChanged: patchRes.LinesChanged,
-			Message:      "Surgical AST symbol patch applied with pre-flight compiler validation passed",
 		}, nil
 	}
 
@@ -799,11 +835,13 @@ func (r *Runtime) ApplyEdit(ctx context.Context, params *protocol.ApplyEditParam
 	newVersion := "sha256:" + hex.EncodeToString(newHash[:])
 
 	return &protocol.ApplyEditResult{
-		Success:      true,
-		Status:       "APPLIED",
-		NewVersion:   newVersion,
+		Status:      "APPLIED",
+		Path:        params.Path,
+		Symbol:      params.Symbol,
+		NewVersion:  newVersion,
+		SyntaxCheck: &protocol.SyntaxCheck{Status: "passed", Tool: "go/parser"},
+		Success:     true,
 		LinesChanged: len(strings.Split(params.Replacement, "\n")),
-		Message:      "Edit applied with pre-flight syntax verification passed",
 	}, nil
 }
 

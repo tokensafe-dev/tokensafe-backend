@@ -213,6 +213,25 @@ class OUMVRuntime:
     async def handle_handshake(self, **kwargs) -> Dict[str, Any]:
         """UARP / OUMV Protocol Handshake (session lifecycle & capability negotiation)."""
         session_id = self.sessions.create()
+        caps = {
+            # JSON only (no YAML emitter), no frontend signals graph: the backend
+            # answers causality from its own causality graph, not reactive signals.
+            "observe": {"levels": ["L0", "L1", "L2", "L3", "L4"], "formats": ["json"]},
+            "understand": {"causality": True, "signalsGraph": False, "impactAnalysis": True},
+            "mutate": {"occ": True, "syntaxGuard": True, "ephemeralDispatch": False},
+            # No DOM/a11y surface exists on the backend profile.
+            "verify": {"multiMetric": True, "surfaceDiff": False},
+        }
+        # §3.1: honour the client's request by narrowing the advertised set. Arrays
+        # are filters; an empty intersection stays empty ("cannot serve").
+        requested = kwargs.get("requestedCapabilities") or {}
+        req_observe = requested.get("observe") or {} if isinstance(requested, dict) else {}
+        req_levels = req_observe.get("levels") or []
+        req_formats = req_observe.get("formats") or []
+        if req_levels:
+            caps["observe"]["levels"] = [lvl for lvl in caps["observe"]["levels"] if lvl in req_levels]
+        if req_formats:
+            caps["observe"]["formats"] = [fmt for fmt in caps["observe"]["formats"] if fmt in req_formats]
         return {
             "protocolVersion": "1.1.0",
             "profile": "backend",
@@ -223,15 +242,7 @@ class OUMVRuntime:
                 "version": "0.3.0",
                 "framework": self.framework,
             },
-            "capabilities": {
-                # JSON only (no YAML emitter), no frontend signals graph: the backend
-                # answers causality from its own causality graph, not reactive signals.
-                "observe": {"levels": ["L0", "L1", "L2", "L3", "L4"], "formats": ["json"]},
-                "understand": {"causality": True, "signalsGraph": False, "impactAnalysis": True},
-                "mutate": {"occ": True, "syntaxGuard": True, "ephemeralDispatch": False},
-                # No DOM/a11y surface exists on the backend profile.
-                "verify": {"multiMetric": True, "surfaceDiff": False},
-            },
+            "capabilities": caps,
         }
 
     async def handle_disconnect(self, sessionId: Optional[str] = None, **kwargs) -> Dict[str, Any]:  # noqa: N803 - wire name

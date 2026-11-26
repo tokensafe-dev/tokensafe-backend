@@ -148,3 +148,36 @@ async def test_auth_token_is_enforced_when_configured(monkeypatch):
     assert denied.status_code == 401
     assert allowed.status_code == 200
     assert allowed.json()["result"]["sessionId"]
+
+
+@pytest.mark.asyncio
+async def test_handshake_narrows_requested_capabilities():
+    app = FastAPI()
+    mount_tokensafe(app, auto_discover=False)
+
+    full = (await _rpc(app, "oumv/handshake"))["result"]
+    assert len(full["capabilities"]["observe"]["levels"]) == 5
+
+    narrowed = (
+        await _rpc(
+            app,
+            "oumv/handshake",
+            {
+                "protocolVersion": "1.1.0",
+                "requestedCapabilities": {"observe": {"levels": ["L0", "L1"], "formats": ["json", "yaml"]}},
+            },
+        )
+    )["result"]
+    assert narrowed["capabilities"]["observe"]["levels"] == ["L0", "L1"]
+    # yaml is not implemented, so it is filtered out rather than echoed.
+    assert narrowed["capabilities"]["observe"]["formats"] == ["json"]
+
+    yaml_only = (
+        await _rpc(
+            app,
+            "oumv/handshake",
+            {"protocolVersion": "1.1.0", "requestedCapabilities": {"observe": {"formats": ["yaml"]}}},
+        )
+    )["result"]
+    assert yaml_only["capabilities"]["observe"]["formats"] == []
+    assert len(yaml_only["capabilities"]["observe"]["levels"]) == 5

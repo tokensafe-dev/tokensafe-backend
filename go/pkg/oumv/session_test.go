@@ -189,3 +189,54 @@ func TestWriteDescriptorMergesProfileRegistry(t *testing.T) {
 		t.Fatalf("delete must keep the frontend entry: %s", raw)
 	}
 }
+func TestHandshakeNarrowsRequestedCapabilities(t *testing.T) {
+	rt := oumv.NewRuntime(oumv.Config{
+		Name:         "negotiation",
+		Version:      "1.0.0",
+		WorkspaceDir: t.TempDir(),
+		Runtime:      oumv.DefaultDevelopmentRuntimeConfig(),
+	})
+
+	full, err := rt.Handshake(context.Background(), &protocol.OumvHandshakeParams{ProtocolVersion: "1.1.0"})
+	if err != nil {
+		t.Fatalf("handshake without request: %v", err)
+	}
+	if len(full.Capabilities.Observe.Levels) != 5 {
+		t.Fatalf("expected all levels without a request, got %v", full.Capabilities.Observe.Levels)
+	}
+
+	narrowed, err := rt.Handshake(context.Background(), &protocol.OumvHandshakeParams{
+		ProtocolVersion: "1.1.0",
+		RequestedCapabilities: &protocol.OumvCapabilities{
+			Observe: protocol.ObserveCapability{Levels: []string{"L0", "L1"}, Formats: []string{"json", "yaml"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("handshake with request: %v", err)
+	}
+	got := narrowed.Capabilities.Observe.Levels
+	if len(got) != 2 || got[0] != "L0" || got[1] != "L1" {
+		t.Fatalf("expected [L0 L1], got %v", got)
+	}
+	formats := narrowed.Capabilities.Observe.Formats
+	if len(formats) != 1 || formats[0] != "json" {
+		t.Fatalf("expected [json] (yaml is not implemented), got %v", formats)
+	}
+
+	// Asking only for YAML yields an empty set — never silently widened.
+	empty, err := rt.Handshake(context.Background(), &protocol.OumvHandshakeParams{
+		ProtocolVersion: "1.1.0",
+		RequestedCapabilities: &protocol.OumvCapabilities{
+			Observe: protocol.ObserveCapability{Formats: []string{"yaml"}},
+		},
+	})
+	if err != nil {
+		t.Fatalf("handshake with yaml request: %v", err)
+	}
+	if len(empty.Capabilities.Observe.Formats) != 0 {
+		t.Fatalf("expected no formats, got %v", empty.Capabilities.Observe.Formats)
+	}
+	if len(empty.Capabilities.Observe.Levels) != 5 {
+		t.Fatalf("levels must stay untouched, got %v", empty.Capabilities.Observe.Levels)
+	}
+}

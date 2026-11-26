@@ -27,14 +27,14 @@ type VerifyScope struct {
 
 // VerifyResult defines the response payload for `oumv/verify`.
 type VerifyResult struct {
-	Success      bool                   `json:"success,omitempty"`
+	Success      bool                   `json:"-"`
 	Status       string                 `json:"status"` // "passed" | "failed"
 	Target       string                 `json:"target,omitempty"`
 	StatusCode   int                    `json:"statusCode"`
 	Diff         map[string]interface{} `json:"diff,omitempty"`   // State or payload diff
-	DBDiff       map[string]interface{} `json:"dbDiff,omitempty"` // Database table row diff
+	DBDiff       map[string]interface{} `json:"-"` // not implemented; never advertised
 	Timings      LatencyBreakdown       `json:"timings"`
 	DurationMs   float64                `json:"durationMs"`
 	Scope        *VerifyScope           `json:"scope,omitempty"`
-	ErrorMessage string                 `json:"errorMessage,omitempty"`
+	ErrorMessage string                 `json:"error,omitempty"`
 }

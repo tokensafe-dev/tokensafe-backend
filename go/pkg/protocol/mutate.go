@@ -24,11 +24,26 @@ type ApplyEditParams struct {
 	ExpectedVersion string `json:"expectedVersion"` // "sha256:..."
 }
 
+// SyntaxCheck reports the pre-flight guard outcome (spec §4.3).
+type SyntaxCheck struct {
+	Status string `json:"status"` // "passed" | "skipped" | "failed"
+	Tool   string `json:"tool,omitempty"`
+	Error  string `json:"error,omitempty"`
+}
+
 // ApplyEditResult defines the response payload for `oumv/applyEdit`.
+// Diagnostics (success/linesChanged/message) stay in-process: the wire carries the
+// canonical fields only, and deprecated aliases are accepted but never emitted.
 type ApplyEditResult struct {
-	Success      bool   `json:"success"`
-	Status       string `json:"status,omitempty"` // "APPLIED" — cross-runtime wire shape
-	NewVersion   string `json:"newVersion"`
-	LinesChanged int    `json:"linesChanged"`
-	Message      string `json:"message,omitempty"`
+	Status       string       `json:"status"` // "APPLIED" | "CURRENT"
+	Path         string       `json:"path"`
+	Symbol       string       `json:"symbol,omitempty"`
+	NewVersion   string       `json:"newVersion"`
+	SyntaxCheck  *SyntaxCheck `json:"syntaxCheck,omitempty"`
+	BackupPath   string       `json:"backupPath,omitempty"`
+	RollbackHint string       `json:"rollbackHint,omitempty"`
+
+	Success      bool `json:"-"`
+	LinesChanged int  `json:"-"`
+	Message      string `json:"-"`
 }

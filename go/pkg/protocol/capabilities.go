@@ -18,25 +18,30 @@ type ObserveCapability struct {
 	Formats []string `json:"formats,omitempty"` // ["json", "yaml"]
 }
 
-// UnderstandCapability defines supported reasoning features.
+// UnderstandCapability defines supported reasoning features. Field names are the
+// §3.1 capability names; false values are omitted so the handshake never advertises
+// (or even mentions) something the runtime does not implement.
 type UnderstandCapability struct {
-	Causality   bool `json:"causality"`
-	TypeGraph   bool `json:"typeGraph"`
-	ImpactGraph bool `json:"impactGraph"`
+	Causality      bool `json:"causality"`
+	SignalsGraph   bool `json:"signalsGraph,omitempty"`
+	ImpactAnalysis bool `json:"impactAnalysis,omitempty"`
+	TypeGraph      bool `json:"typeGraph,omitempty"`
 }
 
 // MutateCapability defines supported mutation safeguards.
 type MutateCapability struct {
 	OCC         bool `json:"occ"`
 	SyntaxGuard bool `json:"syntaxGuard"`
-	TypeGuard   bool `json:"typeGuard"`
+	// Not implemented: kept off the wire entirely (schema forbids unknown fields).
+	TypeGuard bool `json:"-"`
 }
 
 // VerifyCapability defines supported verification features.
 type VerifyCapability struct {
 	MultiMetric bool `json:"multiMetric"`
-	DBSandbox   bool `json:"dbSandbox"`
-	PayloadDiff bool `json:"payloadDiff"`
+	SurfaceDiff bool `json:"surfaceDiff,omitempty"`
+	DBSandbox   bool `json:"-"`
+	PayloadDiff bool `json:"-"`
 }
 
 // OumvCapabilities aggregates all functional pillars supported by client/runtime.
@@ -77,8 +82,8 @@ func DefaultBackendCapabilities() OumvCapabilities {
 			Causality: true,
 			// Impact comes from the registered route graph, not Go type
 			// inference — advertising typeGraph would be a false claim.
-			TypeGraph:   false,
-			ImpactGraph: true,
+			ImpactAnalysis: true,
+			TypeGraph:      false,
 		},
 		Mutate: MutateCapability{
 			OCC:         true,
