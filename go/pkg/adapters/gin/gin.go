@@ -35,30 +35,38 @@ func Mount(r *gin.Engine, rt *oumv.Runtime, opts ...Options) {
 		rt.RegisterRoute(route.Method, route.Path, route.Handler)
 	}
 
-	// 2. Trace middleware: records every request execution (L4 evidence for Understand causality)
-	r.Use(func(c *gin.Context) {
-		start := time.Now()
-		c.Next()
-		route := c.FullPath()
-		if route == "" {
-			route = c.Request.URL.Path
-		}
-		errMsg := ""
-		if len(c.Errors) > 0 {
-			errMsg = c.Errors.String()
-		}
-		rt.RecordTrace(
-			c.Request.Method,
-			c.Request.URL.Path,
-			route,
-			c.HandlerName(),
-			c.Writer.Status(),
-			float64(time.Since(start).Microseconds())/1000.0,
-			errMsg,
-		)
-	})
+	// 2. Trace middleware: records every request execution (L4 evidence for Understand causality).
+	// Gin freezes a route's handler chain at registration, so a middleware added here only
+	// reaches routes registered afterwards. Install it only when Mount runs before routing;
+	// otherwise the caller must wrap the engine: http.ListenAndServe(addr, oumv.TraceHandler(rt, engine)).
+	if len(r.Routes()) == 0 {
+		r.Use(func(c *gin.Context) {
+			start := time.Now()
+			c.Next()
+			route := c.FullPath()
+			if route == "" {
+				route = c.Request.URL.Path
+			}
+			errMsg := ""
+			if len(c.Errors) > 0 {
+				errMsg = c.Errors.String()
+			}
+			rt.RecordTrace(
+				c.Request.Method,
+				c.Request.URL.Path,
+				route,
+				c.HandlerName(),
+				c.Writer.Status(),
+				float64(time.Since(start).Microseconds())/1000.0,
+				errMsg,
+			)
+		})
+	}
 
-	// 3. Mount OUMV JSON-RPC endpoint
+	// 3. Wire the engine for in-memory oumv/verify (no extra configuration needed).
+	rt.SetHandler(r)
+
+	// 4. Mount OUMV JSON-RPC endpoint
 	dispatcher := transport.NewDispatcher(rt)
 	httpOpts := transport.HTTPOptions{
 		AuthToken:              rt.Config().Security.AuthToken,

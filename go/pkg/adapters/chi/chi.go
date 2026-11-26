@@ -60,7 +60,10 @@ func Mount(r chi.Router, rt *oumv.Runtime, opts ...Options) error {
 		return walkErr
 	}
 
-	// 2. Mount OUMV JSON-RPC endpoint.
+	// 2. Wire the router for in-memory oumv/verify (no extra configuration needed).
+	rt.SetHandler(r)
+
+	// 3. Mount OUMV JSON-RPC endpoint.
 	// NOTE: chi requires all middlewares before route registration, so Mount
 	// cannot inject request tracing on already-registered routes. For runtime
 	// causality evidence, serve through the universal wrapper instead:

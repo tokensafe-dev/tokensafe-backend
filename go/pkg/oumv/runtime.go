@@ -340,21 +340,151 @@ func (r *Runtime) Observe(ctx context.Context, params *protocol.ObserveParams) (
 
 	case protocol.LevelL2Contract:
 		if params.Target == "" {
-			return nil, protocol.NewInvalidParamsError("Target endpoint or struct required for L2 contract")
+			return nil, protocol.NewInvalidParamsError("Target endpoint or handler required for L2 contract")
 		}
-		// Return contract placeholder with middlewares
+		route, ok := r.findRoute(params.Target)
+		if !ok {
+			return nil, protocol.NewResourceNotFoundError(params.Target)
+		}
 		return &protocol.ObserveResult{
 			Level: protocol.LevelL2Contract,
 			Data: protocol.L2ContractData{
 				Target:      params.Target,
-				Middlewares: []string{"LoggingMiddleware", "RecoveryMiddleware"},
+				Method:      route.Method,
+				Path:        route.Path,
+				HandlerName: route.HandlerName,
+				Middlewares: route.Middlewares,
+				// Mounted routers expose handler names, not request/response structs;
+				// saying so is honest, inventing DTOs is not.
+				Note: "route contract from live router registration; request/response DTOs are not reflectable from a mounted router — use observe L3 for the handler source",
+				Evidence: &protocol.EvidenceMetadata{
+					Provenance:    "runtime",
+					SourceAdapter: r.name,
+					Confidence:    "confirmed",
+				},
 			},
 			TokenEstimate: 80,
+		}, nil
+
+	case protocol.LevelL3Source:
+		if params.Target == "" {
+			return nil, protocol.NewInvalidParamsError("target of the form path (or path#symbol) required for L3 source")
+		}
+		path, symbol := splitSourceTarget(params.Target)
+		src, srcErr := r.GetSource(ctx, &protocol.GetSourceParams{Path: path, Symbol: symbol})
+		if srcErr != nil {
+			return nil, srcErr
+		}
+		return &protocol.ObserveResult{
+			Level: protocol.LevelL3Source,
+			Data: protocol.L3SourceData{
+				Symbol:    src.Symbol,
+				Path:      src.Path,
+				Source:    src.Source,
+				Version:   src.Version,
+				StartLine: src.StartLine,
+				EndLine:   src.EndLine,
+			},
+			TokenEstimate: 300,
+		}, nil
+
+	case protocol.LevelL4Traces:
+		traces, note := r.tracesForTarget(params.Target)
+		count := len(traces)
+		if count == 0 && note == "" {
+			note = "no request traces recorded yet: call the endpoint, or use oumv/verify which feeds the trace ring"
+		}
+		return &protocol.ObserveResult{
+			Level: protocol.LevelL4Traces,
+			Data: protocol.L4TracesData{
+				Target:     params.Target,
+				Traces:     traces,
+				TraceCount: count,
+				Note:       note,
+				Evidence: &protocol.EvidenceMetadata{
+					Provenance:    "runtime",
+					SourceAdapter: r.name,
+					Confidence:    "confirmed",
+				},
+			},
+			TokenEstimate: 40 + count*15,
 		}, nil
 
 	default:
 		return nil, protocol.NewUnsupportedCapabilityError(fmt.Sprintf("observe level %s", level))
 	}
+}
+
+// splitSourceTarget parses "path#symbol" / "path:symbol" into its parts.
+func splitSourceTarget(target string) (string, string) {
+	t := strings.TrimSpace(target)
+	for _, sep := range []string{"#", ":"} {
+		if i := strings.LastIndex(t, sep); i > 0 && i < len(t)-1 && !strings.Contains(t[i+1:], "/") {
+			return t[:i], t[i+1:]
+		}
+	}
+	return t, ""
+}
+
+// findRoute resolves an L2 target ("METHOD /path", "/path", or handler name)
+// against the live router catalog.
+func (r *Runtime) findRoute(target string) (protocol.RouteInfo, bool) {
+	t := strings.TrimSpace(target)
+	method := ""
+	path := t
+	if parts := strings.SplitN(t, " ", 2); len(parts) == 2 {
+		method = strings.ToUpper(parts[0])
+		path = strings.TrimSpace(parts[1])
+	}
+
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	for _, route := range r.routes {
+		if method != "" && !strings.EqualFold(route.Method, method) {
+			continue
+		}
+		if strings.EqualFold(route.Path, path) || route.HandlerName == t ||
+			(path != "" && strings.HasSuffix(route.HandlerName, "."+path)) {
+			return route, true
+		}
+	}
+	return protocol.RouteInfo{}, false
+}
+
+// tracesForTarget returns recorded traces for a target (all traces when the
+// target is empty), newest first, plus a note when nothing matched.
+func (r *Runtime) tracesForTarget(target string) ([]protocol.TraceEntry, string) {
+	var source []requestTrace
+	note := ""
+	if strings.TrimSpace(target) == "" {
+		r.mu.RLock()
+		source = make([]requestTrace, len(r.traces))
+		copy(source, r.traces)
+		r.mu.RUnlock()
+		for i, j := 0, len(source)-1; i < j; i, j = i+1, j-1 {
+			source[i], source[j] = source[j], source[i]
+		}
+	} else {
+		source = r.matchingTraces(target)
+		if len(source) == 0 {
+			note = fmt.Sprintf("no recorded trace matches %q", target)
+		}
+	}
+
+	out := make([]protocol.TraceEntry, 0, len(source))
+	for _, tr := range source {
+		out = append(out, protocol.TraceEntry{
+			Method:     tr.Method,
+			Path:       tr.Path,
+			Route:      tr.Route,
+			Handler:    tr.Handler,
+			StatusCode: tr.StatusCode,
+			DurationMs: tr.DurationMs,
+			Error:      tr.Error,
+			Timestamp:  tr.Timestamp.UTC().Format(time.RFC3339Nano),
+		})
+	}
+	return out, note
 }
 
 // Understand executes Pillar 2: Runtime Causality and Impact Analysis.
@@ -488,8 +618,10 @@ func (r *Runtime) understandImpact(target string) *protocol.UnderstandResult {
 
 // GetSource executes Pillar 3A: Retrieves symbol source with SHA256 OCC version token.
 func (r *Runtime) GetSource(ctx context.Context, params *protocol.GetSourceParams) (*protocol.GetSourceResult, *protocol.OumvError) {
-	if !r.config.Capabilities.Mutate {
-		return nil, protocol.NewPermissionDeniedError("mutate capability is disabled by policy")
+	// Source read is an observation capability, not a mutation: a read-only agent
+	// must be able to inspect code without being allowed to write it.
+	if !r.config.Capabilities.Observe && !r.config.Capabilities.Mutate {
+		return nil, protocol.NewPermissionDeniedError("observe capability is disabled by policy")
 	}
 
 	cleanPath, pathErr := validateWorkspacePath(r.workspaceDir, params.Path)
@@ -552,7 +684,24 @@ func (r *Runtime) ApplyEdit(ctx context.Context, params *protocol.ApplyEditParam
 		return nil, pathErr
 	}
 
-	// If a specific symbol is targeted, use surgical AST patcher
+	currentData, err := os.ReadFile(cleanPath)
+	if err != nil {
+		return nil, protocol.NewResourceNotFoundError(params.Path)
+	}
+
+	currentHash := sha256.Sum256(currentData)
+	currentVersion := "sha256:" + hex.EncodeToString(currentHash[:])
+
+	// 1. Mandatory OCC: every edit of an existing file must name the version it was
+	// based on. Without this a blind write can silently clobber a concurrent change.
+	if strings.TrimSpace(params.ExpectedVersion) == "" {
+		return nil, protocol.NewValidationFailedError(
+			"VALIDATION_FAILED: expectedVersion is required to edit an existing file — call oumv/getSource (or observe L3) and pass its version",
+			map[string]string{"path": params.Path, "current": currentVersion},
+		)
+	}
+
+	// If a specific symbol is targeted, use surgical AST patcher (it re-checks OCC).
 	if params.Symbol != "" && r.patcher != nil {
 		patchRes, patchErr := r.patcher.ApplySymbolPatch(params.Path, params.Symbol, params.Replacement, params.ExpectedVersion)
 		if patchErr != nil {
@@ -567,23 +716,15 @@ func (r *Runtime) ApplyEdit(ctx context.Context, params *protocol.ApplyEditParam
 		}, nil
 	}
 
-	currentData, err := os.ReadFile(cleanPath)
-	if err != nil {
-		return nil, protocol.NewResourceNotFoundError(params.Path)
-	}
-
-	currentHash := sha256.Sum256(currentData)
-	currentVersion := "sha256:" + hex.EncodeToString(currentHash[:])
-
-	// 1. Optimistic Concurrency Control (OCC) guard
-	if params.ExpectedVersion != "" && params.ExpectedVersion != currentVersion {
+	// 2. Optimistic Concurrency Control (OCC) guard
+	if params.ExpectedVersion != currentVersion {
 		return nil, protocol.NewConflictError(
 			fmt.Sprintf("version mismatch: expected %s, current is %s", params.ExpectedVersion, currentVersion),
 			map[string]string{"expected": params.ExpectedVersion, "current": currentVersion},
 		)
 	}
 
-	// 2. Pre-flight Syntax Guard: Parse in-memory before writing to disk
+	// 3. Pre-flight Syntax Guard: Parse in-memory before writing to disk
 	fset := token.NewFileSet()
 	_, parseErr := parser.ParseFile(fset, cleanPath, []byte(params.Replacement), parser.AllErrors)
 	if parseErr != nil {
@@ -593,7 +734,7 @@ func (r *Runtime) ApplyEdit(ctx context.Context, params *protocol.ApplyEditParam
 		)
 	}
 
-	// 3. Write validated content to disk
+	// 4. Write validated content to disk
 	if err := os.WriteFile(cleanPath, []byte(params.Replacement), 0644); err != nil {
 		return nil, &protocol.OumvError{
 			Code:    protocol.ErrInternalError,
@@ -613,12 +754,26 @@ func (r *Runtime) ApplyEdit(ctx context.Context, params *protocol.ApplyEditParam
 	}, nil
 }
 
+// SetHandler wires the application router so oumv/verify can dispatch actions
+// in-process. Adapters call it at mount time; callers may also set Config.Handler.
+func (r *Runtime) SetHandler(h http.Handler) {
+	if r == nil {
+		return
+	}
+	r.mu.Lock()
+	r.handler = h
+	r.mu.Unlock()
+}
+
 // Verify executes Pillar 4: Sub-millisecond action verification via in-memory httptest.
 func (r *Runtime) Verify(ctx context.Context, params *protocol.VerifyParams) (*protocol.VerifyResult, *protocol.OumvError) {
 	if !r.config.Capabilities.Verify {
 		return nil, protocol.NewPermissionDeniedError("verify capability is disabled by policy")
 	}
-	if r.handler == nil {
+	r.mu.RLock()
+	handler := r.handler
+	r.mu.RUnlock()
+	if handler == nil {
 		return nil, protocol.NewUnsupportedCapabilityError("no active HTTP handler configured for in-memory verification")
 	}
 
@@ -639,7 +794,7 @@ func (r *Runtime) Verify(ctx context.Context, params *protocol.VerifyParams) (*p
 	}
 
 	rec := httptest.NewRecorder()
-	r.handler.ServeHTTP(rec, req)
+	handler.ServeHTTP(rec, req)
 
 	duration := float64(time.Since(start).Microseconds()) / 1000.0
 

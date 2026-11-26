@@ -79,6 +79,8 @@ func (m *ServeMux) Mount(rpcPath string) {
 		Disabled:               false,
 	}
 	m.ServeMux.Handle(rpcPath, transport.NewHTTPHandler(dispatcher, httpOpts))
+	// Wire the mux for in-memory oumv/verify (no extra configuration needed).
+	m.runtime.SetHandler(m)
 }
 
 // ServeHTTP dispatches with request tracing so Understand(causality) gets

@@ -134,3 +134,12 @@ func NewInvalidParamsError(msg string) *OumvError {
 		Message: msg,
 	}
 }
+
+// NewValidationFailedError reports a payload or guard violation (-32011), e.g. a
+// source edit that omits the mandatory OCC expectedVersion.
+func NewValidationFailedError(msg string, data interface{}) *OumvError {
+	if msg == "" {
+		msg = "VALIDATION_FAILED: request payload violates protocol constraints"
+	}
+	return &OumvError{Code: ErrValidationFailed, Message: msg, Data: data}
+}

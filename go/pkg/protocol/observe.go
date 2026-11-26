@@ -49,11 +49,18 @@ type L1SurfaceData struct {
 }
 
 // L2ContractData represents the L2 contract of a specific endpoint or struct.
+// Fields are only populated from observed route metadata or declared operations:
+// adapters MUST NOT fabricate DTOs or middleware names they cannot prove.
 type L2ContractData struct {
 	Target      string                 `json:"target"`
+	Method      string                 `json:"method,omitempty"`
+	Path        string                 `json:"path,omitempty"`
+	HandlerName string                 `json:"handlerName,omitempty"`
 	RequestDTO  map[string]interface{} `json:"requestDTO,omitempty"`
 	ResponseDTO map[string]interface{} `json:"responseDTO,omitempty"`
 	Middlewares []string               `json:"middlewares,omitempty"`
+	Note        string                 `json:"note,omitempty"`
+	Evidence    *EvidenceMetadata      `json:"evidence,omitempty"`
 }
 
 // L3SourceData represents the L3 AST-sliced function and OCC version token.
@@ -64,4 +71,26 @@ type L3SourceData struct {
 	Version   string `json:"version"` // "sha256:..."
 	StartLine int    `json:"startLine"`
 	EndLine   int    `json:"endLine"`
+}
+
+// TraceEntry is one recorded request execution (L4 observation evidence).
+type TraceEntry struct {
+	Method     string  `json:"method"`
+	Path       string  `json:"path"`
+	Route      string  `json:"route"`
+	Handler    string  `json:"handler"`
+	StatusCode int     `json:"statusCode"`
+	DurationMs float64 `json:"durationMs"`
+	Error      string  `json:"error,omitempty"`
+	Timestamp  string  `json:"timestamp"`
+}
+
+// L4TracesData represents recorded request traces for a target (or all targets).
+// When no trace matches, Traces is empty and Note says why — never invented.
+type L4TracesData struct {
+	Target    string            `json:"target,omitempty"`
+	Traces    []TraceEntry      `json:"traces"`
+	TraceCount int              `json:"traceCount"`
+	Note      string            `json:"note,omitempty"`
+	Evidence  *EvidenceMetadata `json:"evidence,omitempty"`
 }
