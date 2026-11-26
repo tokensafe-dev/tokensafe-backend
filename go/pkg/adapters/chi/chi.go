@@ -79,3 +79,13 @@ func Mount(r chi.Router, rt *oumv.Runtime, opts ...Options) error {
 
 	return nil
 }
+
+// AutoMount creates a development runtime rooted at the current working directory
+// and mounts it on the router. See gin.AutoMount for the fail-closed semantics.
+func AutoMount(r chi.Router) (*oumv.Runtime, error) {
+	rt := oumv.NewRuntime(oumv.Config{Runtime: oumv.DefaultDevelopmentRuntimeConfig()})
+	if err := Mount(r, rt); err != nil {
+		return nil, err
+	}
+	return rt, nil
+}

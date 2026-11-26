@@ -78,3 +78,13 @@ func Mount(r *gin.Engine, rt *oumv.Runtime, opts ...Options) {
 
 	r.Any(rpcPath, gin.WrapH(handler))
 }
+
+// AutoMount creates a development runtime rooted at the current working directory
+// and mounts it on the engine — the one-call integration used by `tokensafe inject`
+// and by generated projects. Production still fails closed: the resolved runtime
+// config disables the transport outside development.
+func AutoMount(r *gin.Engine) *oumv.Runtime {
+	rt := oumv.NewRuntime(oumv.Config{Runtime: oumv.DefaultDevelopmentRuntimeConfig()})
+	Mount(r, rt)
+	return rt
+}

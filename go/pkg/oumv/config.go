@@ -316,3 +316,34 @@ func (c *RuntimeConfig) Validate() error {
 
 	return nil
 }
+
+// DefaultDevelopmentRuntimeConfig builds the zero-config runtime used by the
+// one-call AutoMount helpers (and therefore by `tokensafe inject`): mutations
+// enabled with guardrails, transport on loopback, workspace = current directory.
+// Outside a development environment the resolved config still fails closed, so a
+// stray AutoMount in production cannot open a mutation endpoint.
+func DefaultDevelopmentRuntimeConfig() *RuntimeConfig {
+	workspace, err := os.Getwd()
+	if err != nil {
+		workspace = "."
+	}
+	return &RuntimeConfig{
+		Enabled:      true,
+		Environment:  DetectEnvironment(),
+		Name:         "tokensafe-backend",
+		Version:      "0.4.0",
+		WorkspaceDir: workspace,
+		Transport: TransportConfig{
+			Enabled: true,
+			Host:    "127.0.0.1",
+			Port:    0,
+			Path:    "/__oumv/rpc",
+		},
+		Capabilities: CapabilitiesConfig{
+			Observe:    true,
+			Understand: true,
+			Mutate:     true,
+			Verify:     true,
+		},
+	}
+}
