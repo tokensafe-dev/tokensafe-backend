@@ -29,7 +29,14 @@ class DiscoveryManager:
         metadata: Optional[dict] = None,
         session_token: Optional[str] = None,
     ):
-        """Creates .tokensafe/runtime.json and .oumv/runtime.json descriptors."""
+        """Writes in-repo beacons only where the project already opted in.
+
+        Discovery normally goes through the global registry
+        (~/.tokensafe/runtimes/<hash>.json, spec §9.2) written by the adapter.
+        Writing `.tokensafe/runtime.json` into a retrofit repository would leave a
+        trace, so it happens only when that directory already exists (a generated
+        project or an explicit opt-in); nothing is created here.
+        """
         payload = {
             "type": "backend",
             "framework": framework,
@@ -45,11 +52,12 @@ class DiscoveryManager:
             "metadata": metadata or {},
         }
 
-        # Write to both .tokensafe/ and .oumv/ directories
+        # Existing opt-in directories only (never mkdir): no trace in a clean repo.
         for dirname in (".tokensafe", ".oumv"):
             dirpath = os.path.join(self._project_root, dirname)
+            if not os.path.isdir(dirpath):
+                continue
             try:
-                os.makedirs(dirpath, exist_ok=True)
                 filepath = os.path.join(dirpath, "runtime.json")
                 with open(filepath, "w", encoding="utf-8") as f:
                     json.dump(payload, f, indent=2)
