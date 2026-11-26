@@ -16,7 +16,7 @@
 
 ## Highlights
 
-- **⚡ 24.6x Autonomous Efficiency Ratio (AER)**: Cuts token consumption by **96%** (1,380 vs 33,960 tokens) and agent iterations by **83%** (1 turn to green vs 6 turns).
+- **✅ Certified OUMV adapters (spec §10)**: Gin, Chi, `net/http` and FastAPI each pass all 15 language-neutral conformance cases over their real transport — Level 3, reports committed under [`certification/`](certification/) and reproduced in CI.
 - **🛡️ In-Memory Compiler Pre-Flight Guard**: AST-guided symbol edits validated in memory via `go/parser` and `go/types` in <5ms—blocking non-compiling edits before touching the disk.
 - **🔄 Zero Database Pollution**: In-memory transactional dry-runs (`net/http/httptest` + `pkg/db`) execute with guaranteed `ROLLBACK`, eliminating state contamination across test cycles.
 - **🔍 Progressive Context Disclosure (L0–L4)**: Replaces 3,000+ token file crawls with compact pulse (`L0`, ~20 tokens), endpoint surfaces (`L1`, ~110 tokens), and reflected schemas (`L2`, ~60 tokens).
@@ -193,6 +193,13 @@ pip install "tokensafe-backend @ git+https://github.com/tokensafe-dev/tokensafe-
 
 ## Agent Usability Benchmark (AUB - Go)
 
+> ⚠️ **Simulated run — not a measured agent session.** The 12-assertion oracle below is
+> real (it executes the handler through `httptest`), but the token/turn numbers come from
+> **fixture traces** (`go/benchmark/traces/traces.go`), not from an LLM agent. Treat them as
+> a model of the intended workflow, not as a benchmark result. A measured three-arm run
+> (no TokenSafe / TokenSafe / OUMV protocol) is tracked as P5 in the roadmap; until then no
+> numbers from this section are published as product claims.
+
 In our standardized **Agent Usability Benchmark (AUB)** evaluating an e-commerce order processing API against a 12-assertion Behavioral Test Oracle:
 
 $$\text{AER} = \frac{\text{FYpT}_{\text{TokenSafe}}}{\text{FYpT}_{\text{Vanilla}}} = \frac{8.6957}{0.3534} = \mathbf{24.6x}$$
@@ -215,7 +222,7 @@ $$\text{AER} = \frac{\text{FYpT}_{\text{TokenSafe}}}{\text{FYpT}_{\text{Vanilla}
 | **Estimated Run Cost (USD)** | `$0.1536` | **`$0.0092`** | **-94% cost** |
 | **Cost Yield (Assertions / $)** | `78.13` | **`1304.35`** | **16.7x yield/$** |
 
-See full report: [BENCHMARK_REPORT.md](benchmark/BENCHMARK_REPORT.md).
+See full report: [go/benchmark/BENCHMARK_REPORT.md](go/benchmark/BENCHMARK_REPORT.md) (simulated traces).
 
 Run benchmark locally:
 ```bash
