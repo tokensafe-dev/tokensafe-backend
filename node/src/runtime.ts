@@ -18,7 +18,7 @@ import {
 import { resolveWorkspacePath, splitSourceTarget } from './paths.js';
 import { SessionRegistry } from './sessions.js';
 
-export const PROTOCOL_VERSION = '1.1.0';
+export const PROTOCOL_VERSION = '1.2.0';
 export const OBSERVE_LEVELS = ['L0', 'L1', 'L2', 'L3', 'L4'] as const;
 export type ObserveLevel = (typeof OBSERVE_LEVELS)[number];
 
@@ -97,6 +97,31 @@ export interface SourcePayload extends Record<string, unknown> {
   endLine: number;
 }
 
+/** §4.1 limit/cursor: an absent limit returns the whole collection. */
+function paginate<T>(items: T[], params: Record<string, any>): { page: T[]; hasMore?: boolean; nextCursor?: string } {
+  const rawLimit = Number(params?.limit);
+  const limit = Number.isFinite(rawLimit) && rawLimit > 0 ? Math.floor(rawLimit) : 0;
+  let start = Number.parseInt(String(params?.cursor ?? ''), 10);
+  if (!Number.isFinite(start) || start < 0) start = 0;
+  if (start > items.length) start = items.length;
+  if (limit && start + limit < items.length) {
+    return { page: items.slice(start, start + limit), hasMore: true, nextCursor: String(start + limit) };
+  }
+  return { page: items.slice(start), ...(limit ? { hasMore: false } : {}) };
+}
+
+/** Replaces a 1-based inclusive line range, preserving the rest byte for byte. */
+function replaceLines(source: string, startLine: number, endLine: number, replacement: string): string {
+  const lines = source.split('\n');
+  const before = lines.slice(0, startLine - 1);
+  const after = lines.slice(endLine);
+  const middle = replacement.split('\n');
+  if (replacement.endsWith('\n')) middle.pop();
+  let patched = [...before, ...middle, ...after].join('\n');
+  if (source.endsWith('\n') && !patched.endsWith('\n')) patched += '\n';
+  return patched;
+}
+
 export class OumvRuntime {
   readonly name: string;
   readonly version: string;
@@ -117,7 +142,7 @@ export class OumvRuntime {
 
   constructor(options: OumvRuntimeOptions = {}) {
     this.name = options.name || 'tokensafe-node';
-    this.version = options.version || '0.2.0';
+    this.version = options.version || '0.3.0';
     this.workspaceDir = path.resolve(options.workspaceDir || process.cwd());
     this.transportPath = options.transportPath || '/__oumv/rpc';
     this.maxBodyBytes = options.maxBodyBytes ?? 8 * 1024 * 1024;
@@ -227,13 +252,15 @@ export class OumvRuntime {
         };
       }
 
-      case 'L1':
+      case 'L1': {
+        const paged = paginate(this.listRoutes(), params);
         return {
           level,
           format: 'json',
-          data: { endpoints: this.listRoutes() },
-          tokenEstimate: 30 + this.routes.size * 15,
+          data: { endpoints: paged.page, ...(paged.hasMore !== undefined ? { hasMore: paged.hasMore } : {}), ...(paged.nextCursor ? { nextCursor: paged.nextCursor } : {}) },
+          tokenEstimate: 30 + paged.page.length * 15,
         };
+      }
 
       case 'L2': {
         const target = String(params.target || '').trim();
@@ -274,13 +301,16 @@ export class OumvRuntime {
       case 'L4': {
         const target = String(params.target || '').trim();
         const traces = target ? this.traces.filter((trace) => matchesTarget(trace, target)) : this.recentTraces();
+        const paged = paginate(traces, params);
         return {
           level,
           format: 'json',
           data: {
             ...(target ? { target } : {}),
-            traces,
+            traces: paged.page,
             traceCount: traces.length,
+            ...(paged.hasMore !== undefined ? { hasMore: paged.hasMore } : {}),
+            ...(paged.nextCursor ? { nextCursor: paged.nextCursor } : {}),
             ...(traces.length === 0
               ? { note: 'no request has been executed for this target yet — verify or instrument the app first' }
               : {}),
@@ -437,6 +467,140 @@ export class OumvRuntime {
       };
     }
 
+    const mode = String(params.mode ?? 'replace').toLowerCase();
+    if (!['replace', 'create', 'symbol', 'delete', 'rename'].includes(mode)) {
+      throw unsupported(`UNSUPPORTED_CAPABILITY: unknown applyEdit mode ${JSON.stringify(mode)}`);
+    }
+
+    if (mode === 'delete') {
+      const provided = params.replacement ?? params.source;
+      if (provided !== undefined && String(provided) !== '') {
+        throw validationFailed('VALIDATION_FAILED: replacement must be omitted for mode=delete', {
+          reason: 'replacement_forbidden',
+        });
+      }
+      if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+        throw resourceNotFound(`RESOURCE_NOT_FOUND: ${requestedPath}`);
+      }
+      const expectedVersion = String(params.expectedVersion ?? '').trim();
+      if (!expectedVersion) {
+        throw validationFailed('VALIDATION_FAILED: expectedVersion is required to delete a file', {
+          reason: 'expected_version_required',
+          path: requestedPath,
+        });
+      }
+      const currentVersion = sha256(fs.readFileSync(resolved, 'utf-8'));
+      if (expectedVersion !== currentVersion) {
+        throw conflict('CONFLICT_DETECTED: version mismatch on delete', {
+          expected: expectedVersion,
+          current: currentVersion,
+        });
+      }
+      fs.unlinkSync(resolved);
+      return {
+        status: 'APPLIED',
+        path: path.relative(this.workspaceDir, resolved).split(path.sep).join('/'),
+        syntaxCheck: { status: 'skipped' },
+        deleted: true,
+      };
+    }
+
+    if (mode === 'rename') {
+      const renameTo = String(params.renameTo ?? '').trim();
+      if (!renameTo) {
+        throw validationFailed('VALIDATION_FAILED: renameTo is required for mode=rename', {
+          reason: 'rename_to_required',
+        });
+      }
+      const provided = params.replacement ?? params.source;
+      if (provided !== undefined && String(provided) !== '') {
+        throw validationFailed('VALIDATION_FAILED: replacement must be omitted for mode=rename', {
+          reason: 'replacement_forbidden',
+        });
+      }
+      const target = resolveWorkspacePath(renameTo, this.workspaceDir);
+      if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+        throw resourceNotFound(`RESOURCE_NOT_FOUND: ${requestedPath}`);
+      }
+      if (fs.existsSync(target)) {
+        throw conflict('CONFLICT_DETECTED: rename target already exists', { reason: 'target_exists', renameTo });
+      }
+      const expectedVersion = String(params.expectedVersion ?? '').trim();
+      if (!expectedVersion) {
+        throw validationFailed('VALIDATION_FAILED: expectedVersion is required to rename a file', {
+          reason: 'expected_version_required',
+          path: requestedPath,
+        });
+      }
+      const currentVersion = sha256(fs.readFileSync(resolved, 'utf-8'));
+      if (expectedVersion !== currentVersion) {
+        throw conflict('CONFLICT_DETECTED: version mismatch on rename', {
+          expected: expectedVersion,
+          current: currentVersion,
+        });
+      }
+      fs.mkdirSync(path.dirname(target), { recursive: true });
+      fs.renameSync(resolved, target);
+      return {
+        status: 'APPLIED',
+        path: path.relative(this.workspaceDir, resolved).split(path.sep).join('/'),
+        newPath: renameTo.split(path.sep).join('/'),
+        syntaxCheck: { status: 'skipped' },
+      };
+    }
+
+    if (mode === 'symbol') {
+      const symbol = String(params.symbol ?? '').trim();
+      if (!symbol) {
+        throw validationFailed('VALIDATION_FAILED: symbol is required for mode=symbol', { reason: 'symbol_required' });
+      }
+      const replacement = String(params.replacement ?? params.source ?? '');
+      if (!replacement) throw invalidParams('INVALID_PARAMS: replacement is required for mode=symbol');
+      if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+        throw resourceNotFound(`RESOURCE_NOT_FOUND: ${requestedPath}`);
+      }
+      const current = fs.readFileSync(resolved, 'utf-8');
+      const expectedVersion = String(params.expectedVersion ?? '').trim();
+      if (!expectedVersion) {
+        throw validationFailed('VALIDATION_FAILED: expectedVersion is required to edit a symbol', {
+          reason: 'expected_version_required',
+          path: requestedPath,
+        });
+      }
+      const currentVersion = sha256(current);
+      if (expectedVersion !== currentVersion) {
+        throw conflict(`CONFLICT_DETECTED: expected ${expectedVersion}, current is ${currentVersion}`, {
+          expected: expectedVersion,
+          current: currentVersion,
+        });
+      }
+      const range = extractSymbolRange(current, symbol);
+      if (!range) {
+        throw resourceNotFound(`RESOURCE_NOT_FOUND: symbol ${JSON.stringify(symbol)} not found in ${requestedPath}`);
+      }
+      const patched = replaceLines(current, range.startLine, range.endLine, replacement);
+      const syntax = checkSyntax(resolved, patched);
+      let backupPath: string | undefined;
+      try {
+        const backupDir = path.join(this.workspaceDir, '.tokensafe', 'backups');
+        fs.mkdirSync(backupDir, { recursive: true });
+        const backupName = `${Date.now()}-${path.basename(resolved)}`;
+        backupPath = path.relative(this.workspaceDir, path.join(backupDir, backupName)).split(path.sep).join('/');
+        fs.writeFileSync(path.join(this.workspaceDir, backupPath), current, 'utf-8');
+      } catch {
+        backupPath = undefined;
+      }
+      fs.writeFileSync(resolved, patched, 'utf-8');
+      return {
+        status: 'APPLIED',
+        path: path.relative(this.workspaceDir, resolved).split(path.sep).join('/'),
+        symbol,
+        newVersion: sha256(patched),
+        syntaxCheck: syntax,
+        ...(backupPath ? { backupPath } : {}),
+      };
+    }
+
     if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
       throw resourceNotFound(`RESOURCE_NOT_FOUND: ${requestedPath}`);
     }
@@ -487,58 +651,94 @@ export class OumvRuntime {
 
   async verify(params: Record<string, any> = {}): Promise<Record<string, unknown>> {
     if (!this.enabled.verify) throw permissionDenied('PERMISSION_DENIED: verify capability is disabled');
-    const target = String(params.target ?? '').trim();
-    if (!target) throw invalidParams('INVALID_PARAMS: target ("METHOD /path") is required');
+    const topTarget = String(params.target ?? '').trim();
+    const steps = Array.isArray(params.steps) ? params.steps : [];
+    if (!topTarget && steps.length === 0) throw invalidParams('INVALID_PARAMS: target ("METHOD /path") is required');
     if (!this.handler) throw resourceUnavailable('RUNTIME_UNAVAILABLE: no application handler is mounted for verification');
 
-    const { method, url } = parseVerifyTarget(target);
     await this.ensureDispatchServer();
 
-    const body = params.payload === undefined ? undefined : JSON.stringify(params.payload);
-    const startedAt = process.hrtime.bigint();
-    const response = await new Promise<{ statusCode: number; body: string }>((resolve, reject) => {
-      const request = http.request(
-        {
-          host: '127.0.0.1',
-          port: this.dispatchPort,
-          method,
-          path: url,
-          headers: {
-            'content-type': 'application/json',
-            ...(body ? { 'content-length': Buffer.byteLength(body).toString() } : {}),
-            ...(params.headers && typeof params.headers === 'object' ? params.headers : {}),
+    const dispatch = async (stepTarget: string, payload: unknown, headers?: Record<string, string>) => {
+      const { method, url } = parseVerifyTarget(stepTarget);
+      const body = payload === undefined ? undefined : JSON.stringify(payload);
+      const startedAt = process.hrtime.bigint();
+      const response = await new Promise<{ statusCode: number; body: string }>((resolve, reject) => {
+        const request = http.request(
+          {
+            host: '127.0.0.1',
+            port: this.dispatchPort,
+            method,
+            path: url,
+            headers: {
+              'content-type': 'application/json',
+              ...(body ? { 'content-length': Buffer.byteLength(body).toString() } : {}),
+              ...(headers && typeof headers === 'object' ? headers : {}),
+            },
           },
-        },
-        (res) => {
-          let data = '';
-          res.setEncoding('utf-8');
-          res.on('data', (chunk) => (data += chunk));
-          res.on('end', () => resolve({ statusCode: res.statusCode ?? 0, body: data }));
-        }
-      );
-      request.on('error', reject);
-      if (body) request.write(body);
-      request.end();
-    });
-    const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
-    const status = response.statusCode < 400 ? 'passed' : 'failed';
+          (res) => {
+            let data = '';
+            res.setEncoding('utf-8');
+            res.on('data', (chunk) => (data += chunk));
+            res.on('end', () => resolve({ statusCode: res.statusCode ?? 0, body: data }));
+          }
+        );
+        request.on('error', reject);
+        if (body) request.write(body);
+        request.end();
+      });
+      const durationMs = Number(process.hrtime.bigint() - startedAt) / 1_000_000;
+      this.recordTrace({
+        method,
+        path: url,
+        route: url,
+        handler: 'loopback',
+        statusCode: response.statusCode,
+        durationMs,
+      });
+      return { method, url, response, durationMs };
+    };
 
-    this.recordTrace({
-      method,
-      path: url,
-      route: url,
-      handler: 'loopback',
-      statusCode: response.statusCode,
-      durationMs,
-    });
+    if (steps.length > 0) {
+      const results: Array<{ target: string; statusCode: number; status: string; responseBody: string }> = [];
+      let total = 0;
+      for (const step of steps) {
+        const stepTarget = String(step?.target ?? '').trim();
+        if (!stepTarget) throw invalidParams('INVALID_PARAMS: every verify step needs a target');
+        const dispatched = await dispatch(stepTarget, step?.payload, step?.headers);
+        total += dispatched.durationMs;
+        results.push({
+          target: stepTarget,
+          statusCode: dispatched.response.statusCode,
+          status: dispatched.response.statusCode < 400 ? 'passed' : 'failed',
+          responseBody: dispatched.response.body,
+        });
+      }
+      const last = results[results.length - 1];
+      return {
+        status: 'passed',
+        target: topTarget || last.target,
+        statusCode: last.statusCode,
+        steps: results,
+        diff: { stepCount: results.length, status: last.statusCode, responseBody: last.responseBody },
+        timings: { t_action_ms: total, t_total_ms: total },
+        durationMs: total,
+        scope: {
+          checked: ['ordered multi-step loopback dispatch against one handler'],
+          notExecuted: ['external processes', 'persistent database state'],
+          notSupported: ['browser/DOM assertions'],
+        } satisfies VerifyScope,
+      };
+    }
 
+    const dispatched = await dispatch(topTarget, params.payload, params.headers);
+    const status = dispatched.response.statusCode < 400 ? 'passed' : 'failed';
     return {
       status,
-      target,
-      statusCode: response.statusCode,
-      diff: { status: response.statusCode, responseBody: response.body },
-      timings: { t_action_ms: durationMs, t_total_ms: durationMs },
-      durationMs,
+      target: topTarget,
+      statusCode: dispatched.response.statusCode,
+      diff: { status: dispatched.response.statusCode, responseBody: dispatched.response.body },
+      timings: { t_action_ms: dispatched.durationMs, t_total_ms: dispatched.durationMs },
+      durationMs: dispatched.durationMs,
       scope: {
         checked: ['loopback HTTP dispatch against the live handler'],
         notExecuted: ['external processes', 'persistent database state'],

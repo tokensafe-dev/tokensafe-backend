@@ -32,6 +32,16 @@ class Markers:
     l2_target: str = ""
     l3_target: str = ""
     verify_target: str = ""
+    symbol_file: str = ""
+    symbol_name: str = ""
+    symbol_replacement: str = ""
+    symbol_version: str = ""
+    symbol_file_content: str = ""
+    delete_file: str = ""
+    delete_version: str = ""
+    rename_source: str = ""
+    rename_target: str = ""
+    rename_version: str = ""
 
     def substitute(self, params: Dict[str, Any]) -> Dict[str, Any]:
         replacements = {
@@ -45,16 +55,33 @@ class Markers:
             "${L2_TARGET}": self.l2_target,
             "${L3_TARGET}": self.l3_target,
             "${VERIFY_TARGET}": self.verify_target,
+            "${SYMBOL_FILE}": self.symbol_file,
+            "${SYMBOL_NAME}": self.symbol_name,
+            "${SYMBOL_REPLACEMENT}": self.symbol_replacement,
+            "${SYMBOL_VERSION}": self.symbol_version,
+            "${SYMBOL_FILE_CONTENT}": self.symbol_file_content,
+            "${DELETE_FILE}": self.delete_file,
+            "${DELETE_VERSION}": self.delete_version,
+            "${RENAME_SOURCE}": self.rename_source,
+            "${RENAME_TARGET}": self.rename_target,
+            "${RENAME_VERSION}": self.rename_version,
         }
-        out: Dict[str, Any] = {}
-        for key, value in params.items():
+        def walk(value: Any) -> Any:
             if isinstance(value, str):
                 for marker, replacement in replacements.items():
                     value = value.replace(marker, replacement)
-                out[key] = value
-            else:
-                out[key] = value
-        return out
+                return value
+            if isinstance(value, list):
+                return [walk(item) for item in value]
+            if isinstance(value, dict):
+                return {key: walk(item) for key, item in value.items()}
+            return value
+
+        return {key: walk(value) for key, value in params.items()}
+
+    def substitute_text(self, text: str) -> str:
+        """Applies the marker table to one string (expectations too)."""
+        return self.substitute({"value": text})["value"]
 
 
 def version_of(content: bytes) -> str:
@@ -74,6 +101,15 @@ def load_cases(path: str | Path) -> Dict[str, Any]:
 def _json_path(data: Any, path: str) -> Any:
     current = data
     for part in path.split("."):
+        if isinstance(current, list):
+            try:
+                index = int(part)
+            except ValueError:
+                raise KeyError(path)
+            if index < 0 or index >= len(current):
+                raise KeyError(path)
+            current = current[index]
+            continue
         if not isinstance(current, dict) or part not in current:
             raise KeyError(path)
         current = current[part]
@@ -129,9 +165,18 @@ def _check(case: Dict[str, Any], body: Dict[str, Any], markers: Markers) -> str:
             return "result must carry evidence metadata at data.evidence"
         if evidence.get("provenance") not in ("runtime", "static", "contract", "inferred", "external"):
             return f"evidence provenance {evidence.get('provenance')!r} is not a spec §6.2 value"
+    for path, want in (case.get("expectValues") or {}).items():
+        if isinstance(want, str):
+            want = markers.substitute_text(want)
+        try:
+            got = _json_path(result, path)
+        except KeyError:
+            return f"result missing expected path {path!r}"
+        if got != want:
+            return f"expected {path}={want!r}, got {got!r}"
     expected_content = case.get("expectVersionMatchesContent")
     if expected_content:
-        content = expected_content.replace("${EDIT_CONTENT}", markers.edit_content)
+        content = markers.substitute_text(expected_content)
         want = version_of(content.encode("utf-8"))
         if result.get("newVersion") != want:
             return f"version token must match written content: expected {want}, got {result.get('newVersion')}"

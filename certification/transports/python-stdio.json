@@ -1,10 +1,10 @@
 {
   "adapterName": "python-stdio",
   "framework": "python",
-  "specVersion": "1.1.0",
-  "fixtureVersion": 5,
-  "total": 20,
-  "passed": 20,
+  "specVersion": "1.2.0",
+  "fixtureVersion": 6,
+  "total": 25,
+  "passed": 25,
   "failed": 0,
   "attainedLevel": 3,
   "levels": {
@@ -132,9 +132,39 @@
       "level": 2,
       "status": "passed",
       "error": ""
+    },
+    {
+      "id": "verify-multi-step-runs-in-order",
+      "level": 2,
+      "status": "passed",
+      "error": ""
+    },
+    {
+      "id": "apply-edit-replace-symbol",
+      "level": 2,
+      "status": "passed",
+      "error": ""
+    },
+    {
+      "id": "apply-edit-delete",
+      "level": 2,
+      "status": "passed",
+      "error": ""
+    },
+    {
+      "id": "apply-edit-rename",
+      "level": 2,
+      "status": "passed",
+      "error": ""
+    },
+    {
+      "id": "observe-l1-pagination",
+      "level": 1,
+      "status": "passed",
+      "error": ""
     }
   ],
-  "generatedAt": "2026-11-26T18:32:54Z",
+  "generatedAt": "2026-11-26T19:00:01Z",
   "environment": {
     "transport": "stdio",
     "python": "3.13.5"

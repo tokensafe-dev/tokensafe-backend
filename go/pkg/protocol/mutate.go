@@ -25,6 +25,8 @@ type ApplyEditParams struct {
 	// Mode is "replace" (default) or "create"; create forbids expectedVersion and
 	// refuses to overwrite an existing file (spec §4.3).
 	Mode string `json:"mode,omitempty"`
+	// RenameTo is the destination for mode="rename" (jail-checked, must not exist).
+	RenameTo string `json:"renameTo,omitempty"`
 }
 
 // SyntaxCheck reports the pre-flight guard outcome (spec §4.3).
@@ -46,9 +48,11 @@ type ApplyEditResult struct {
 	BackupPath   string       `json:"backupPath,omitempty"`
 	RollbackHint string       `json:"rollbackHint,omitempty"`
 
-	Created      bool `json:"created,omitempty"`
+	Created bool   `json:"created,omitempty"`
+	Deleted bool   `json:"deleted,omitempty"`
+	NewPath string `json:"newPath,omitempty"`
 
-	Success      bool `json:"-"`
-	LinesChanged int  `json:"-"`
+	Success      bool   `json:"-"`
+	LinesChanged int    `json:"-"`
 	Message      string `json:"-"`
 }

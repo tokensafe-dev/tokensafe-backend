@@ -16,6 +16,9 @@ type ObserveParams struct {
 	Level  ObserveLevel `json:"level"`
 	Format string       `json:"format,omitempty"` // "json" or "yaml"
 	Target string       `json:"target,omitempty"` // Target route, handler or symbol
+	// Limit and Cursor page L1/L4 collections (spec §4.1); zero limit means "all".
+	Limit  int    `json:"limit,omitempty"`
+	Cursor string `json:"cursor,omitempty"`
 }
 
 // ObserveResult defines the response payload for `oumv/observe`.
@@ -30,12 +33,12 @@ type ObserveResult struct {
 
 // L0PulseData represents the lean L0 system pulse (~30 tokens).
 type L0PulseData struct {
-	UptimeSeconds   int64  `json:"uptimeSeconds"`
-	Goroutines      int    `json:"goroutines"`
-	MemoryAllocMB   uint64 `json:"memoryAllocMB"`
-	ActiveRoutes    int    `json:"activeRoutes"`
-	ErrorCount1m    int    `json:"errorCount1m"`
-	Status          string `json:"status"` // "HEALTHY", "DEGRADED", "ERROR"
+	UptimeSeconds int64  `json:"uptimeSeconds"`
+	Goroutines    int    `json:"goroutines"`
+	MemoryAllocMB uint64 `json:"memoryAllocMB"`
+	ActiveRoutes  int    `json:"activeRoutes"`
+	ErrorCount1m  int    `json:"errorCount1m"`
+	Status        string `json:"status"` // "HEALTHY", "DEGRADED", "ERROR"
 }
 
 // RouteInfo represents a single endpoint in the L1 Surface map.
@@ -48,7 +51,9 @@ type RouteInfo struct {
 
 // L1SurfaceData represents the L1 API surface catalog.
 type L1SurfaceData struct {
-	Endpoints []RouteInfo `json:"endpoints"`
+	Endpoints  []RouteInfo `json:"endpoints"`
+	HasMore    *bool       `json:"hasMore,omitempty"`
+	NextCursor string      `json:"nextCursor,omitempty"`
 }
 
 // L2ContractData represents the L2 contract of a specific endpoint or struct.
@@ -91,9 +96,11 @@ type TraceEntry struct {
 // L4TracesData represents recorded request traces for a target (or all targets).
 // When no trace matches, Traces is empty and Note says why — never invented.
 type L4TracesData struct {
-	Target    string            `json:"target,omitempty"`
-	Traces    []TraceEntry      `json:"traces"`
-	TraceCount int              `json:"traceCount"`
-	Note      string            `json:"note,omitempty"`
-	Evidence  *EvidenceMetadata `json:"evidence,omitempty"`
+	Target     string            `json:"target,omitempty"`
+	Traces     []TraceEntry      `json:"traces"`
+	TraceCount int               `json:"traceCount"`
+	HasMore    *bool             `json:"hasMore,omitempty"`
+	NextCursor string            `json:"nextCursor,omitempty"`
+	Note       string            `json:"note,omitempty"`
+	Evidence   *EvidenceMetadata `json:"evidence,omitempty"`
 }

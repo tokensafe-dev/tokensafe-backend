@@ -19,6 +19,10 @@ export const EDIT_SOURCE = 'export const value = 41;\n';
 export const EDIT_REPLACEMENT = 'export const value = 42;\n';
 export const BROKEN_SOURCE = 'export function Broken( {\n';
 export const FIXTURE_SOURCE = 'export function value() {\n  return 41;\n}\n';
+export const SYMBOL_SOURCE = 'export function value() {\n  return 41;\n}\n';
+export const SYMBOL_REPLACEMENT = 'export function value() {\n  return 42;\n}\n';
+export const DELETE_SOURCE = 'export const deleteMe = true;\n';
+export const RENAME_SOURCE = 'export const renameMe = true;\n';
 
 export const sha = (content: string) =>
   'sha256:' + crypto.createHash('sha256').update(content, 'utf-8').digest('hex');
@@ -34,6 +38,9 @@ export function createWorkspace(): Workspace {
   const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'oumv-node-cert-'));
   fs.writeFileSync(path.join(dir, 'fixture.js'), FIXTURE_SOURCE);
   fs.writeFileSync(path.join(dir, 'edit_target.js'), EDIT_SOURCE);
+  fs.writeFileSync(path.join(dir, 'symbol_target.js'), SYMBOL_SOURCE);
+  fs.writeFileSync(path.join(dir, 'delete_target.js'), DELETE_SOURCE);
+  fs.writeFileSync(path.join(dir, 'rename_source.js'), RENAME_SOURCE);
   return {
     dir,
     markers: {
@@ -47,6 +54,16 @@ export function createWorkspace(): Workspace {
       l2Target: 'GET /api/orders',
       l3Target: 'edit_target.js',
       verifyTarget: 'GET /api/orders',
+      symbolFile: 'symbol_target.js',
+      symbolName: 'value',
+      symbolReplacement: SYMBOL_REPLACEMENT,
+      symbolVersion: sha(SYMBOL_SOURCE),
+      symbolFileContent: SYMBOL_REPLACEMENT,
+      deleteFile: 'delete_target.js',
+      deleteVersion: sha(DELETE_SOURCE),
+      renameSource: 'rename_source.js',
+      renameTarget: 'rename_target.js',
+      renameVersion: sha(RENAME_SOURCE),
     },
     cleanup: () => fs.rmSync(dir, { recursive: true, force: true }),
   };

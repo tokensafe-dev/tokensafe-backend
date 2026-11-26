@@ -25,6 +25,9 @@ EDIT_ORIGINAL = b"value = 41\n"
 async def test_conformance_certification(tmp_path):
     (tmp_path / "conformance_fixture.py").write_text("value = 0\n", encoding="utf-8")
     (tmp_path / EDIT_TARGET).write_bytes(EDIT_ORIGINAL)
+    (tmp_path / "conformance_symbol_target.py").write_text("def value():\n    return 41\n", encoding="utf-8")
+    (tmp_path / "conformance_delete_target.py").write_text("value = 1\n", encoding="utf-8")
+    (tmp_path / "conformance_rename_source.py").write_text("value = 2\n", encoding="utf-8")
 
     app = FastAPI()
     mounted = mount_tokensafe(app, auto_discover=False, project_root=str(tmp_path))
@@ -41,6 +44,16 @@ async def test_conformance_certification(tmp_path):
         l2_target="Order",
         l3_target=EDIT_TARGET,
         verify_target="GET /api/v1/orders",
+        symbol_file="conformance_symbol_target.py",
+        symbol_name="value",
+        symbol_replacement="def value():\n    return 42\n",
+        symbol_version=conformance.version_of(b"def value():\n    return 41\n"),
+        symbol_file_content="def value():\n    return 42\n",
+        delete_file="conformance_delete_target.py",
+        delete_version=conformance.version_of(b"value = 1\n"),
+        rename_source="conformance_rename_source.py",
+        rename_target="conformance_renamed.py",
+        rename_version=conformance.version_of(b"value = 2\n"),
     )
 
     transport = httpx.ASGITransport(app=app)
@@ -65,13 +78,13 @@ async def test_conformance_certification(tmp_path):
     failures = [c for c in report["cases"] if c["status"] != "passed"]
     assert not failures, failures
     assert report["attainedLevel"] == 3, (report["attainedLevel"], report["levels"])
-    assert report["specVersion"] == "1.1.0"
+    assert report["specVersion"] == "1.2.0"
 
 
-def test_fixture_file_has_level_tagged_v5_shape():
+def test_fixture_file_has_level_tagged_v6_shape():
     data = json.loads(FIXTURES.read_text(encoding="utf-8"))
-    assert data["fixtureVersion"] == 5
-    assert data["protocolVersion"] == "1.1.0"
+    assert data["fixtureVersion"] == 6
+    assert data["protocolVersion"] == "1.2.0"
     assert sorted(data["levelDefinitions"]) == ["1", "2", "3"]
 
     levels = {case["level"] for case in data["cases"]}

@@ -12,8 +12,8 @@ import (
 	"path/filepath"
 	"testing"
 
-	chiRouter "github.com/go-chi/chi/v5"
 	"github.com/gin-gonic/gin"
+	chiRouter "github.com/go-chi/chi/v5"
 	chiAdapter "github.com/tokensafe-dev/tokensafe-backend/go/pkg/adapters/chi"
 	ginAdapter "github.com/tokensafe-dev/tokensafe-backend/go/pkg/adapters/gin"
 	"github.com/tokensafe-dev/tokensafe-backend/go/pkg/adapters/stdhttp"
@@ -77,17 +77,45 @@ func workspace(t *testing.T, tmpDir, l2Target string) conformance.Markers {
 		t.Fatal(err)
 	}
 
+	symbolFile := "cert_symbol_target.go"
+	symbolOriginal := []byte("package cert\n\nfunc Symbol() int {\n\treturn 41\n}\n")
+	symbolAfter := []byte("package cert\n\nfunc Symbol() int {\n\treturn 42\n}\n")
+	if err := os.WriteFile(filepath.Join(tmpDir, symbolFile), symbolOriginal, 0644); err != nil {
+		t.Fatal(err)
+	}
+	deleteFile := "cert_delete_target.go"
+	deleteOriginal := []byte("package cert\n\nvar DeleteMe = true\n")
+	if err := os.WriteFile(filepath.Join(tmpDir, deleteFile), deleteOriginal, 0644); err != nil {
+		t.Fatal(err)
+	}
+	renameSource := "cert_rename_source.go"
+	renameTarget := "cert_rename_target.go"
+	renameOriginal := []byte("package cert\n\nvar RenameMe = true\n")
+	if err := os.WriteFile(filepath.Join(tmpDir, renameSource), renameOriginal, 0644); err != nil {
+		t.Fatal(err)
+	}
+
 	return conformance.Markers{
-		FixtureFile:   fixtureFile,
-		MissingFile:   missingFile,
-		EditTarget:    editTarget,
-		NewFile:       "created_new_file.go",
-		EditVersion:   conformance.Version(original),
-		EditContent:   "package cert\n\nfunc Value() int {\n\treturn 42\n}\n",
-		BrokenContent: "package cert\n\nfunc Broken( {\n",
-		L2Target:      l2Target,
-		L3Target:      editTarget,
-		VerifyTarget:  l2Target,
+		FixtureFile:       fixtureFile,
+		MissingFile:       missingFile,
+		EditTarget:        editTarget,
+		NewFile:           "created_new_file.go",
+		EditVersion:       conformance.Version(original),
+		EditContent:       "package cert\n\nfunc Value() int {\n\treturn 42\n}\n",
+		BrokenContent:     "package cert\n\nfunc Broken( {\n",
+		SymbolFile:        symbolFile,
+		SymbolName:        "Symbol",
+		SymbolReplacement: "func Symbol() int {\n\treturn 42\n}\n",
+		SymbolVersion:     conformance.Version(symbolOriginal),
+		SymbolFileContent: string(symbolAfter),
+		DeleteFile:        deleteFile,
+		DeleteVersion:     conformance.Version(deleteOriginal),
+		RenameSource:      renameSource,
+		RenameTarget:      renameTarget,
+		RenameVersion:     conformance.Version(renameOriginal),
+		L2Target:          l2Target,
+		L3Target:          editTarget,
+		VerifyTarget:      l2Target,
 	}
 }
 

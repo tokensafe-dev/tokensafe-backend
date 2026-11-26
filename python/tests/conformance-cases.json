@@ -1,5 +1,5 @@
 {
-  "protocolVersion": "1.1.0",
+  "protocolVersion": "1.2.0",
   "spec": "https://github.com/tokensafe-dev/oumv/blob/main/spec/SPEC.md",
   "description": "Language-neutral OUMV conformance cases (spec \u00a710). Each case declares the conformance Level (1|2|3) it certifies. A runtime attains Level N only when every case with level <= N passes; a failure at a higher level caps the claim but does not fail the lower levels. fixtureVersion 3 added session handshake, getSource and verify-result shape coverage; fixtureVersion 4 requires the observe `format` field the spec envelope mandates; fixtureVersion 5 covers applyEdit mode=create (new file, no overwrite). Markers substituted by each runner: ${FIXTURE_FILE}, ${MISSING_FILE}, ${EDIT_TARGET_FILE}, ${EDIT_TARGET_VERSION}, ${EDIT_CONTENT}, ${BROKEN_CONTENT}, ${L2_TARGET}, ${L3_TARGET}, ${VERIFY_TARGET}.",
   "cases": [
@@ -282,9 +282,104 @@
       "expectError": {
         "code": -32001
       }
+    },
+    {
+      "id": "verify-multi-step-runs-in-order",
+      "level": 2,
+      "method": "oumv/verify",
+      "params": {
+        "target": "${VERIFY_TARGET}",
+        "steps": [
+          {
+            "target": "${VERIFY_TARGET}",
+            "action": "conformance-probe"
+          },
+          {
+            "target": "${VERIFY_TARGET}",
+            "action": "conformance-probe"
+          }
+        ]
+      },
+      "expectResultFields": [
+        "status",
+        "steps"
+      ],
+      "expectArrayField": "steps"
+    },
+    {
+      "id": "apply-edit-replace-symbol",
+      "level": 2,
+      "method": "oumv/applyEdit",
+      "params": {
+        "path": "${SYMBOL_FILE}",
+        "symbol": "${SYMBOL_NAME}",
+        "replacement": "${SYMBOL_REPLACEMENT}",
+        "expectedVersion": "${SYMBOL_VERSION}",
+        "mode": "symbol"
+      },
+      "expectResultFields": [
+        "status",
+        "path",
+        "symbol",
+        "newVersion"
+      ],
+      "expectVersionMatchesContent": "${SYMBOL_FILE_CONTENT}"
+    },
+    {
+      "id": "apply-edit-delete",
+      "level": 2,
+      "method": "oumv/applyEdit",
+      "params": {
+        "path": "${DELETE_FILE}",
+        "expectedVersion": "${DELETE_VERSION}",
+        "mode": "delete"
+      },
+      "expectResultFields": [
+        "status",
+        "path",
+        "deleted"
+      ],
+      "expectValues": {
+        "deleted": true
+      }
+    },
+    {
+      "id": "apply-edit-rename",
+      "level": 2,
+      "method": "oumv/applyEdit",
+      "params": {
+        "path": "${RENAME_SOURCE}",
+        "renameTo": "${RENAME_TARGET}",
+        "expectedVersion": "${RENAME_VERSION}",
+        "mode": "rename"
+      },
+      "expectResultFields": [
+        "status",
+        "path",
+        "newPath"
+      ],
+      "expectValues": {
+        "newPath": "${RENAME_TARGET}"
+      }
+    },
+    {
+      "id": "observe-l1-pagination",
+      "level": 1,
+      "method": "oumv/observe",
+      "params": {
+        "level": "L1",
+        "limit": 1
+      },
+      "expectResultFields": [
+        "level",
+        "data.hasMore"
+      ],
+      "expectValues": {
+        "level": "L1"
+      }
     }
   ],
-  "fixtureVersion": 5,
+  "fixtureVersion": 6,
   "levelDefinitions": {
     "1": "Handshake, L0-L1 observe, action verification",
     "2": "L2-L3 observe, impact analysis, OCC mutations, surface diffs",

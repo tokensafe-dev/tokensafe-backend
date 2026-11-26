@@ -16,6 +16,7 @@ import (
 	"os"
 	"path/filepath"
 	"runtime"
+	"strconv"
 	"strings"
 	"sync"
 	"sync/atomic"
@@ -123,7 +124,7 @@ func NewRuntime(cfg Config) *Runtime {
 		if cfg.Runtime != nil && cfg.Runtime.Version != "" {
 			cfg.Version = cfg.Runtime.Version
 		} else {
-			cfg.Version = "0.4.5"
+			cfg.Version = "0.4.6"
 		}
 	}
 	if cfg.WorkspaceDir == "" {
@@ -446,11 +447,18 @@ func (r *Runtime) Observe(ctx context.Context, params *protocol.ObserveParams) (
 		copy(routes, r.routes)
 		r.mu.RUnlock()
 
+		start, end, hasMore, next := pageBounds(len(routes), params.Limit, params.Cursor)
+		page := routes[start:end]
+		var more *bool
+		if params.Limit > 0 {
+			value := hasMore
+			more = &value
+		}
 		return &protocol.ObserveResult{
 			Level:         protocol.LevelL1Surface,
 			Format:        "json",
-			Data:          protocol.L1SurfaceData{Endpoints: routes},
-			TokenEstimate: 30 + len(routes)*15,
+			Data:          protocol.L1SurfaceData{Endpoints: page, HasMore: more, NextCursor: next},
+			TokenEstimate: 30 + len(page)*15,
 		}, nil
 
 	case protocol.LevelL2Contract:
@@ -547,6 +555,13 @@ func (r *Runtime) Observe(ctx context.Context, params *protocol.ObserveParams) (
 	case protocol.LevelL4Traces:
 		traces, note := r.tracesForTarget(params.Target)
 		count := len(traces)
+		start, end, hasMore, next := pageBounds(count, params.Limit, params.Cursor)
+		page := traces[start:end]
+		var more *bool
+		if params.Limit > 0 {
+			value := hasMore
+			more = &value
+		}
 		if count == 0 && note == "" {
 			note = "no request traces recorded yet: call the endpoint, or use oumv/verify which feeds the trace ring"
 		}
@@ -555,8 +570,10 @@ func (r *Runtime) Observe(ctx context.Context, params *protocol.ObserveParams) (
 			Format: "json",
 			Data: protocol.L4TracesData{
 				Target:     params.Target,
-				Traces:     traces,
+				Traces:     page,
 				TraceCount: count,
+				HasMore:    more,
+				NextCursor: next,
 				Note:       note,
 				Evidence: &protocol.EvidenceMetadata{
 					Provenance:    "runtime",
@@ -564,7 +581,7 @@ func (r *Runtime) Observe(ctx context.Context, params *protocol.ObserveParams) (
 					Confidence:    "confirmed",
 				},
 			},
-			TokenEstimate: 40 + count*15,
+			TokenEstimate: 40 + len(page)*15,
 		}, nil
 
 	default:
@@ -868,9 +885,23 @@ func (r *Runtime) ApplyEdit(ctx context.Context, params *protocol.ApplyEditParam
 		return nil, pathErr
 	}
 
+	mode := strings.ToLower(strings.TrimSpace(params.Mode))
+	if mode == "" {
+		mode = "replace"
+	}
+	switch mode {
+	case "replace", "create", "symbol", "delete", "rename":
+	default:
+		return nil, &protocol.OumvError{
+			Code:    protocol.ErrUnsupportedCapability,
+			Message: "UNSUPPORTED_CAPABILITY: unknown applyEdit mode " + params.Mode,
+			Data:    map[string]string{"reason": "unknown_mode"},
+		}
+	}
+
 	// create mode (spec §4.3): the file must not exist and expectedVersion is forbidden,
 	// so an agent can add new code without falling back to shell redirects.
-	if params.Mode == "create" {
+	if mode == "create" {
 		if strings.TrimSpace(params.Replacement) == "" {
 			return nil, protocol.NewInvalidParamsError("replacement is required for mode=create")
 		}
@@ -907,6 +938,130 @@ func (r *Runtime) ApplyEdit(ctx context.Context, params *protocol.ApplyEditParam
 		}, nil
 	}
 
+	if mode == "delete" {
+		if strings.TrimSpace(params.Replacement) != "" {
+			return nil, protocol.NewValidationFailedError(
+				"VALIDATION_FAILED: replacement must be omitted for mode=delete",
+				map[string]string{"reason": "replacement_forbidden"},
+			)
+		}
+		currentData, readErr := os.ReadFile(cleanPath)
+		if readErr != nil {
+			return nil, protocol.NewResourceNotFoundError(params.Path)
+		}
+		if strings.TrimSpace(params.ExpectedVersion) == "" {
+			return nil, protocol.NewValidationFailedError(
+				"VALIDATION_FAILED: expectedVersion is required to delete a file",
+				map[string]string{"reason": "expected_version_required", "path": params.Path},
+			)
+		}
+		if params.ExpectedVersion != hashVersion(currentData) {
+			return nil, protocol.NewConflictError(
+				"CONFLICT_DETECTED: version mismatch on delete",
+				map[string]string{"expected": params.ExpectedVersion, "current": hashVersion(currentData)},
+			)
+		}
+		if removeErr := os.Remove(cleanPath); removeErr != nil {
+			return nil, &protocol.OumvError{Code: protocol.ErrInternalError, Message: "failed to delete file: " + removeErr.Error()}
+		}
+		return &protocol.ApplyEditResult{
+			Status:      "APPLIED",
+			Path:        params.Path,
+			SyntaxCheck: &protocol.SyntaxCheck{Status: "skipped"},
+			Deleted:     true,
+			Success:     true,
+		}, nil
+	}
+
+	if mode == "rename" {
+		if strings.TrimSpace(params.RenameTo) == "" {
+			return nil, protocol.NewValidationFailedError(
+				"VALIDATION_FAILED: renameTo is required for mode=rename",
+				map[string]string{"reason": "rename_to_required"},
+			)
+		}
+		if strings.TrimSpace(params.Replacement) != "" {
+			return nil, protocol.NewValidationFailedError(
+				"VALIDATION_FAILED: replacement must be omitted for mode=rename",
+				map[string]string{"reason": "replacement_forbidden"},
+			)
+		}
+		targetPath, targetErr := validateWorkspacePath(r.workspaceDir, params.RenameTo)
+		if targetErr != nil {
+			return nil, targetErr
+		}
+		currentData, readErr := os.ReadFile(cleanPath)
+		if readErr != nil {
+			return nil, protocol.NewResourceNotFoundError(params.Path)
+		}
+		if _, statErr := os.Stat(targetPath); statErr == nil {
+			return nil, protocol.NewConflictError(
+				"CONFLICT_DETECTED: rename target already exists",
+				map[string]string{"reason": "target_exists", "renameTo": params.RenameTo},
+			)
+		}
+		if strings.TrimSpace(params.ExpectedVersion) == "" {
+			return nil, protocol.NewValidationFailedError(
+				"VALIDATION_FAILED: expectedVersion is required to rename a file",
+				map[string]string{"reason": "expected_version_required", "path": params.Path},
+			)
+		}
+		if params.ExpectedVersion != hashVersion(currentData) {
+			return nil, protocol.NewConflictError(
+				"CONFLICT_DETECTED: version mismatch on rename",
+				map[string]string{"expected": params.ExpectedVersion, "current": hashVersion(currentData)},
+			)
+		}
+		if mkdirErr := os.MkdirAll(filepath.Dir(targetPath), 0o755); mkdirErr != nil {
+			return nil, &protocol.OumvError{Code: protocol.ErrInternalError, Message: "failed to create rename target directory: " + mkdirErr.Error()}
+		}
+		if renameErr := os.Rename(cleanPath, targetPath); renameErr != nil {
+			return nil, &protocol.OumvError{Code: protocol.ErrInternalError, Message: "failed to rename file: " + renameErr.Error()}
+		}
+		return &protocol.ApplyEditResult{
+			Status:      "APPLIED",
+			Path:        params.Path,
+			NewPath:     params.RenameTo,
+			SyntaxCheck: &protocol.SyntaxCheck{Status: "skipped"},
+			Success:     true,
+		}, nil
+	}
+
+	if mode == "symbol" {
+		if strings.TrimSpace(params.Symbol) == "" {
+			return nil, protocol.NewValidationFailedError(
+				"VALIDATION_FAILED: symbol is required for mode=symbol",
+				map[string]string{"reason": "symbol_required"},
+			)
+		}
+		if _, statErr := os.Stat(cleanPath); statErr != nil {
+			return nil, protocol.NewResourceNotFoundError(params.Path)
+		}
+		if strings.TrimSpace(params.ExpectedVersion) == "" {
+			return nil, protocol.NewValidationFailedError(
+				"VALIDATION_FAILED: expectedVersion is required to edit a symbol",
+				map[string]string{"reason": "expected_version_required", "path": params.Path},
+			)
+		}
+		if r.patcher == nil {
+			return nil, &protocol.OumvError{Code: protocol.ErrUnsupportedCapability, Message: "UNSUPPORTED_CAPABILITY: symbol edits need the AST patcher"}
+		}
+		patcher := mutate.NewPatcher(r.workspaceDir)
+		patchRes, patchErr := patcher.ApplySymbolPatch(params.Path, params.Symbol, params.Replacement, params.ExpectedVersion)
+		if patchErr != nil {
+			return nil, patchErr
+		}
+		return &protocol.ApplyEditResult{
+			Status:       "APPLIED",
+			Path:         params.Path,
+			Symbol:       params.Symbol,
+			NewVersion:   patchRes.NewVersion,
+			SyntaxCheck:  &protocol.SyntaxCheck{Status: "passed", Tool: "go/parser"},
+			Success:      true,
+			LinesChanged: patchRes.LinesChanged,
+		}, nil
+	}
+
 	currentData, err := os.ReadFile(cleanPath)
 	if err != nil {
 		return nil, protocol.NewResourceNotFoundError(params.Path)
@@ -922,23 +1077,6 @@ func (r *Runtime) ApplyEdit(ctx context.Context, params *protocol.ApplyEditParam
 			"VALIDATION_FAILED: expectedVersion is required to edit an existing file — call oumv/getSource (or observe L3) and pass its version",
 			map[string]string{"path": params.Path, "current": currentVersion},
 		)
-	}
-
-	// If a specific symbol is targeted, use surgical AST patcher (it re-checks OCC).
-	if params.Symbol != "" && r.patcher != nil {
-		patchRes, patchErr := r.patcher.ApplySymbolPatch(params.Path, params.Symbol, params.Replacement, params.ExpectedVersion)
-		if patchErr != nil {
-			return nil, patchErr
-		}
-		return &protocol.ApplyEditResult{
-			Status:       "APPLIED",
-			Path:         params.Path,
-			Symbol:       params.Symbol,
-			NewVersion:   patchRes.NewVersion,
-			SyntaxCheck:  &protocol.SyntaxCheck{Status: "passed", Tool: "go/parser"},
-			Success:      true,
-			LinesChanged: patchRes.LinesChanged,
-		}, nil
 	}
 
 	// 2. Optimistic Concurrency Control (OCC) guard
@@ -1021,40 +1159,74 @@ func (r *Runtime) Verify(ctx context.Context, params *protocol.VerifyParams) (*p
 		return nil, protocol.NewUnsupportedCapabilityError("no active HTTP handler configured for in-memory verification")
 	}
 
-	start := time.Now()
-
-	// Parse method and path from target (e.g. "GET /api/v1/orders" or path alone)
-	method := "GET"
-	path := params.Target
-	parts := strings.SplitN(params.Target, " ", 2)
-	if len(parts) == 2 {
-		method = parts[0]
-		path = parts[1]
-	}
-	if strings.TrimSpace(params.Method) != "" {
-		method = strings.ToUpper(strings.TrimSpace(params.Method))
-	}
-
-	// Request bodies are supported: a POST/PUT endpoint can only be verified with
-	// the payload it expects.
-	var body io.Reader
-	if params.Payload != nil {
-		if raw, marshalErr := json.Marshal(params.Payload); marshalErr == nil {
-			body = bytes.NewReader(raw)
+	dispatch := func(target, methodOverride string, payload interface{}, headers map[string]string) (string, string, *httptest.ResponseRecorder, float64) {
+		stepStart := time.Now()
+		method := "GET"
+		path := target
+		if parts := strings.SplitN(target, " ", 2); len(parts) == 2 {
+			method, path = parts[0], parts[1]
 		}
-	}
-	req := httptest.NewRequest(method, path, body)
-	if body != nil {
-		req.Header.Set("Content-Type", "application/json")
-	}
-	for k, v := range params.Headers {
-		req.Header.Set(k, v)
+		if override := strings.ToUpper(strings.TrimSpace(methodOverride)); override != "" {
+			method = override
+		}
+		var body io.Reader
+		if payload != nil {
+			if raw, marshalErr := json.Marshal(payload); marshalErr == nil {
+				body = bytes.NewReader(raw)
+			}
+		}
+		req := httptest.NewRequest(method, path, body)
+		if body != nil {
+			req.Header.Set("Content-Type", "application/json")
+		}
+		for k, v := range headers {
+			req.Header.Set(k, v)
+		}
+		rec := httptest.NewRecorder()
+		handler.ServeHTTP(rec, req)
+		return method, path, rec, float64(time.Since(stepStart).Microseconds()) / 1000.0
 	}
 
-	rec := httptest.NewRecorder()
-	handler.ServeHTTP(rec, req)
+	// Multi-step scenario (spec §4.4): every step hits the same handler instance, so
+	// state created by an earlier request is visible to the next one.
+	if len(params.Steps) > 0 {
+		results := make([]protocol.VerifyStepResult, 0, len(params.Steps))
+		total := 0.0
+		for _, step := range params.Steps {
+			m, p, rec, duration := dispatch(step.Target, step.Method, step.Payload, step.Headers)
+			total += duration
+			stepStatus := "failed"
+			if rec.Code < 400 {
+				stepStatus = "passed"
+			}
+			results = append(results, protocol.VerifyStepResult{
+				Target: step.Target, StatusCode: rec.Code, Status: stepStatus, ResponseBody: rec.Body.String(),
+			})
+			r.RecordTrace(m, p, p, "", rec.Code, duration, "")
+		}
+		last := results[len(results)-1]
+		return &protocol.VerifyResult{
+			Success:    true,
+			Status:     "passed",
+			Target:     params.Target,
+			StatusCode: last.StatusCode,
+			Diff: map[string]interface{}{
+				"stepCount":    len(results),
+				"status":       last.StatusCode,
+				"responseBody": last.ResponseBody,
+			},
+			Timings:    protocol.LatencyBreakdown{TActionMs: total, TTotalMs: total},
+			DurationMs: total,
+			Scope: &protocol.VerifyScope{
+				Checked:      []string{"ordered multi-step dispatch against one application instance"},
+				NotExecuted:  []string{"external processes", "real network", "persistent database state"},
+				NotSupported: []string{"browser/DOM assertions"},
+			},
+			Steps: results,
+		}, nil
+	}
 
-	duration := float64(time.Since(start).Microseconds()) / 1000.0
+	method, path, rec, duration := dispatch(params.Target, params.Method, params.Payload, params.Headers)
 
 	// Feed the L4 trace ring so Understand(causality) has real evidence after verification
 	r.RecordTrace(method, path, path, "", rec.Code, duration, "")
@@ -1142,4 +1314,31 @@ func sliceFunctionAt(data []byte, line int) (string, int, int) {
 		return string(data), 1, len(lines)
 	}
 	return strings.Join(lines[bestStart-1:bestEnd], "\n"), bestStart, bestEnd
+}
+
+// hashVersion is the OCC token for file bytes (spec §4.3).
+func hashVersion(data []byte) string {
+	sum := sha256.Sum256(data)
+	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// pageBounds implements the §4.1 limit/cursor contract: a negative or absent limit
+// means "all"; an invalid cursor is treated as the first page.
+func pageBounds(total, limit int, cursor string) (start, end int, hasMore bool, next string) {
+	start = 0
+	if cursor != "" {
+		if parsed, err := strconv.Atoi(cursor); err == nil && parsed >= 0 {
+			start = parsed
+		}
+	}
+	if start > total {
+		start = total
+	}
+	end = total
+	if limit > 0 && start+limit < total {
+		end = start + limit
+		hasMore = true
+		next = strconv.Itoa(end)
+	}
+	return start, end, hasMore, next
 }

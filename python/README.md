@@ -54,10 +54,10 @@ cd python
 CERT_OUT_DIR=../certification .venv/bin/python -m pytest -q tests/test_conformance.py tests/test_stdio.py
 ```
 
-The language-neutral fixture suite (fixtures v5, 20 cases) certifies the adapter over
+The language-neutral fixture suite (fixtures v6, 25 cases) certifies the adapter over
 HTTP and over stdio: [`certification/python-fastapi.json`](../certification/python-fastapi.json)
 and [`certification/transports/python-stdio.json`](../certification/transports/python-stdio.json),
-both **Level 3, 20/20**.
+both **Level 3, 25/25**.
 
 ### Benchmarks
 

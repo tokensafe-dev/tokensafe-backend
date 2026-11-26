@@ -31,6 +31,7 @@ type Case struct {
 	Params             map[string]interface{} `json:"params"`
 	Preconditions      []string               `json:"preconditions"`
 	ExpectResultFields []string               `json:"expectResultFields"`
+	ExpectValues       map[string]interface{} `json:"expectValues"`
 	ExpectError        *struct {
 		Code int `json:"code"`
 	} `json:"expectError"`
@@ -43,10 +44,10 @@ type Case struct {
 
 // Spec is the fixture file: cases plus the version metadata they were written against.
 type Spec struct {
-	ProtocolVersion string            `json:"protocolVersion"`
-	FixtureVersion  int               `json:"fixtureVersion"`
+	ProtocolVersion  string            `json:"protocolVersion"`
+	FixtureVersion   int               `json:"fixtureVersion"`
 	LevelDefinitions map[string]string `json:"levelDefinitions"`
-	Cases           []Case            `json:"cases"`
+	Cases            []Case            `json:"cases"`
 }
 
 // Markers carries the concrete values substituted for ${MARKER} placeholders.
@@ -62,6 +63,17 @@ type Markers struct {
 	L2Target      string
 	L3Target      string
 	VerifyTarget  string
+
+	SymbolFile        string
+	SymbolName        string
+	SymbolReplacement string
+	SymbolVersion     string
+	SymbolFileContent string
+	DeleteFile        string
+	DeleteVersion     string
+	RenameSource      string
+	RenameTarget      string
+	RenameVersion     string
 }
 
 // CaseResult is the outcome of one case.
@@ -256,9 +268,23 @@ func check(tc Case, resp *protocol.OumvResponse, markers Markers) string {
 			return fmt.Sprintf("evidence provenance %q is not a spec §6.2 value", evMap["provenance"])
 		}
 	}
+	for path, want := range tc.ExpectValues {
+		if expected, ok := want.(string); ok {
+			want = markers.substituteText(expected)
+		}
+		got, exists := jsonPathValue(res, path)
+		if !exists {
+			return fmt.Sprintf("result missing expected path %q", path)
+		}
+		gotJSON, _ := json.Marshal(got)
+		wantJSON, _ := json.Marshal(want)
+		if string(gotJSON) != string(wantJSON) {
+			return fmt.Sprintf("expected %s=%s, got %s", path, wantJSON, gotJSON)
+		}
+	}
 	if tc.ExpectVersionMatchesContent != "" {
 		version, _ := res["newVersion"].(string)
-		content := strings.ReplaceAll(tc.ExpectVersionMatchesContent, "${EDIT_CONTENT}", markers.EditContent)
+		content := markers.substituteText(tc.ExpectVersionMatchesContent)
 		want := Version([]byte(content))
 		if version != want {
 			return fmt.Sprintf("version token must match written content: expected %s, got %s", want, version)
@@ -285,20 +311,52 @@ func (m Markers) substitute(params map[string]interface{}) map[string]interface{
 		"${L2_TARGET}":           m.L2Target,
 		"${L3_TARGET}":           m.L3Target,
 		"${VERIFY_TARGET}":       m.VerifyTarget,
+		"${SYMBOL_FILE}":         m.SymbolFile,
+		"${SYMBOL_NAME}":         m.SymbolName,
+		"${SYMBOL_REPLACEMENT}":  m.SymbolReplacement,
+		"${SYMBOL_VERSION}":      m.SymbolVersion,
+		"${SYMBOL_FILE_CONTENT}": m.SymbolFileContent,
+		"${DELETE_FILE}":         m.DeleteFile,
+		"${DELETE_VERSION}":      m.DeleteVersion,
+		"${RENAME_SOURCE}":       m.RenameSource,
+		"${RENAME_TARGET}":       m.RenameTarget,
+		"${RENAME_VERSION}":      m.RenameVersion,
+	}
+	var walk func(value interface{}) interface{}
+	walk = func(value interface{}) interface{} {
+		switch typed := value.(type) {
+		case string:
+			replaced := typed
+			for marker, replacement := range replacements {
+				replaced = strings.ReplaceAll(replaced, marker, replacement)
+			}
+			return replaced
+		case []interface{}:
+			out := make([]interface{}, len(typed))
+			for i, item := range typed {
+				out[i] = walk(item)
+			}
+			return out
+		case map[string]interface{}:
+			out := make(map[string]interface{}, len(typed))
+			for key, item := range typed {
+				out[key] = walk(item)
+			}
+			return out
+		default:
+			return value
+		}
 	}
 	out := make(map[string]interface{}, len(params))
-	for k, v := range params {
-		s, ok := v.(string)
-		if !ok {
-			out[k] = v
-			continue
-		}
-		for marker, value := range replacements {
-			s = strings.ReplaceAll(s, marker, value)
-		}
-		out[k] = s
+	for key, value := range params {
+		out[key] = walk(value)
 	}
 	return out
+}
+
+// substituteText applies the marker table to one string (expectations too).
+func (m Markers) substituteText(text string) string {
+	return m.substitute(map[string]interface{}{"value": text})["value"].(string)
 }
 
 func jsonPathExists(data interface{}, path string) bool {
@@ -309,6 +367,14 @@ func jsonPathExists(data interface{}, path string) bool {
 func jsonPathValue(data interface{}, path string) (interface{}, bool) {
 	var current interface{} = data
 	for _, p := range strings.Split(path, ".") {
+		if arr, ok := current.([]interface{}); ok {
+			index := 0
+			if _, err := fmt.Sscanf(p, "%d", &index); err != nil || index < 0 || index >= len(arr) {
+				return nil, false
+			}
+			current = arr[index]
+			continue
+		}
 		m, ok := current.(map[string]interface{})
 		if !ok {
 			return nil, false

@@ -233,7 +233,7 @@ class OUMVRuntime:
         if req_formats:
             caps["observe"]["formats"] = [fmt for fmt in caps["observe"]["formats"] if fmt in req_formats]
         return {
-            "protocolVersion": "1.1.0",
+            "protocolVersion": "1.2.0",
             "profile": "backend",
             "sessionId": session_id,
             "ttlSeconds": self.sessions.ttl,
@@ -253,7 +253,7 @@ class OUMVRuntime:
         """Pillar 3A: source with the sha256 OCC token (same contract as Go)."""
         return self._read_source(path, symbol)
 
-    async def handle_observe(self, level: str = "L0", target: Optional[str] = None, **kwargs) -> Dict[str, Any]:
+    async def handle_observe(self, level: str = "L0", target: Optional[str] = None, limit: Optional[int] = None, cursor: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         """Progressive context observation (L0 Pulse, L1 Surface, L2 Contract, L3 Source, L4 Traces).
 
         Returns the protocol envelope `{level, format, data, tokenEstimate}` so an
@@ -270,15 +270,20 @@ class OUMVRuntime:
             }
             token_estimate = 30
         elif lvl == "L1":
+            page, has_more, next_cursor = self._page(self._routes, limit, cursor)
             data = {
                 "framework": self.framework,
                 "endpoints": [
                     {"method": r["method"], "path": r["path"], "summary": r.get("summary", "")}
-                    for r in self._routes
+                    for r in page
                 ],
                 "models": list(self._schemas.keys()),
             }
-            token_estimate = 30 + 15 * len(self._routes)
+            if limit:
+                data["hasMore"] = has_more
+                if next_cursor:
+                    data["nextCursor"] = next_cursor
+            token_estimate = 30 + 15 * len(page)
         elif lvl == "L2":
             evidence = {"provenance": "runtime", "sourceAdapter": "tokensafe-python", "confidence": "confirmed"}
             if target:
@@ -310,18 +315,39 @@ class OUMVRuntime:
             token_estimate = 300
         elif lvl == "L4":
             traces = self._traces_for(target)
+            page, has_more, next_cursor = self._page(traces, limit, cursor)
             data = {
                 "target": target or "",
-                "traces": traces,
+                "traces": page,
                 "traceCount": len(traces),
                 "note": "" if traces else "no RPC traces recorded yet: call oumv/verify or execute a request first",
                 "evidence": {"provenance": "runtime", "sourceAdapter": "tokensafe-python", "confidence": "confirmed"},
             }
-            token_estimate = 40 + 15 * len(traces)
+            if limit:
+                data["hasMore"] = has_more
+                if next_cursor:
+                    data["nextCursor"] = next_cursor
+            token_estimate = 40 + 15 * len(page)
         else:
             raise OumvError(UNSUPPORTED_CAPABILITY, f"UNSUPPORTED_CAPABILITY: observe level {lvl}")
 
         return {"level": lvl, "format": "json", "data": data, "tokenEstimate": token_estimate}
+
+    @staticmethod
+    def _page(items: List[Any], limit: Optional[int], cursor: Optional[str]) -> "tuple[List[Any], bool, str]":
+        """§4.1 limit/cursor: absent limit means the whole collection."""
+        total = len(items)
+        start = 0
+        if cursor:
+            try:
+                start = int(cursor)
+            except (TypeError, ValueError):
+                start = 0
+        start = max(0, min(start, total))
+        if limit and limit > 0 and start + limit < total:
+            end = start + limit
+            return items[start:end], True, str(end)
+        return items[start:], False, ""
 
     async def handle_understand(self, query: str = "causality", target: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         """Understands runtime causality, why_state, or structural impact analysis.
@@ -378,7 +404,7 @@ class OUMVRuntime:
         return {"status": "ok", "query": query}
 
     async def handle_oumv_mutate(self, **kwargs) -> Dict[str, Any]:
-        """Applies OCC source edit or simulates an action mutation."""
+        """Applies an OCC source edit (replace/create/symbol/delete/rename) or simulates an action."""
         if "action" in kwargs or ("path" in kwargs and ("method" in kwargs or "body" in kwargs)):
             sim = await self.handle_mutation_simulate(**kwargs)
             return sim.model_dump()
@@ -389,18 +415,33 @@ class OUMVRuntime:
         if replacement is None:
             replacement = kwargs.get("source")
         expected_version = kwargs.get("expectedVersion") or kwargs.get("expected_version")
+        rename_to = kwargs.get("renameTo") or kwargs.get("rename_to")
+        mode = str(kwargs.get("mode") or "replace").lower()
+        if mode not in ("replace", "create", "symbol", "delete", "rename"):
+            raise OumvError(
+                UNSUPPORTED_CAPABILITY,
+                f"UNSUPPORTED_CAPABILITY: unknown applyEdit mode {mode!r}",
+                {"reason": "unknown_mode"},
+            )
 
+        if mode == "create":
+            return self._create_source_file(path=path, replacement=replacement, expected_version=expected_version)
+        if mode == "delete":
+            return self._delete_source_file(path=path, replacement=replacement, expected_version=expected_version)
+        if mode == "rename":
+            return self._rename_source_file(
+                path=path, rename_to=rename_to, replacement=replacement, expected_version=expected_version
+            )
         if replacement is None:
-            # No replacement: report the current OCC version (version check / getSource-style probe)
+            # No replacement: report the current OCC version (getSource-style probe).
             version = self._file_version(path)
             if version is None:
                 raise OumvError(RESOURCE_NOT_FOUND, f"RESOURCE_NOT_FOUND: file not found inside project root: {path}")
             return {"status": "CURRENT", "path": path, "symbol": symbol, "version": version}
-
-        mode = str(kwargs.get("mode") or "replace").lower()
-        if mode == "create":
-            return self._create_source_file(path=path, replacement=replacement, expected_version=expected_version)
-
+        if mode == "symbol":
+            return self._apply_symbol_edit(
+                path=path, symbol=symbol, replacement=str(replacement), expected_version=expected_version
+            )
         return self._apply_source_edit(
             path=path, symbol=symbol, replacement=replacement, expected_version=expected_version
         )
@@ -437,6 +478,174 @@ class OUMVRuntime:
             "syntaxCheck": syntax,
             "created": True,
         }
+
+    def _delete_source_file(self, *, path: str, replacement: Optional[str], expected_version: Optional[str]) -> Dict[str, Any]:
+        """mode=delete (spec §4.3): remove a file guarded by OCC."""
+        if replacement not in (None, ""):
+            raise OumvError(
+                VALIDATION_FAILED,
+                "VALIDATION_FAILED: replacement must be omitted for mode=delete",
+                {"reason": "replacement_forbidden"},
+            )
+        abs_path = self._resolve_project_file(path or "")
+        if abs_path is None:
+            raise OumvError(SECURITY_VIOLATION, f"SECURITY_VIOLATION: path traversal blocked: {path}")
+        if not os.path.isfile(abs_path):
+            raise OumvError(RESOURCE_NOT_FOUND, f"RESOURCE_NOT_FOUND: {path}")
+        current_version = self._file_version(path)
+        if not expected_version:
+            raise OumvError(
+                VALIDATION_FAILED,
+                "VALIDATION_FAILED: expectedVersion is required to delete a file",
+                {"reason": "expected_version_required", "path": path},
+            )
+        if expected_version != current_version:
+            raise OumvError(CONFLICT_DETECTED, "CONFLICT_DETECTED: OCC version mismatch on delete")
+        os.remove(abs_path)
+        return {"status": "APPLIED", "path": path, "syntaxCheck": {"status": "skipped"}, "deleted": True}
+
+    def _rename_source_file(
+        self, *, path: str, rename_to: Optional[str], replacement: Optional[str], expected_version: Optional[str]
+    ) -> Dict[str, Any]:
+        """mode=rename (spec §4.3): move a file; both paths stay inside the jail."""
+        if not rename_to or not str(rename_to).strip():
+            raise OumvError(
+                VALIDATION_FAILED,
+                "VALIDATION_FAILED: renameTo is required for mode=rename",
+                {"reason": "rename_to_required"},
+            )
+        if replacement not in (None, ""):
+            raise OumvError(
+                VALIDATION_FAILED,
+                "VALIDATION_FAILED: replacement must be omitted for mode=rename",
+                {"reason": "replacement_forbidden"},
+            )
+        abs_source = self._resolve_project_file(path or "")
+        if abs_source is None:
+            raise OumvError(SECURITY_VIOLATION, f"SECURITY_VIOLATION: path traversal blocked: {path}")
+        abs_target = self._resolve_project_file(str(rename_to))
+        if abs_target is None:
+            raise OumvError(SECURITY_VIOLATION, f"SECURITY_VIOLATION: path traversal blocked: {rename_to}")
+        if not os.path.isfile(abs_source):
+            raise OumvError(RESOURCE_NOT_FOUND, f"RESOURCE_NOT_FOUND: {path}")
+        if os.path.exists(abs_target):
+            raise OumvError(
+                CONFLICT_DETECTED,
+                "CONFLICT_DETECTED: rename target already exists",
+                {"reason": "target_exists", "renameTo": rename_to},
+            )
+        current_version = self._file_version(path)
+        if not expected_version:
+            raise OumvError(
+                VALIDATION_FAILED,
+                "VALIDATION_FAILED: expectedVersion is required to rename a file",
+                {"reason": "expected_version_required", "path": path},
+            )
+        if expected_version != current_version:
+            raise OumvError(CONFLICT_DETECTED, "CONFLICT_DETECTED: OCC version mismatch on rename")
+        os.makedirs(os.path.dirname(abs_target) or self._project_root_abs(), exist_ok=True)
+        os.rename(abs_source, abs_target)
+        return {
+            "status": "APPLIED",
+            "path": path,
+            "newPath": str(rename_to),
+            "syntaxCheck": {"status": "skipped"},
+        }
+
+    def _apply_symbol_edit(
+        self, *, path: str, symbol: Optional[str], replacement: str, expected_version: Optional[str]
+    ) -> Dict[str, Any]:
+        """mode=symbol (spec §4.3): replace one Python function/method/class range."""
+        if not symbol or not str(symbol).strip():
+            raise OumvError(
+                VALIDATION_FAILED,
+                "VALIDATION_FAILED: symbol is required for mode=symbol",
+                {"reason": "symbol_required"},
+            )
+        abs_path = self._resolve_project_file(path or "")
+        if abs_path is None:
+            raise OumvError(SECURITY_VIOLATION, f"SECURITY_VIOLATION: path traversal blocked: {path}")
+        if not os.path.isfile(abs_path):
+            raise OumvError(RESOURCE_NOT_FOUND, f"RESOURCE_NOT_FOUND: {path}")
+        with open(abs_path, "rb") as f:
+            current_bytes = f.read()
+        current_version = "sha256:" + hashlib.sha256(current_bytes).hexdigest()
+        if not expected_version:
+            raise OumvError(
+                VALIDATION_FAILED,
+                "VALIDATION_FAILED: expectedVersion is required to edit a symbol",
+                {"reason": "expected_version_required", "path": path},
+            )
+        if expected_version != current_version:
+            raise OumvError(CONFLICT_DETECTED, "CONFLICT_DETECTED: OCC version mismatch")
+
+        source = current_bytes.decode("utf-8", errors="replace")
+        try:
+            tree = ast.parse(source)
+        except SyntaxError as e:
+            raise OumvError(SYNTAX_ERROR, f"SYNTAX_ERROR: cannot parse {path}: {e}")
+
+        def names(node: Any) -> bool:
+            return isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)) and node.name == symbol
+
+        target = None
+        for node in tree.body:
+            if names(node):
+                target = node
+                break
+            if isinstance(node, ast.ClassDef):
+                for child in node.body:
+                    if isinstance(child, (ast.FunctionDef, ast.AsyncFunctionDef)) and child.name == symbol:
+                        target = child
+                        break
+                if target is not None:
+                    break
+        if target is None:
+            raise OumvError(RESOURCE_NOT_FOUND, f"RESOURCE_NOT_FOUND: symbol {symbol!r} not found in {path}")
+
+        start = min([d.lineno for d in getattr(target, "decorator_list", [])] or [target.lineno])
+        end = target.end_lineno or target.lineno
+        lines = source.splitlines()
+        indent = lines[start - 1][: len(lines[start - 1]) - len(lines[start - 1].lstrip())]
+        replacement_lines = replacement.splitlines()
+        if indent and replacement_lines and not replacement_lines[0].startswith(indent):
+            replacement_lines = [indent + line for line in replacement_lines]
+        patched_source = "\n".join(lines[: start - 1] + replacement_lines + lines[end:])
+        if source.endswith("\n"):
+            patched_source += "\n"
+
+        syntax_check = self._syntax_check(abs_path, patched_source)
+        if syntax_check["status"] == "failed":
+            raise OumvError(
+                SYNTAX_ERROR,
+                f"SYNTAX_ERROR: symbol edit rejected ({syntax_check['tool']}): {syntax_check['error']}",
+                data={"syntaxCheck": syntax_check},
+            )
+
+        backup_path = None
+        try:
+            backup_dir = os.path.join(self._project_root_abs(), ".tokensafe", "backups")
+            os.makedirs(backup_dir, exist_ok=True)
+            digest = hashlib.sha256(current_bytes).hexdigest()[:8]
+            backup_path = os.path.join(backup_dir, f"{digest}_{os.path.basename(abs_path)}.bak")
+            with open(backup_path, "wb") as f:
+                f.write(current_bytes)
+        except Exception:
+            backup_path = None
+
+        with open(abs_path, "w", encoding="utf-8") as f:
+            f.write(patched_source)
+        new_version = "sha256:" + hashlib.sha256(patched_source.encode("utf-8")).hexdigest()
+        result: Dict[str, Any] = {
+            "status": "APPLIED",
+            "path": path,
+            "symbol": symbol,
+            "newVersion": new_version,
+            "syntaxCheck": syntax_check,
+        }
+        if backup_path:
+            result["backupPath"] = backup_path
+        return result
 
     # ---- OCC source editing (real file edits, no fabricated versions) ----
 
@@ -571,6 +780,52 @@ class OUMVRuntime:
 
     async def handle_oumv_verify(self, **kwargs) -> Dict[str, Any]:
         """Verifies state/DOM assertions or simulated mutation diffs."""
+        steps = kwargs.get("steps") or []
+        if isinstance(steps, list) and steps:
+            results: List[Dict[str, Any]] = []
+            total = 0.0
+            for step in steps:
+                step = step or {}
+                target = str(step.get("target") or "")
+                parts = target.strip().split(" ", 1)
+                if len(parts) == 2:
+                    method, path = parts[0].upper(), parts[1]
+                else:
+                    method, path = "POST", parts[0] if parts else target
+                sim = await self.handle_mutation_simulate(
+                    action={"type": "http_request", "path": path, "method": method, "body": step.get("payload")}
+                )
+                elapsed = float(sim.execution_time_ms or 0.0)
+                total += elapsed
+                results.append(
+                    {
+                        "target": target,
+                        "statusCode": int(sim.status_code or 0),
+                        "status": "passed" if sim.success else "failed",
+                        "responseBody": sim.response,
+                    }
+                )
+            last = results[-1]
+            return {
+                "status": "passed",
+                "target": kwargs.get("target") or last["target"],
+                "statusCode": last["statusCode"],
+                "steps": results,
+                "diff": {"stepCount": len(results), "status": last["statusCode"], "responseBody": last.get("responseBody")},
+                "timings": {
+                    "t_action_ms": total,
+                    "t_schema_ms": 0.0,
+                    "t_propagation_ms": 0.0,
+                    "t_dom_ms": 0.0,
+                    "t_total_ms": total,
+                },
+                "durationMs": total,
+                "scope": {
+                    "checked": ["ordered multi-step ASGI dispatch against one app instance"],
+                    "notExecuted": ["external processes", "real network", "persistent database state"],
+                    "notSupported": ["browser/DOM assertions"],
+                },
+            }
         if "assertions" in kwargs:
             res = await self.handle_verification_assert(assertions=kwargs.get("assertions", []))
             return res.model_dump()

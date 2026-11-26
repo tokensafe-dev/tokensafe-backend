@@ -47,6 +47,9 @@ async def test_serve_answers_requests_and_skips_notifications(tmp_path):
 async def test_stdio_conformance_certification(tmp_path):
     (tmp_path / "conformance_fixture.py").write_text("value = 0\n", encoding="utf-8")
     (tmp_path / "conformance_edit_target.py").write_bytes(b"value = 41\n")
+    (tmp_path / "conformance_symbol_target.py").write_text("def value():\n    return 41\n", encoding="utf-8")
+    (tmp_path / "conformance_delete_target.py").write_text("value = 1\n", encoding="utf-8")
+    (tmp_path / "conformance_rename_source.py").write_text("value = 2\n", encoding="utf-8")
     (tmp_path / "conformance_app.py").write_text(
         "\n".join(
             [
@@ -101,6 +104,16 @@ async def test_stdio_conformance_certification(tmp_path):
         l2_target="GET /api/v1/orders",
         l3_target="conformance_edit_target.py",
         verify_target="GET /api/v1/orders",
+        symbol_file="conformance_symbol_target.py",
+        symbol_name="value",
+        symbol_replacement="def value():\n    return 42\n",
+        symbol_version=conformance.version_of(b"def value():\n    return 41\n"),
+        symbol_file_content="def value():\n    return 42\n",
+        delete_file="conformance_delete_target.py",
+        delete_version=conformance.version_of(b"value = 1\n"),
+        rename_source="conformance_rename_source.py",
+        rename_target="conformance_renamed.py",
+        rename_version=conformance.version_of(b"value = 2\n"),
     )
 
     try:

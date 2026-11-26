@@ -68,8 +68,8 @@ CERT_OUT_DIR=../certification OUMV_REPO=../../agent-oumv pnpm test
 
 The fixture suite (owner: `tokensafe-dev/oumv`) runs over real HTTP against both
 adapters and over stdio against the shared runtime. Committed reports:
-`../certification/node-express.json`, `node-fastify.json` (Level 3, 20/20,
-fixtureVersion 5) and `../certification/transports/node-stdio.json` (Level 3, 20/20).
+`../certification/node-express.json`, `node-fastify.json` (Level 3, 25/25,
+fixtureVersion 6) and `../certification/transports/node-stdio.json` (Level 3, 25/25).
 
 Notes: paths are workspace-jailed and credential files are refused; a Node backend
 adapter is development-time tooling and must not be exposed publicly without the
