@@ -7,8 +7,11 @@ and safe dry-run mutation simulation.
 import json
 import os
 from typing import Any, Dict, Optional, Tuple
-from fastapi import FastAPI, Request
-from fastapi.responses import JSONResponse
+import asyncio
+import json as _json
+
+from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.routing import APIRoute
 
 from tokensafe_python.core.runtime import OUMVRuntime
@@ -32,6 +35,8 @@ class TokenSafeFastAPI:
         self.rpc_path = rpc_path
         self.host = host
         self.port = port
+        # SSE heartbeat cadence; tests shrink it to milliseconds.
+        self.sse_heartbeat_seconds = float(os.environ.get("TOKENSAFE_OUMV_SSE_HEARTBEAT", "15"))
         self.runtime = OUMVRuntime(
             framework="fastapi",
             db_engine=db_engine,
@@ -187,6 +192,38 @@ class TokenSafeFastAPI:
 
             res = await self.runtime.rpc.handle_payload(body)
             return JSONResponse(content=res)
+
+        @self.app.get("/__oumv/events", include_in_schema=False)
+        async def handle_events(request: Request):
+            """SSE trace stream (spec §2.3)."""
+            async def event_stream():
+                index = len(self.runtime._traces)
+                yield ": connected\n\n"
+                while True:
+                    if await request.is_disconnected():
+                        return
+                    traces = self.runtime._traces[index:]
+                    index += len(traces)
+                    for trace in traces:
+                        payload = _json.dumps(trace)
+                        yield f"id: {trace.get('timestamp', '')}\nevent: trace\ndata: {payload}\n\n"
+                    yield f"event: heartbeat\ndata: {_json.dumps({'ts': self.runtime.state.to_timestamp()})}\n\n"
+                    await asyncio.sleep(self.sse_heartbeat_seconds)
+
+            return StreamingResponse(event_stream(), media_type="text/event-stream")
+
+        @self.app.websocket(self.rpc_path)
+        async def handle_ws(websocket: WebSocket):
+            """JSON-RPC over WebSocket (spec §2.4); notifications get no reply."""
+            await websocket.accept()
+            try:
+                while True:
+                    payload = await websocket.receive_json()
+                    result = await self.runtime.rpc.handle_payload(payload)
+                    if payload.get("id") is not None:
+                        await websocket.send_json(result)
+            except WebSocketDisconnect:
+                return
 
         @self.app.get("/__oumv/health", include_in_schema=False)
         async def handle_health():
