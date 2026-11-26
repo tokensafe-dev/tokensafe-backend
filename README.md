@@ -3,20 +3,20 @@
 **The Universal Agent-Runtime Protocol: Observe · Understand · Mutate · Verify**
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/tokensafe-dev/tokensafe-backend/go)](https://goreportcard.com/report/github.com/tokensafe-dev/tokensafe-backend/go)
-[![Protocol Specification](https://img.shields.io/badge/OUMV-v1.0--draft-orange)](https://github.com/tokensafe-dev/oumv/blob/main/spec/SPEC.md)
+[![Protocol Specification](https://img.shields.io/badge/OUMV-v1.4--canonical-orange)](https://github.com/tokensafe-dev/oumv/blob/main/spec/SPEC.md)
 [![Agent Usability Benchmark](https://img.shields.io/badge/AUB_Benchmark-AER_24.6x-10B981)](go/benchmark/BENCHMARK_REPORT.md)
-[![License: MIT](https://img.shields.io/badge/License-MIT-blue.svg)](LICENSE)
+[![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 > `tokensafe-backend` is the unified backend repository for the **OUMV (Observe, Understand, Mutate, Verify)** protocol. It houses backend runtime instrumentation and adapters across major server-side technologies:
 > - **Go (`go/`)**: Native Go runtime & adapters for Gin, Chi, and `net/http` (`github.com/tokensafe-dev/tokensafe-backend/go`).
-> - **Python (`python/`)**: Python runtime & FastAPI adapter (`tokensafe-python`).
-> - **Node.js (`node/`)**: Upcoming Node.js adapters for Express, Fastify, and NestJS.
+> - **Python (`python/`)**: Python runtime & FastAPI adapter, published as `tokensafe-backend-python`.
+> - **Node.js (`node/`)**: Not started — planned after the protocol freezes at v1.0. There is no `node/` directory in this tree yet.
 
 ---
 
 ## Highlights
 
-- **✅ Certified OUMV adapters (spec §10)**: Gin, Chi, `net/http` and FastAPI each pass all 15 language-neutral conformance cases over their real transport — Level 3, reports committed under [`certification/`](certification/) and reproduced in CI.
+- **✅ Certified OUMV adapters (spec §10)**: Gin, Chi, `net/http` and FastAPI each pass all 18 language-neutral conformance cases (fixtures v3) over their real transport — Level 3, reports committed under [`certification/`](certification/) and reproduced in CI.
 - **🛡️ In-Memory Compiler Pre-Flight Guard**: AST-guided symbol edits validated in memory via `go/parser` and `go/types` in <5ms—blocking non-compiling edits before touching the disk.
 - **🔄 Zero Database Pollution**: In-memory transactional dry-runs (`net/http/httptest` + `pkg/db`) execute with guaranteed `ROLLBACK`, eliminating state contamination across test cycles.
 - **🔍 Progressive Context Disclosure (L0–L4)**: Replaces 3,000+ token file crawls with compact pulse (`L0`, ~20 tokens), endpoint surfaces (`L1`, ~110 tokens), and reflected schemas (`L2`, ~60 tokens).
@@ -26,14 +26,14 @@
 
 ## Certification (spec §10)
 
-Every adapter is certified by running the same language-neutral fixtures (`fixtures/conformance-cases.json` v2, 15 cases across levels 1–3) over the real transport an agent uses. Reports are committed and regenerated in CI.
+Every adapter is certified by running the same language-neutral fixtures (`fixtures/conformance-cases.json` v3, 18 cases across levels 1–3) over the real transport an agent uses. Reports are committed and regenerated in CI.
 
 | Adapter | Framework | Transport exercised | Level | Cases | Report |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `go-gin` | Gin | HTTP `POST /__oumv/rpc` | **3** | 15/15 | [certification/go-gin.json](certification/go-gin.json) |
-| `go-chi` | chi | HTTP `POST /__oumv/rpc` | **3** | 15/15 | [certification/go-chi.json](certification/go-chi.json) |
-| `go-stdhttp` | net/http | HTTP `POST /__oumv/rpc` | **3** | 15/15 | [certification/go-stdhttp.json](certification/go-stdhttp.json) |
-| `python-fastapi` | FastAPI | ASGI `POST /__oumv/rpc` | **3** | 15/15 | [certification/python-fastapi.json](certification/python-fastapi.json) |
+| `go-gin` | Gin | HTTP `POST /__oumv/rpc` | **3** | 18/18 | [certification/go-gin.json](certification/go-gin.json) |
+| `go-chi` | chi | HTTP `POST /__oumv/rpc` | **3** | 18/18 | [certification/go-chi.json](certification/go-chi.json) |
+| `go-stdhttp` | net/http | HTTP `POST /__oumv/rpc` | **3** | 18/18 | [certification/go-stdhttp.json](certification/go-stdhttp.json) |
+| `python-fastapi` | FastAPI | ASGI `POST /__oumv/rpc` | **3** | 18/18 | [certification/python-fastapi.json](certification/python-fastapi.json) |
 
 Levels are cumulative and a skipped case never counts as a pass — a missing capability caps the claim instead of inflating it. Regenerate locally:
 
@@ -390,4 +390,12 @@ tokensafe create my-service --template go
 
 ## License
 
-MIT © 2026 TokenSafe & Contributors
+| Path | License |
+| :--- | :--- |
+| Repository and Go module (`go/`) | [Apache-2.0](LICENSE) |
+| Python runtime (`python/`) | [MIT](python/LICENSE) |
+
+`python/` keeps MIT because that grant was issued before the repository adopted Apache-2.0; it
+is irrevocable for the published files. The Python package metadata still declares MIT and
+must stay that way for existing versions. "OUMV Certified" and the certification badge are
+marks and are not licensed by either grant.
