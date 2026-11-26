@@ -343,6 +343,7 @@ func (r *Runtime) Observe(ctx context.Context, params *protocol.ObserveParams) (
 		}
 		return &protocol.ObserveResult{
 			Level:         protocol.LevelL0Pulse,
+			Format:        "json",
 			Data:          pulse,
 			TokenEstimate: 30,
 		}, nil
@@ -355,6 +356,7 @@ func (r *Runtime) Observe(ctx context.Context, params *protocol.ObserveParams) (
 
 		return &protocol.ObserveResult{
 			Level:         protocol.LevelL1Surface,
+			Format:        "json",
 			Data:          protocol.L1SurfaceData{Endpoints: routes},
 			TokenEstimate: 30 + len(routes)*15,
 		}, nil
@@ -369,6 +371,7 @@ func (r *Runtime) Observe(ctx context.Context, params *protocol.ObserveParams) (
 		}
 		return &protocol.ObserveResult{
 			Level: protocol.LevelL2Contract,
+			Format:        "json",
 			Data: protocol.L2ContractData{
 				Target:      params.Target,
 				Method:      route.Method,
@@ -398,6 +401,7 @@ func (r *Runtime) Observe(ctx context.Context, params *protocol.ObserveParams) (
 		}
 		return &protocol.ObserveResult{
 			Level: protocol.LevelL3Source,
+			Format:        "json",
 			Data: protocol.L3SourceData{
 				Symbol:    src.Symbol,
 				Path:      src.Path,
@@ -417,6 +421,7 @@ func (r *Runtime) Observe(ctx context.Context, params *protocol.ObserveParams) (
 		}
 		return &protocol.ObserveResult{
 			Level: protocol.LevelL4Traces,
+			Format:        "json",
 			Data: protocol.L4TracesData{
 				Target:     params.Target,
 				Traces:     traces,

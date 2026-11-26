@@ -20,9 +20,12 @@ type ObserveParams struct {
 
 // ObserveResult defines the response payload for `oumv/observe`.
 type ObserveResult struct {
-	Level         ObserveLevel `json:"level"`
-	Data          interface{}  `json:"data"`
-	TokenEstimate int          `json:"tokenEstimate,omitempty"`
+	Level ObserveLevel `json:"level"`
+	// Format is part of the response envelope for every level (spec §4.1); the Go
+	// runtime only emits JSON, so it is always "json".
+	Format        string      `json:"format"`
+	Data          interface{} `json:"data"`
+	TokenEstimate int         `json:"tokenEstimate,omitempty"`
 }
 
 // L0PulseData represents the lean L0 system pulse (~30 tokens).

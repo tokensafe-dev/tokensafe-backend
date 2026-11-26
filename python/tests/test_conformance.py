@@ -67,9 +67,9 @@ async def test_conformance_certification(tmp_path):
     assert report["specVersion"] == "1.1.0"
 
 
-def test_fixture_file_has_level_tagged_v3_shape():
+def test_fixture_file_has_level_tagged_v4_shape():
     data = json.loads(FIXTURES.read_text(encoding="utf-8"))
-    assert data["fixtureVersion"] == 3
+    assert data["fixtureVersion"] == 4
     assert data["protocolVersion"] == "1.1.0"
     assert sorted(data["levelDefinitions"]) == ["1", "2", "3"]
 
