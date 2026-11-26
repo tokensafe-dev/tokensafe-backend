@@ -105,10 +105,12 @@ func (p *Patcher) ApplySymbolPatch(relPath, symbol, replacement, expectedVersion
 	}
 	formattedBytes := outBuf.Bytes()
 
-	// 6. Pre-flight compiler type-check
-	if typeErr := ValidateASTTypes(fset, fileNode); typeErr != nil {
-		return nil, protocol.NewSyntaxError(fmt.Sprintf("Type check failed: %v", typeErr), typeErr.Error())
-	}
+	// 6. No type check here. `ValidateASTTypes` checked one file in isolation with
+	// `importer.Default()`, so any file importing a third-party package (gin, express-ish
+	// deps, anything vendored) failed with "can't find import" and the edit was rejected
+	// as -32002 — and a single-file check cannot see sibling declarations of the same
+	// package either. The AST was already parsed and formatted, which is the same
+	// syntax-level pre-flight `mode=replace` applies (spec §4.3).
 
 	// 7. Persist to disk
 	if err := os.WriteFile(cleanPath, formattedBytes, 0644); err != nil {
