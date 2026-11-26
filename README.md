@@ -24,6 +24,30 @@
 
 ---
 
+## Certification (spec §10)
+
+Every adapter is certified by running the same language-neutral fixtures (`fixtures/conformance-cases.json` v2, 15 cases across levels 1–3) over the real transport an agent uses. Reports are committed and regenerated in CI.
+
+| Adapter | Framework | Transport exercised | Level | Cases | Report |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `go-gin` | Gin | HTTP `POST /__oumv/rpc` | **3** | 15/15 | [certification/go-gin.json](certification/go-gin.json) |
+| `go-chi` | chi | HTTP `POST /__oumv/rpc` | **3** | 15/15 | [certification/go-chi.json](certification/go-chi.json) |
+| `go-stdhttp` | net/http | HTTP `POST /__oumv/rpc` | **3** | 15/15 | [certification/go-stdhttp.json](certification/go-stdhttp.json) |
+| `python-fastapi` | FastAPI | ASGI `POST /__oumv/rpc` | **3** | 15/15 | [certification/python-fastapi.json](certification/python-fastapi.json) |
+
+Levels are cumulative and a skipped case never counts as a pass — a missing capability caps the claim instead of inflating it. Regenerate locally:
+
+```bash
+# Go adapters (writes certification/*.json)
+cd go && CERT_OUT_DIR=../certification go test ./pkg/adapters -run TestAdapterCertification
+
+# Python/FastAPI
+cd python && CERT_OUT_DIR=../certification .venv/bin/python -m pytest tests/test_conformance.py
+```
+
+---
+
+
 ## The Four Pillars for Backend
 
 1. **Observe (L0–L4)**: Progressive context disclosure. From service pulse (`L0`, ~30 tokens) and route surface (`L1`, ~150 tokens) to DTO schemas (`L2`), AST-sliced source code with OCC tokens (`L3`), and in-flight traces (`L4`).

@@ -57,3 +57,41 @@ jobs:
 
       - name: Run Python tests
         run: pytest -v
+
+  certification:
+    name: Certification is reproducible
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup Go
+        uses: actions/setup-go@v5
+        with:
+          go-version: '1.23'
+          cache-dependency-path: go/go.sum
+
+      - name: Setup Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+
+      - name: Install Python dependencies
+        working-directory: python
+        run: |
+          pip install --upgrade pip
+          pip install -e ".[all]" pytest pytest-asyncio anyio
+
+      - name: Generate Go adapter reports
+        working-directory: go
+        run: |
+          go mod download
+          CERT_OUT_DIR="$GITHUB_WORKSPACE/cert-fresh" go test -count=1 ./pkg/adapters -run TestAdapterCertification
+
+      - name: Generate Python adapter report
+        working-directory: python
+        run: CERT_OUT_DIR="$GITHUB_WORKSPACE/cert-fresh" pytest -q tests/test_conformance.py
+
+      - name: Compare with committed reports
+        run: python3 scripts/check_certification.py cert-fresh certification
+
