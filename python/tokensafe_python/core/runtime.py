@@ -9,6 +9,10 @@ import os
 import shutil
 import subprocess
 import tempfile
+import difflib
+import shlex
+import subprocess
+import re
 import time
 import uuid
 from typing import Any, Callable, Dict, List, Optional
@@ -67,6 +71,10 @@ class OUMVRuntime:
         self._event_limit = 256
         self._event_seq = 0
         self._event_subscribers: List[asyncio.Queue] = []
+        # §3 idempotency (wire 1.6.0): per-session key -> first final result.
+        self._idempotency: Dict[str, Any] = {}
+        # §14.3 configured build command (None = honest `skipped`).
+        self.build_command: Optional[str] = None
 
         self._bind_rpc_methods()
 
@@ -117,6 +125,11 @@ class OUMVRuntime:
             ("oumv/getSource", self.handle_get_source),
             ("oumv/mutate", self.handle_oumv_mutate),
             ("oumv/applyEdit", self.handle_oumv_mutate),
+            ("oumv/previewEdit", self.handle_oumv_preview),
+            ("oumv/cancel", self.handle_oumv_cancel),
+            ("oumv/index", self.handle_oumv_index),
+            ("oumv/query", self.handle_oumv_query),
+            ("oumv/build", self.handle_oumv_build),
             ("oumv/verify", self.handle_oumv_verify),
             # Extended TokenSafe state & causality APIs
             ("state.read", self.handle_state_read),
@@ -309,10 +322,10 @@ class OUMVRuntime:
                 major, minor = int(parts[0]), int(parts[1])
             except (IndexError, ValueError):
                 raise OumvError(UNSUPPORTED_CAPABILITY, f"UNSUPPORTED_CAPABILITY: protocol version {requested_version!r}")
-            if major != 1 or minor > 5:
+            if major != 1 or minor > 6:
                 raise OumvError(
                     UNSUPPORTED_CAPABILITY,
-                    f"UNSUPPORTED_CAPABILITY: protocol version {requested_version} (this runtime serves 1.5.0)",
+                    f"UNSUPPORTED_CAPABILITY: protocol version {requested_version} (this runtime serves 1.6.0)",
                 )
         requested_ttl = kwargs.get("sessionTtlSeconds")
         try:
@@ -326,18 +339,30 @@ class OUMVRuntime:
             # answers causality from its own causality graph, not reactive signals.
             "observe": {"levels": ["L0", "L1", "L2", "L3", "L4"], "formats": ["json"]},
             "understand": {"causality": True, "signalsGraph": False, "impactAnalysis": True},
-            "mutate": {"occ": True, "syntaxGuard": True, "ephemeralDispatch": False, "multiFile": True},
+            "mutate": {
+                "occ": True,
+                "syntaxGuard": True,
+                "ephemeralDispatch": False,
+                "multiFile": True,
+                # Wire 1.6.0: dry-run with the full guard order, no bytes written.
+                "preview": True,
+            },
             # No DOM/a11y surface exists on the backend profile.
             "verify": {
                 "multiMetric": True,
                 "surfaceDiff": False,
                 # Only claim rollback when both an engine and a dispatcher exist.
                 "sandboxRollback": self.db_sandbox.has_engine() and self._action_executor is not None,
+                # Wire 1.6.0: oumv/build runs the configured (or requested) command.
+                "build": True,
             },
+            # Wire 1.6.0 optional extensions (§14).
+            "index": {"symbols": True},
+            "observeQuery": {"readOnly": self.db_sandbox.has_engine()},
             # Bindings this runtime mounts (spec §2.3/§2.4).
             "transports": ["http", "sse", "ws"],
-            # Wire 1.5.0: the handshake honours a client-requested lifetime.
-            "sessions": {"ttlSeconds": True},
+            # Wire 1.5.0/1.6.0: lifetime negotiation, best-effort cancel, idempotent retries.
+            "sessions": {"ttlSeconds": True, "cancel": True, "idempotency": True},
         }
         # §3.1: honour the client's request by narrowing the advertised set. Arrays
         # are filters; an empty intersection stays empty ("cannot serve").
@@ -350,7 +375,7 @@ class OUMVRuntime:
         if req_formats:
             caps["observe"]["formats"] = [fmt for fmt in caps["observe"]["formats"] if fmt in req_formats]
         return {
-            "protocolVersion": "1.5.0",
+            "protocolVersion": "1.6.0",
             "profile": "backend",
             "sessionId": session_id,
             "ttlSeconds": granted_ttl,
@@ -543,7 +568,24 @@ class OUMVRuntime:
         )
 
     async def handle_oumv_mutate(self, **kwargs) -> Dict[str, Any]:
-        """Applies an OCC source edit (replace/create/symbol/delete/rename) or simulates an action."""
+        """Applies an OCC source edit — with §3 idempotency replay when a key is given."""
+        key = self._idempotency_key(kwargs)
+        if key and key in self._idempotency:
+            return self._idempotency[key]
+        result = await self._apply_edit_dispatch(**kwargs)
+        if key and isinstance(result, dict) and result.get("status") == "APPLIED":
+            self._idempotency[key] = result
+        return result
+
+    def _idempotency_key(self, kwargs: Dict[str, Any]) -> Optional[str]:
+        """Session-scoped idempotency key (§3); None when the client sent none."""
+        key = kwargs.get("idempotencyKey")
+        if not key:
+            return None
+        return f"{kwargs.get('sessionId') or 'default'}:{key}"
+
+    async def _apply_edit_dispatch(self, **kwargs) -> Dict[str, Any]:
+        """Dispatches applyEdit (replace/create/symbol/delete/rename/patch/batch)."""
         if "action" in kwargs or ("path" in kwargs and ("method" in kwargs or "body" in kwargs)):
             sim = await self.handle_mutation_simulate(**kwargs)
             return sim.model_dump()
@@ -593,6 +635,285 @@ class OUMVRuntime:
         return self._apply_source_edit(
             path=path, symbol=symbol, replacement=replacement, expected_version=expected_version
         )
+
+    # ------------------------------------------------------------------
+    # Wire 1.6.0: previewEdit (§4.4), cancel (§3), index/query/build (§14)
+    # ------------------------------------------------------------------
+
+    async def handle_oumv_preview(self, **kwargs) -> Dict[str, Any]:
+        """§4.4 dry-run: applyEdit's guard order, no bytes written."""
+        key = self._idempotency_key(kwargs)
+        if key and key in self._idempotency:
+            return self._idempotency[key]
+        edits = kwargs.get("edits")
+        items: List[Dict[str, Any]] = list(edits) if isinstance(edits, list) and edits else [kwargs]
+        if not items or len(items) > 16:
+            raise OumvError(
+                VALIDATION_FAILED,
+                "VALIDATION_FAILED: batch must hold 1..16 items",
+                {"reason": "batch_size"},
+            )
+        previews: List[Dict[str, Any]] = []
+        for item in items:
+            previews.append(self._preview_one(item))
+        result = {"status": "PREVIEW", "applied": False, "previews": previews}
+        if key:
+            self._idempotency[key] = result
+        return result
+
+    def _preview_one(self, item: Dict[str, Any]) -> Dict[str, Any]:
+        path = item.get("path") or item.get("filePath")
+        mode = str(item.get("mode") or "replace").lower()
+        if mode not in ("replace", "create", "symbol", "delete", "rename", "patch"):
+            raise OumvError(
+                UNSUPPORTED_CAPABILITY,
+                f"UNSUPPORTED_CAPABILITY: unknown preview mode {mode!r}",
+                {"reason": "unknown_mode", "path": path},
+            )
+        expected_version = item.get("expectedVersion")
+        abs_path = self._resolve_project_file(path or "")
+        exists = bool(abs_path) and os.path.isfile(abs_path)
+        if mode == "create":
+            if expected_version:
+                raise OumvError(
+                    VALIDATION_FAILED,
+                    "VALIDATION_FAILED: expectedVersion must be omitted for mode=create",
+                    {"reason": "create_forbids_version", "path": path},
+                )
+            if exists:
+                raise OumvError(
+                    CONFLICT_DETECTED,
+                    f"CONFLICT_DETECTED: file already exists: {path}",
+                    {"reason": "file_exists", "path": path},
+                )
+            current_bytes = b""
+        elif mode in ("delete", "rename"):
+            current_bytes = self._read_existing(path, abs_path, exists)
+        else:
+            current_bytes = self._read_existing(path, abs_path, exists)
+            if not expected_version:
+                raise OumvError(
+                    VALIDATION_FAILED,
+                    "VALIDATION_FAILED: expectedVersion is required to preview an edit of an existing file",
+                    {"reason": "expected_version_required", "path": path, "current": self._hash_bytes(current_bytes)},
+                )
+            current_version = self._hash_bytes(current_bytes)
+            if expected_version != current_version:
+                raise OumvError(
+                    CONFLICT_DETECTED,
+                    f"CONFLICT_DETECTED: version mismatch: expected {expected_version}, current is {current_version}",
+                    {"reason": "version_mismatch", "path": path},
+                )
+        replacement = item.get("replacement")
+        if replacement is None:
+            replacement = item.get("source") or ""
+        new_text = str(replacement)
+        syntax = self._syntax_check(abs_path or (self._project_root_abs() or ".") + "/preview.tmp", new_text)
+        current_text = current_bytes.decode("utf-8", errors="replace")
+        new_version = self._hash_bytes(new_text.encode("utf-8"))
+        diff = ""
+        if current_text != new_text:
+            diff = "".join(
+                difflib.unified_diff(
+                    current_text.splitlines(keepends=True),
+                    new_text.splitlines(keepends=True),
+                    fromfile=f"a/{path}",
+                    tofile=f"b/{path}",
+                )
+            )[:16000]
+        return {
+            "path": path,
+            "mode": mode,
+            "unchanged": current_text == new_text,
+            "currentVersion": self._hash_bytes(current_bytes) if exists else None,
+            "newVersion": new_version,
+            "diff": diff,
+            "syntaxCheck": syntax,
+            "wouldApply": True,
+        }
+
+    def _read_existing(self, path: str, abs_path: Optional[str], exists: bool) -> bytes:
+        if not exists:
+            raise OumvError(
+                RESOURCE_NOT_FOUND,
+                f"RESOURCE_NOT_FOUND: file not found inside project root: {path}",
+                {"reason": "resource_not_found", "path": path},
+            )
+        with open(abs_path, "rb") as f:  # type: ignore[arg-type]
+            return f.read()
+
+    @staticmethod
+    def _hash_bytes(data: bytes) -> str:
+        return "sha256:" + hashlib.sha256(data).hexdigest()
+
+    async def handle_oumv_cancel(self, requestId: Optional[str] = None, target: Optional[str] = None, **kwargs) -> Dict[str, Any]:
+        """§3 best-effort cancellation: cooperative, never an error.
+
+        Handlers in this runtime are synchronous and fast, so nothing is
+        observably in-flight: a target:"last" call reports finished, an unknown
+        requestId reports not-cancelled — exactly the contract.
+        """
+        if target == "last":
+            return {"cancelled": False, "finished": True}
+        return {"cancelled": False, "requestId": requestId}
+
+    async def handle_oumv_index(self, query: str = "", kinds: Optional[List[str]] = None,
+                                scope: Optional[str] = None, limit: int = 25, **kwargs) -> Dict[str, Any]:
+        """§14.1 repo-wide symbol search over the Python AST."""
+        q = str(query or "").strip()
+        if not q:
+            raise OumvError(INVALID_PARAMS, "INVALID_PARAMS: query is required")
+        root_abs = self._project_root_abs() or "."
+        q_lower = q.lower()
+        kind_filter = {str(k).lower() for k in (kinds or [])}
+        scored: List[Tuple[int, Dict[str, Any]]] = []
+        total_files = 0
+        for dirpath, dirnames, filenames in os.walk(root_abs):
+            dirnames[:] = [d for d in dirnames if d not in {
+                ".git", "node_modules", ".venv", "venv", "__pycache__", ".tokensafe",
+                ".oumv", "dist", "build", ".pytest_cache", ".mypy_cache",
+            }]
+            for name in filenames:
+                if not name.endswith(".py"):
+                    continue
+                abs_path = os.path.join(dirpath, name)
+                rel = os.path.relpath(abs_path, root_abs).replace(os.sep, "/")
+                if scope and not rel.startswith(str(scope).lstrip("/")):
+                    continue
+                try:
+                    if os.path.getsize(abs_path) > 512 * 1024:
+                        continue
+                    with open(abs_path, "r", encoding="utf-8", errors="replace") as f:
+                        tree = ast.parse(f.read())
+                except Exception:
+                    continue
+                total_files += 1
+                for node in ast.walk(tree):
+                    kind = {
+                        ast.FunctionDef: "function",
+                        ast.AsyncFunctionDef: "function",
+                        ast.ClassDef: "class",
+                    }.get(type(node))
+                    if kind is None:
+                        continue
+                    name = node.name
+                    n_lower = name.lower()
+                    if q_lower == n_lower:
+                        rank = 0
+                    elif n_lower.startswith(q_lower):
+                        rank = 1
+                    elif q_lower in n_lower:
+                        rank = 2
+                    else:
+                        continue
+                    if kind_filter and kind not in kind_filter:
+                        continue
+                    signature = f"{name}(...)" if kind == "function" else name
+                    scored.append((rank, {
+                        "resourceId": f"{kind}:{name}@{rel}",
+                        "name": name,
+                        "kind": kind,
+                        "file": rel,
+                        "lines": [getattr(node, "lineno", 0), getattr(node, "end_lineno", getattr(node, "lineno", 0))],
+                        "signature": signature,
+                        "match": {0: "exact", 1: "prefix", 2: "substring"}[rank],
+                    }))
+        scored.sort(key=lambda pair: (pair[0], pair[1]["file"], pair[1]["name"]))
+        cap = max(1, min(int(limit or 25), 200))
+        matches = [entry for _rank, entry in scored[:cap]]
+        return {
+            "matches": matches,
+            "truncated": len(scored) > len(matches),
+            "totalMatches": len(scored),
+        }
+
+    async def handle_oumv_query(self, sql: str = "", params: Optional[List[Any]] = None,
+                                limit: int = 100, **kwargs) -> Dict[str, Any]:
+        """§14.2 runtime-enforced read-only data access (capability observeQuery.readOnly)."""
+        engine = self.db_sandbox._engine
+        if not self.db_sandbox.has_engine():
+            raise OumvError(
+                UNSUPPORTED_CAPABILITY,
+                "UNSUPPORTED_CAPABILITY: no database engine is wired into this runtime",
+                {"reason": "capability_not_advertised"},
+            )
+        statement = str(sql or "").strip().rstrip(";")
+        first = re.split(r"[\s(]+", statement, maxsplit=1)[0].upper() if statement else ""
+        if first not in ("SELECT", "EXPLAIN", "PRAGMA", "WITH"):
+            raise OumvError(
+                SECURITY_VIOLATION,
+                "SECURITY_VIOLATION: only SELECT/EXPLAIN/PRAGMA statements are accepted",
+                {"reason": "query_forbidden"},
+            )
+        from sqlalchemy import text as sa_text
+
+        target = getattr(engine, "sync_engine", engine)
+        cap = max(1, min(int(limit or 100), 1000))
+        with target.connect() as conn:
+            result = conn.execute(sa_text(statement), tuple(params or []))
+            columns = [str(c) for c in (result.keys() or [])]
+            rows = [list(r) for r in result.fetchmany(cap)]
+        return {
+            "columns": columns,
+            "rows": rows,
+            "rowCount": len(rows),
+            "truncated": len(rows) >= cap,
+        }
+
+    async def handle_oumv_build(self, command: Optional[str] = None, target: Optional[str] = None,
+                                timeoutMs: Optional[int] = None, **kwargs) -> Dict[str, Any]:
+        """§14.3 run the build/test command and return structured diagnostics."""
+        cmd = str(command or self.build_command or "").strip()
+        if not cmd:
+            return {
+                "status": "skipped",
+                "command": "none",
+                "diagnostics": [],
+                "skipReason": "no build command is configured for this runtime (set build_command or pass command)",
+            }
+        root_abs = self._project_root_abs() or "."
+        try:
+            argv = shlex.split(cmd)
+        except ValueError as exc:
+            return {
+                "status": "failed",
+                "command": cmd,
+                "diagnostics": [{"severity": "error", "source": "build", "message": f"unparseable command: {exc}", "reason": "invalid_command"}],
+            }
+        timeout_s = max(1.0, min(float(timeoutMs or 120000), 600000) / 1000.0)
+        started = time.perf_counter()
+        try:
+            proc = subprocess.run(  # noqa: S603 - operator-configured command
+                argv, cwd=root_abs, capture_output=True, text=True, timeout=timeout_s, check=False
+            )
+            returncode, stdout, stderr = proc.returncode, proc.stdout or "", proc.stderr or ""
+        except subprocess.TimeoutExpired:
+            return {
+                "status": "failed",
+                "command": cmd,
+                "diagnostics": [{"severity": "error", "source": "build", "message": f"build timed out after {int(timeout_s * 1000)} ms", "reason": "timeout", "tool": argv[0]}],
+                "durationMs": int((time.perf_counter() - started) * 1000),
+            }
+        duration_ms = int((time.perf_counter() - started) * 1000)
+        diagnostics: List[Dict[str, Any]] = []
+        for line in (stderr + "\n" + stdout).splitlines():
+            if not line.strip():
+                continue
+            low = line.lower()
+            severity = "error" if "error" in low or "failed" in low else ("warning" if "warn" in low else "info")
+            diagnostics.append({"severity": severity, "source": "build", "message": line[:500], "tool": argv[0]})
+            if len(diagnostics) >= 50:
+                break
+        # Wire 1.6.0: failures the build already observed flow on the push transports.
+        for diag in [d for d in diagnostics if d["severity"] == "error"][:20]:
+            self._publish_event("diagnostic", diag)
+        return {
+            "status": "passed" if returncode == 0 else "failed",
+            "command": cmd,
+            "diagnostics": diagnostics,
+            "durationMs": duration_ms,
+            "truncated": len(diagnostics) >= 50,
+        }
 
     def _apply_patch_edit(self, *, path: str, hunks: Any, expected_version: Optional[str]) -> Dict[str, Any]:
         """mode=patch (spec §4.3, wire 1.3.0): splice exact snippets under OCC.

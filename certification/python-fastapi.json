@@ -1,10 +1,10 @@
 {
   "adapterName": "python-fastapi",
   "framework": "fastapi",
-  "specVersion": "1.5.0",
-  "fixtureVersion": 10,
-  "total": 37,
-  "passed": 37,
+  "specVersion": "1.6.0",
+  "fixtureVersion": 11,
+  "total": 44,
+  "passed": 44,
   "failed": 0,
   "attainedLevel": 3,
   "levels": {
@@ -230,11 +230,53 @@
       "error": ""
     },
     {
+      "id": "preview-edit-does-not-write",
+      "level": 3,
+      "status": "passed",
+      "error": ""
+    },
+    {
+      "id": "apply-edit-idempotency-key-replays",
+      "level": 3,
+      "status": "passed",
+      "error": ""
+    },
+    {
+      "id": "cancel-unknown-request-id-is-not-an-error",
+      "level": 1,
+      "status": "passed",
+      "error": ""
+    },
+    {
+      "id": "index-returns-ranked-matches",
+      "level": 3,
+      "status": "passed",
+      "error": ""
+    },
+    {
+      "id": "query-read-only-select-answers-columns-rows",
+      "level": 3,
+      "status": "passed",
+      "error": ""
+    },
+    {
+      "id": "query-rejects-write-statement",
+      "level": 3,
+      "status": "passed",
+      "error": ""
+    },
+    {
+      "id": "build-returns-status-and-diagnostics",
+      "level": 3,
+      "status": "passed",
+      "error": ""
+    },
+    {
       "id": "expired-session-is-rejected",
       "level": 3,
       "status": "passed",
       "error": ""
     }
   ],
-  "generatedAt": "2026-11-27T12:58:31Z"
+  "generatedAt": "2026-11-27T19:48:25Z"
 }

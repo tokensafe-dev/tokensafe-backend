@@ -16,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
-SPEC_VERSION = "1.5.0"
+SPEC_VERSION = "1.6.0"
 
 
 @dataclass

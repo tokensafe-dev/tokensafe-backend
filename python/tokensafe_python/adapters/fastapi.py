@@ -245,11 +245,10 @@ class TokenSafeFastAPI:
                     session_id = state["session"]
                     if not session_id:
                         continue  # notifications start after handshake
-                    method = (
-                        "notifications/oumv.state"
-                        if event["type"] == "state"
-                        else "notifications/oumv.trace"
-                    )
+                    method = {
+                        "state": "notifications/oumv.state",
+                        "diagnostic": "notifications/oumv.diagnostic",
+                    }.get(event["type"], "notifications/oumv.trace")
                     params = dict(event["data"])
                     params["sessionId"] = session_id
                     async with send_lock:

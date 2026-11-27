@@ -100,13 +100,13 @@ async def test_conformance_certification(tmp_path):
     failures = [c for c in report["cases"] if c["status"] != "passed"]
     assert not failures, failures
     assert report["attainedLevel"] == 3, (report["attainedLevel"], report["levels"])
-    assert report["specVersion"] == "1.5.0"
+    assert report["specVersion"] == "1.6.0"
 
 
 def test_fixture_file_has_level_tagged_v6_shape():
     data = json.loads(FIXTURES.read_text(encoding="utf-8"))
-    assert data["fixtureVersion"] == 10
-    assert data["protocolVersion"] == "1.5.0"
+    assert data["fixtureVersion"] == 11
+    assert data["protocolVersion"] == "1.6.0"
     assert sorted(data["levelDefinitions"]) == ["1", "2", "3"]
     # Push cases belong to transport certificates; the native runners assert the
     # request/response suite and leave them to `oumv-certify --sse/--ws`.
