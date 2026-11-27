@@ -30,6 +30,7 @@ from tokensafe_python.protocol.errors import (
     RESOURCE_NOT_FOUND,
     UNSUPPORTED_CAPABILITY,
     VALIDATION_FAILED,
+    STALE_RESOURCE_VERSION,
     INTERNAL_ERROR,
 )
 from tokensafe_python.protocol.rpc import JSONRPCHandler
@@ -397,7 +398,66 @@ class OUMVRuntime:
         """Pillar 3A: source with the sha256 OCC token (same contract as Go)."""
         return self._read_source(path, symbol, start_line=startLine, end_line=endLine, if_version=ifVersion)
 
-    async def handle_observe(self, level: str = "L0", target: Optional[str] = None, limit: Optional[int] = None, cursor: Optional[str] = None, **kwargs) -> Dict[str, Any]:
+    _DIGEST_SKIP_DIRS = frozenset({
+        ".git", "node_modules", ".venv", "venv", "__pycache__", ".tokensafe",
+        ".oumv", "dist", "build", ".pytest_cache", ".mypy_cache", "target",
+    })
+
+    def workspace_digest(self) -> str:
+        """§8 result versioning (wire 1.6.0): a freshness token over the workspace
+        inventory (relative path, size, mtime). Any touched file changes it, so an
+        agent can learn exactly when foreign edits made a cached answer stale."""
+        root = self._project_root_abs() or "."
+        entries: List[str] = []
+        try:
+            for dirpath, dirnames, filenames in os.walk(root):
+                dirnames[:] = sorted(d for d in dirnames if d not in self._DIGEST_SKIP_DIRS)
+                for name in sorted(filenames):
+                    abs_path = os.path.join(dirpath, name)
+                    try:
+                        st = os.stat(abs_path)
+                    except OSError:
+                        continue
+                    rel = os.path.relpath(abs_path, root).replace(os.sep, "/")
+                    entries.append(f"{rel}:{st.st_size}:{int(st.st_mtime_ns)}")
+        except Exception:
+            pass
+        entries.sort()
+        return self._hash_bytes("\n".join(entries).encode("utf-8"))
+
+    async def handle_observe(self, ifVersion: Optional[str] = None, **kwargs) -> Dict[str, Any]:
+        """observe with the §8 ifVersion freshness handshake (wire 1.6.0)."""
+        digest = self.workspace_digest()
+        token = (ifVersion or "").strip()
+        if token:
+            if token != digest:
+                raise OumvError(
+                    STALE_RESOURCE_VERSION,
+                    f"STALE_RESOURCE_VERSION: the workspace changed since the caller's snapshot (expected {token}, current is {digest}) — refetch without ifVersion",
+                    {"reason": "stale_version", "current": digest, "expected": token},
+                )
+            return {"level": (kwargs.get("level") or "L0").upper(), "format": "json", "unchanged": True, "workspaceVersion": digest}
+        result = await self._observe_impl(**kwargs)
+        result["workspaceVersion"] = digest
+        return result
+
+    async def handle_understand(self, ifVersion: Optional[str] = None, **kwargs) -> Dict[str, Any]:
+        """understand with the §8 ifVersion freshness handshake (wire 1.6.0)."""
+        digest = self.workspace_digest()
+        token = (ifVersion or "").strip()
+        if token:
+            if token != digest:
+                raise OumvError(
+                    STALE_RESOURCE_VERSION,
+                    f"STALE_RESOURCE_VERSION: the workspace changed since the caller's snapshot (expected {token}, current is {digest}) — refetch without ifVersion",
+                    {"reason": "stale_version", "current": digest, "expected": token},
+                )
+            return {"query": kwargs.get("query") or "causality", "unchanged": True, "workspaceVersion": digest}
+        result = await self._understand_impl(**kwargs)
+        result["workspaceVersion"] = digest
+        return result
+
+    async def _observe_impl(self, level: str = "L0", target: Optional[str] = None, limit: Optional[int] = None, cursor: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         """Progressive context observation (L0 Pulse, L1 Surface, L2 Contract, L3 Source, L4 Traces).
 
         Returns the protocol envelope `{level, format, data, tokenEstimate}` so an
@@ -508,7 +568,7 @@ class OUMVRuntime:
             return items[start:end], True, str(end)
         return items[start:], False, ""
 
-    async def handle_understand(self, query: str = "causality", target: Optional[str] = None, **kwargs) -> Dict[str, Any]:
+    async def _understand_impl(self, query: str = "causality", target: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         """Understands runtime causality, why_state, or structural impact analysis.
 
         Causality is answered from recorded RPC traces when they exist and says so
