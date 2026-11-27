@@ -5,7 +5,7 @@
     <RootNamespace>TokenSafe.Oumv</RootNamespace>
     <AssemblyName>TokenSafe.Oumv</AssemblyName>
     <PackageId>TokenSafe.Oumv.AspNetCore</PackageId>
-    <Version>0.1.1</Version>
+    <Version>0.1.2</Version>
     <Authors>TokenSafe</Authors>
     <Description>OUMV (Universal Agent-Runtime Protocol) adapter for ASP.NET Core: observe, understand, mutate and verify minimal APIs and MVC controllers in-process, with JSON-RPC over HTTP, SSE and WebSocket.</Description>
     <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
