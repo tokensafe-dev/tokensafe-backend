@@ -99,9 +99,8 @@ func (r *Runtime) previewOne(item protocol.ApplyEditBatchItem) (*protocol.Previe
 	replacement := item.Replacement
 	syntax := &protocol.SyntaxCheck{Status: "skipped", Tool: "go-parser"}
 	if mode != "delete" && mode != "rename" && strings.HasSuffix(cleanPath, ".go") {
-		fset := token.NewFileSet()
-		if _, perr := parser.ParseFile(fset, cleanPath, replacement, parser.ParseComments); perr != nil {
-			syntax = &protocol.SyntaxCheck{Status: "failed", Tool: "go-parser", Error: perr.Error()}
+		if oerr := checkGoSyntax(cleanPath, replacement); oerr != nil {
+			syntax = &protocol.SyntaxCheck{Status: "failed", Tool: "go-parser", Error: oerr.Message}
 		} else {
 			syntax = &protocol.SyntaxCheck{Status: "passed", Tool: "go-parser"}
 		}

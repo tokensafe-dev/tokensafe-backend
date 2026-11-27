@@ -1338,12 +1338,33 @@ func annotateEditError(err *protocol.OumvError, index int, path string) *protoco
 }
 
 // checkGoSyntax runs the pre-flight parser over staged content.
+// checkGoSyntax runs the §4.3 syntax pre-flight for Go content. Conforming
+// agents may edit fragment-style files (fixture text, config-like sources that
+// lack a package clause), so a full-file parse failure caused ONLY by a missing
+// package clause falls back to parsing the content as a function body fragment —
+// the same leniency the Python/Node/PHP pre-flights show. Real syntax errors
+// still fail with -32002.
 func checkGoSyntax(path, content string) *protocol.OumvError {
 	fset := token.NewFileSet()
-	if _, parseErr := parser.ParseFile(fset, path, []byte(content), parser.AllErrors); parseErr != nil {
+	if _, parseErr := parser.ParseFile(fset, path, []byte(content), parser.AllErrors); parseErr == nil {
+		return nil
+	} else if !isPackageClauseError(parseErr) {
 		return protocol.NewSyntaxError(fmt.Sprintf("pre-flight syntax check failed: %v", parseErr), parseErr.Error())
 	}
+	wrapped := "package __oumv_fragment\n\nfunc __oumv_fragment() {\n" + content + "\n}\n"
+	if _, wrapErr := parser.ParseFile(fset, path, []byte(wrapped), parser.AllErrors); wrapErr != nil {
+		return protocol.NewSyntaxError(fmt.Sprintf("pre-flight syntax check failed: %v", wrapErr), wrapErr.Error())
+	}
 	return nil
+}
+
+// isPackageClauseError reports whether the parse failed because the content is
+// not a self-contained Go file (no package clause), not because it is broken.
+func isPackageClauseError(err error) bool {
+	if err == nil {
+		return false
+	}
+	return strings.Contains(err.Error(), "expected 'package'")
 }
 
 func (r *Runtime) applyEdit(ctx context.Context, params *protocol.ApplyEditParams) (*protocol.ApplyEditResult, *protocol.OumvError) {
@@ -1388,9 +1409,8 @@ func (r *Runtime) applyEdit(ctx context.Context, params *protocol.ApplyEditParam
 				map[string]string{"reason": "file_exists"},
 			)
 		}
-		fset := token.NewFileSet()
-		if _, parseErr := parser.ParseFile(fset, cleanPath, []byte(params.Replacement), parser.AllErrors); parseErr != nil {
-			return nil, protocol.NewSyntaxError(fmt.Sprintf("pre-flight syntax check failed: %v", parseErr), parseErr.Error())
+		if syntaxErr := checkGoSyntax(cleanPath, params.Replacement); syntaxErr != nil {
+			return nil, syntaxErr
 		}
 		if err := os.MkdirAll(filepath.Dir(cleanPath), 0o755); err != nil {
 			return nil, &protocol.OumvError{Code: protocol.ErrInternalError, Message: "failed to create directory: " + err.Error()}
@@ -1423,6 +1443,16 @@ func (r *Runtime) applyEdit(ctx context.Context, params *protocol.ApplyEditParam
 				map[string]string{"reason": "hunks_required"},
 			)
 		}
+		// §4.3 guard order: splice the hunks, syntax-check the RESULTING file
+		// (step 3), and only then assert the version rules (steps 4-5). Nothing
+		// is written until every guard passed.
+		patched, patchErr := applyHunks(string(currentData), params.Hunks)
+		if patchErr != nil {
+			return nil, patchErr
+		}
+		if syntaxErr := checkGoSyntax(cleanPath, patched); syntaxErr != nil {
+			return nil, syntaxErr
+		}
 		currentVersion := hashVersion(currentData)
 		if strings.TrimSpace(params.ExpectedVersion) == "" {
 			return nil, protocol.NewValidationFailedError(
@@ -1436,17 +1466,7 @@ func (r *Runtime) applyEdit(ctx context.Context, params *protocol.ApplyEditParam
 				map[string]string{"expected": params.ExpectedVersion, "current": currentVersion},
 			)
 		}
-		patched, patchErr := applyHunks(string(currentData), params.Hunks)
-		if patchErr != nil {
-			return nil, patchErr
-		}
-		fset := token.NewFileSet()
-		if _, parseErr := parser.ParseFile(fset, cleanPath, []byte(patched), parser.ParseComments); parseErr != nil {
-			return nil, protocol.NewSyntaxError(
-				fmt.Sprintf("pre-flight syntax check failed: %v", parseErr),
-				parseErr.Error(),
-			)
-		}
+		backupPath := r.backupPrevious(cleanPath, currentData)
 		if err := os.WriteFile(cleanPath, []byte(patched), 0644); err != nil {
 			return nil, &protocol.OumvError{
 				Code:    protocol.ErrInternalError,
@@ -1459,6 +1479,8 @@ func (r *Runtime) applyEdit(ctx context.Context, params *protocol.ApplyEditParam
 			NewVersion:   hashVersion([]byte(patched)),
 			SyntaxCheck:  &protocol.SyntaxCheck{Status: "passed", Tool: "go/parser"},
 			HunksApplied: len(params.Hunks),
+			BackupPath:   backupPath,
+			RollbackHint: orOmit(backupPath),
 			Success:      true,
 			Message:      fmt.Sprintf("%d hunk(s) applied", len(params.Hunks)),
 		}, nil
@@ -1572,6 +1594,8 @@ func (r *Runtime) applyEdit(ctx context.Context, params *protocol.ApplyEditParam
 		if r.patcher == nil {
 			return nil, &protocol.OumvError{Code: protocol.ErrUnsupportedCapability, Message: "UNSUPPORTED_CAPABILITY: symbol edits need the AST patcher"}
 		}
+		previous, _ := os.ReadFile(cleanPath)
+		backupPath := r.backupPrevious(cleanPath, previous)
 		patcher := mutate.NewPatcher(r.workspaceDir)
 		patchRes, patchErr := patcher.ApplySymbolPatch(params.Path, params.Symbol, params.Replacement, params.ExpectedVersion)
 		if patchErr != nil {
@@ -1583,6 +1607,8 @@ func (r *Runtime) applyEdit(ctx context.Context, params *protocol.ApplyEditParam
 			Symbol:       params.Symbol,
 			NewVersion:   patchRes.NewVersion,
 			SyntaxCheck:  &protocol.SyntaxCheck{Status: "passed", Tool: "go/parser"},
+			BackupPath:   backupPath,
+			RollbackHint: orOmit(backupPath),
 			Success:      true,
 			LinesChanged: patchRes.LinesChanged,
 		}, nil
@@ -1603,8 +1629,14 @@ func (r *Runtime) applyEdit(ctx context.Context, params *protocol.ApplyEditParam
 	currentHash := sha256.Sum256(currentData)
 	currentVersion := "sha256:" + hex.EncodeToString(currentHash[:])
 
-	// 1. Mandatory OCC: every edit of an existing file must name the version it was
-	// based on. Without this a blind write can silently clobber a concurrent change.
+	// §4.3 guard order: syntax pre-flight (step 3) runs before the version rules
+	// (steps 4-5), matching the normative table and the other runtimes.
+	if syntaxErr := checkGoSyntax(cleanPath, params.Replacement); syntaxErr != nil {
+		return nil, syntaxErr
+	}
+
+	// 4. expectedVersion presence: every edit of an existing file must name the
+	// version it was based on, so a blind write can never clobber a concurrent change.
 	if strings.TrimSpace(params.ExpectedVersion) == "" {
 		return nil, protocol.NewValidationFailedError(
 			"VALIDATION_FAILED: expectedVersion is required to edit an existing file — call oumv/getSource (or observe L3) and pass its version",
@@ -1612,7 +1644,7 @@ func (r *Runtime) applyEdit(ctx context.Context, params *protocol.ApplyEditParam
 		)
 	}
 
-	// 2. Optimistic Concurrency Control (OCC) guard
+	// 5. Optimistic Concurrency Control (OCC) guard
 	if params.ExpectedVersion != currentVersion {
 		return nil, protocol.NewConflictError(
 			fmt.Sprintf("version mismatch: expected %s, current is %s", params.ExpectedVersion, currentVersion),
@@ -1620,17 +1652,8 @@ func (r *Runtime) applyEdit(ctx context.Context, params *protocol.ApplyEditParam
 		)
 	}
 
-	// 3. Pre-flight Syntax Guard: Parse in-memory before writing to disk
-	fset := token.NewFileSet()
-	_, parseErr := parser.ParseFile(fset, cleanPath, []byte(params.Replacement), parser.AllErrors)
-	if parseErr != nil {
-		return nil, protocol.NewSyntaxError(
-			fmt.Sprintf("pre-flight syntax check failed: %v", parseErr),
-			parseErr.Error(),
-		)
-	}
-
-	// 4. Write validated content to disk
+	// 6. Backup the previous bytes, then write validated content to disk.
+	backupPath := r.backupPrevious(cleanPath, currentData)
 	if err := os.WriteFile(cleanPath, []byte(params.Replacement), 0644); err != nil {
 		return nil, &protocol.OumvError{
 			Code:    protocol.ErrInternalError,
@@ -1647,6 +1670,8 @@ func (r *Runtime) applyEdit(ctx context.Context, params *protocol.ApplyEditParam
 		Symbol:       params.Symbol,
 		NewVersion:   newVersion,
 		SyntaxCheck:  &protocol.SyntaxCheck{Status: "passed", Tool: "go/parser"},
+		BackupPath:   backupPath,
+		RollbackHint: orOmit(backupPath),
 		Success:      true,
 		LinesChanged: len(strings.Split(params.Replacement, "\n")),
 	}, nil
@@ -2090,6 +2115,31 @@ func occurrenceDetails(region, target string, lineOffset int) []Occurrence {
 func hashVersion(data []byte) string {
 	sum := sha256.Sum256(data)
 	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// backupPrevious copies the current bytes into .tokensafe/backups before a
+// destructive edit (spec §8: automatic backup of previous content). The path
+// is reported as `backupPath` with a `rollbackHint`; failures are non-fatal —
+// a backup that cannot be written must not block the guarded edit itself.
+func (r *Runtime) backupPrevious(cleanPath string, previous []byte) string {
+	if len(previous) == 0 {
+		return ""
+	}
+	sum := sha256.Sum256(previous)
+	backupDir := filepath.Join(r.workspaceDir, ".tokensafe", "backups")
+	if err := os.MkdirAll(backupDir, 0o755); err != nil {
+		return ""
+	}
+	name := fmt.Sprintf("%s_%s.bak", hex.EncodeToString(sum[:])[:8], filepath.Base(cleanPath))
+	backupPath := filepath.Join(backupDir, name)
+	if err := os.WriteFile(backupPath, previous, 0o644); err != nil {
+		return ""
+	}
+	rel, err := filepath.Rel(r.workspaceDir, backupPath)
+	if err != nil {
+		return backupPath
+	}
+	return filepath.ToSlash(rel)
 }
 
 // pageBounds implements the §4.1 limit/cursor contract: a negative or absent limit
