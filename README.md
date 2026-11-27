@@ -3,24 +3,26 @@
 **The Universal Agent-Runtime Protocol: Observe · Understand · Mutate · Verify**
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/tokensafe-dev/tokensafe-backend/go)](https://goreportcard.com/report/github.com/tokensafe-dev/tokensafe-backend/go)
-[![Protocol Specification](https://img.shields.io/badge/OUMV-v1.4--canonical-orange)](https://github.com/tokensafe-dev/oumv/blob/main/spec/SPEC.md)
-[![OUMV conformance](https://img.shields.io/badge/OUMV-certified_L3_%C2%B7_6_adapters-10B981)](#certified-adapters)
+[![Protocol Specification](https://img.shields.io/badge/OUMV-v1.8--canonical-orange)](https://github.com/tokensafe-dev/oumv/blob/main/spec/SPEC.md)
+[![OUMV conformance](https://img.shields.io/badge/OUMV-certified_L3_%C2%B7_7_adapters-10B981)](#certification-spec-10)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
 > `tokensafe-backend` is the unified backend repository for the **OUMV (Observe, Understand, Mutate, Verify)** protocol. It houses backend runtime instrumentation and adapters across major server-side technologies:
-> - **Go (`go/`)**: Native Go runtime & adapters for Gin, Chi, and `net/http` (`github.com/tokensafe-dev/tokensafe-backend/go`); `oumv.ListenAndServe` writes the §9.2 discovery descriptor with the real bound port.
-> - **Python (`python/`)**: Python runtime & FastAPI adapter, published as `tokensafe-backend-python`; HTTP + SSE + WebSocket + stdio.
-> - **Node.js (`node/`)**: `tokensafe-backend-node` — Express and Fastify adapters over HTTP, SSE, WebSocket and stdio, certified Level 3 (20/20).
+> - **Go (`go/`)**: adapters for Gin, Chi and `net/http` (`github.com/tokensafe-dev/tokensafe-backend/go`); one `AutoMount` line, JSON-RPC + SSE + WebSocket + stdio.
+> - **Python (`python/`)**: FastAPI adapter published as `tokensafe-backend-python`; HTTP + SSE + WebSocket + stdio, SQLAlchemy rollback sandbox.
+> - **Node.js (`node/`)**: `tokensafe-backend-node` — Express and Fastify over HTTP, SSE, WebSocket and stdio.
+> - **.NET (`dotnet/`)**: `TokenSafe.Oumv.AspNetCore` — minimal APIs and MVC controllers on `net8.0`/`net10.0`, in-process endpoint dispatch and an EF Core rollback sandbox that discovers `DbContext`s from DI.
+> - **Sidecars (`java/`, `php/`)**: single-file Spring and Laravel/Symfony adapters for projects that cannot take a library dependency (Level 2: no live traces).
 
 ---
 
 ## Highlights
 
-- **✅ Certified OUMV adapters (spec §10)**: Gin, Chi, `net/http`, FastAPI, Express and Fastify each pass the language-neutral conformance suite over their real transport — Level 3, reports committed under [`certification/`](certification/) and reproduced in CI. Exact counts are generated below.
+- **✅ Certified OUMV adapters (spec §10)**: Gin, Chi, `net/http`, FastAPI, Express, Fastify and ASP.NET Core each pass the language-neutral conformance suite over their real transport — Level 3, reports committed under [`certification/`](certification/) and reproduced in CI. Spring and PHP sidecars certify Level 2 and name their single missing case. Exact counts are generated below.
 - **🛡️ In-Memory Compiler Pre-Flight Guard**: AST-guided symbol edits validated in memory via `go/parser` and `go/types` in <5ms—blocking non-compiling edits before touching the disk.
 - **🔄 Zero Database Pollution**: In-memory transactional dry-runs (`net/http/httptest` + `pkg/db`) execute with guaranteed `ROLLBACK`, eliminating state contamination across test cycles.
 - **🔍 Progressive Context Disclosure (L0–L4)**: Replaces 3,000+ token file crawls with compact pulse (`L0`, ~20 tokens), endpoint surfaces (`L1`, ~110 tokens), and reflected schemas (`L2`, ~60 tokens).
-- **🧩 Dual-Layer Architecture**: Use the native type-safe framework (`tokensafe.New()`) for greenfield services, or mount compatibility adapters (`Gin`, `Chi`, `net/http`) in 2 lines of code.
+- **🧩 Adapters first**: every supported stack mounts a thin adapter and keeps its own framework — one line for Go, Node, Python and ASP.NET Core, nothing written into the repo for React/Vue. The native Go core (`tokensafe.New()`) stays as a reference implementation for tests and examples, not as the recommended path.
 
 ---
 
@@ -69,7 +71,7 @@ Transport certificates run the same suite over the optional bindings, plus the f
 | [transports/python-stdio.json](certification/transports/python-stdio.json) | `python-stdio` | stdio | 36/36 |
 <!-- certification:end -->
 
-Levels are cumulative and a skipped case never counts as a pass — a missing capability caps the claim instead of inflating it. The transport certificates above cover **stdio** (§2.5) plus the optional **SSE** (§2.3) and **WebSocket** (§2.4) bindings on both Node adapters; those four runs include the fixture v8 push cases and are Level 3, 34/34. Regenerate locally:
+Levels are cumulative and a skipped case never counts as a pass — a missing capability caps the claim instead of inflating it. The transport certificates above cover **stdio** (§2.5) plus the optional **SSE** (§2.3) and **WebSocket** (§2.4) bindings for Go net/http, Node Express/Fastify, Python FastAPI and ASP.NET Core; those runs include the push cases (SSE `state` with `Last-Event-ID` replay, WS `notifications/oumv.state`) and are Level 3, 38/38. Regenerate locally:
 
 ```bash
 # Go adapters (writes certification/*.json)
@@ -84,6 +86,9 @@ cd node && CERT_OUT_DIR=../certification OUMV_REPO=../../agent-oumv pnpm test
 # Spring (JDK-only sidecar) and Laravel/Symfony (PHP sidecar) — Level 2, stdio
 cd java && ./certify.sh
 cd ../php && ./certify.sh
+
+# ASP.NET Core — HTTP, SSE and WS certificates (builds certapp, net10 SDK)
+cd ../dotnet && ./certify.sh
 ```
 
 ---
@@ -98,16 +103,17 @@ cd ../php && ./certify.sh
 
 ---
 
-## Architecture: Native Core + Compatibility Adapters
+## Architecture: one runtime, thin adapters
 
-`tokensafe-backend` provides a dual-layer architecture:
+Every adapter mounts the same runtime and the same wire contract; none of them asks a
+team to migrate a framework.
 
-1. **Native Agent-First Core Framework**: For new services, providing type-safe generic routing, automatic DTO reflection, transactional DB sandboxes, and zero-configuration OUMV live RPC.
-2. **Compatibility Adapters (`pkg/adapters/*`)**: For existing Go services built on Gin, Chi, or standard `net/http`, mounting OUMV introspection in 2 lines of code.
+1. **Compatibility adapters** are the supported path: `pkg/adapters/*` (Go), `mount_tokensafe` (FastAPI), `mountTokensafe` (Express/Fastify), `UseTokensafe()` (ASP.NET Core), plus the Spring/PHP sidecars. They introspect the framework's own route table and serve the protocol from inside the app.
+2. **The native Go core** (`tokensafe.New()`, `app.Simulate`) remains as a reference implementation used by tests and examples; new services should mount an adapter.
 
 ---
 
-## Quickstart (Native Framework)
+## Quickstart (native Go core, reference only)
 
 ```go
 package main
@@ -211,11 +217,36 @@ def list_products():
 
 ---
 
+## Quickstart: ASP.NET Core (`dotnet/`)
+
+```csharp
+var builder = WebApplication.CreateBuilder(args);
+builder.Services.AddControllers();
+builder.Services.AddTokensafe();   // scans DI for DbContexts → enables verify.sandbox
+
+var app = builder.Build();
+app.UseWebSockets();
+app.UseTokensafe();                // JSON-RPC /__oumv/rpc, SSE /__oumv/events
+
+app.MapGet("/api/v1/orders", (AppDbContext db) => Results.Json(db.Orders.ToList()));
+app.MapControllers();
+app.Run();
+```
+
+Minimal APIs and controllers are both reached through the app's `EndpointDataSource`, so
+`observe L1/L2` and `verify` see one route table. `oumv/verify` runs the endpoint's real
+`RequestDelegate` on a synthetic `HttpContext` — model binding, filters and DI included,
+no network hop. With `AddTokensafe()` present, a sandboxed verify opens one transaction
+per discovered `DbContext`, dispatches with `X-TokenSafe-Dry-Run: true`, rolls back, and
+reports `rollbackStatus: "verified"` only when the rollback was observed.
+
+---
+
 ## Installation
 
 ### Go Runtime (`go/`)
 ```bash
-go get github.com/tokensafe-dev/tokensafe-backend/go@v0.4.0
+go get github.com/tokensafe-dev/tokensafe-backend/go@v0.8.0
 ```
 `go/` is a nested module, so it resolves against `go/vX.Y.Z` tags (the release
 workflow creates them alongside every `vX.Y.Z` release tag). A plain `vX.Y.Z`
@@ -230,13 +261,26 @@ pip install ./python
 pip install "tokensafe-backend @ git+https://github.com/tokensafe-dev/tokensafe-backend.git#subdirectory=python"
 ```
 
+### .NET (`dotnet/`)
+```bash
+dotnet add package TokenSafe.Oumv.AspNetCore
+```
+Targets `net8.0` and `net10.0`. `tokensafe inject` adds the package and the
+`AddTokensafe()`/`UseTokensafe()` pair between markers, validates with `dotnet build`, and
+reverts byte for byte on failure.
+
+### Node (`node/`)
+```bash
+npm install tokensafe-backend-node
+```
+
 ---
 
 ## Benchmarks — what is measured and what is not
 
 | Run | Result | Evidence |
 | :--- | :--- | :--- |
-| Conformance | 6 adapters at Level 3, 25/25 each | `certification/*.json`, regenerated in CI |
+| Conformance | 7 adapters at Level 3, 37/37 each | `certification/*.json`, regenerated in CI |
 | Three-arm, order-processing sandbox | `oumv` arm **measured** (740 payload tokens, 5 round trips, oracle 12/12) vs `baseline` **simulated** (33,960 trace tokens, 6 turns, 12/12) | [THREE_ARM_REPORT.md](go/benchmark/THREE_ARM_REPORT.md) |
 | Agent benchmark (DeepSeek, real agent) | **Go, 3 arms: OUMV 9/9, −45.8% input tokens / −33.1% cost vs baseline; TokenSafe-tools arm 7/9** | [OUMV_AGENT_MATRIX.md](go/benchmark/OUMV_AGENT_MATRIX.md) |
 
