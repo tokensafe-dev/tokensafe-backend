@@ -361,7 +361,78 @@ export class OumvRuntime {
 
   /* ----------------------------------------------------------------- observe */
 
+  /**
+   * §8 result versioning (wire 1.6.0): a freshness token over the workspace
+   * inventory (relative path, size, mtime). Any touched file changes it, so an
+   * agent can learn exactly when foreign edits made a cached answer stale.
+   */
+  workspaceDigest(): string {
+    const entries: string[] = [];
+    const SKIP = new Set(['.git', 'node_modules', '.venv', 'venv', '__pycache__', '.tokensafe', '.oumv', 'dist', 'build', '.pytest_cache', 'coverage', '.next']);
+    const walk = (dir: string): void => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (entry.isDirectory()) {
+          if (!SKIP.has(entry.name)) walk(path.join(dir, entry.name));
+          continue;
+        }
+        let stat: fs.Stats;
+        try {
+          stat = fs.statSync(path.join(dir, entry.name));
+        } catch {
+          continue;
+        }
+        const rel = path.relative(this.workspaceDir, path.join(dir, entry.name)).split(path.sep).join('/');
+        entries.push(`${rel}:${stat.size}:${stat.mtimeMs}`);
+      }
+    };
+    try {
+      walk(this.workspaceDir);
+    } catch {
+      // An unreadable workspace still yields a stable (short) digest.
+    }
+    entries.sort();
+    return sha256(entries.join('\n'));
+  }
+
+  /** observe with the §8 ifVersion freshness handshake (wire 1.6.0). */
   observe(params: Record<string, any> = {}): Record<string, unknown> {
+    const digest = this.workspaceDigest();
+    const token = String(params?.ifVersion ?? '').trim();
+    if (token) {
+      if (token !== digest) {
+        throw new OumvError(ERROR_CODES.STALE_RESOURCE_VERSION, `STALE_RESOURCE_VERSION: the workspace changed since the caller's snapshot (expected ${token}, current is ${digest}) — refetch without ifVersion`, {
+          reason: 'stale_version',
+          current: digest,
+          expected: token,
+        });
+      }
+      return { level: String(params?.level ?? 'L0').toUpperCase(), format: 'json', unchanged: true, workspaceVersion: digest };
+    }
+    const result = this.observeUncached(params) as Record<string, unknown>;
+    result.workspaceVersion = digest;
+    return result;
+  }
+
+  /** understand with the §8 ifVersion freshness handshake (wire 1.6.0). */
+  understand(params: Record<string, any> = {}): Record<string, unknown> {
+    const digest = this.workspaceDigest();
+    const token = String(params?.ifVersion ?? '').trim();
+    if (token) {
+      if (token !== digest) {
+        throw new OumvError(ERROR_CODES.STALE_RESOURCE_VERSION, `STALE_RESOURCE_VERSION: the workspace changed since the caller's snapshot (expected ${token}, current is ${digest}) — refetch without ifVersion`, {
+          reason: 'stale_version',
+          current: digest,
+          expected: token,
+        });
+      }
+      return { query: String(params?.query ?? 'causality'), unchanged: true, workspaceVersion: digest };
+    }
+    const result = this.understandUncached(params) as Record<string, unknown>;
+    result.workspaceVersion = digest;
+    return result;
+  }
+
+  private observeUncached(params: Record<string, any> = {}): Record<string, unknown> {
     if (!this.enabled.observe) throw permissionDenied('PERMISSION_DENIED: observe capability is disabled');
     const level = String(params.level || 'L0').toUpperCase() as ObserveLevel;
     const format = String(params.format || 'json').toLowerCase();
@@ -461,7 +532,7 @@ export class OumvRuntime {
 
   /* -------------------------------------------------------------- understand */
 
-  understand(params: Record<string, any> = {}): Record<string, unknown> {
+  private understandUncached(params: Record<string, any> = {}): Record<string, unknown> {
     if (!this.enabled.understand) throw permissionDenied('PERMISSION_DENIED: understand capability is disabled');
     const query = String(params.query || 'causality');
     const target = String(params.target || '').trim();

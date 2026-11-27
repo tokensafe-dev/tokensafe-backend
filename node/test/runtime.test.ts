@@ -264,4 +264,40 @@ describe('OumvRuntime core', () => {
     const handshake: any = runtime.handshake({});
     expect(handshake.capabilities.verify.sandboxRollback).toBe(false);
   });
+
+  describe('§8 result versioning (wire 1.6.0)', () => {
+    it('carries a workspace digest and answers ifVersion honestly', () => {
+      const workspace = createWorkspace();
+      cleanup = workspace.cleanup;
+      const runtime = new OumvRuntime({ workspaceDir: workspace.dir });
+
+      const observed: any = runtime.observe({ level: 'L0' });
+      const digest = observed.workspaceVersion;
+      expect(digest).toMatch(/^sha256:[a-f0-9]{64}$/);
+
+      // Match: the cached copy is fresh, so the answer is the short envelope.
+      const short: any = runtime.observe({ level: 'L1', ifVersion: digest });
+      expect(short.unchanged).toBe(true);
+      expect(short.workspaceVersion).toBe(digest);
+
+      // A touched file invalidates the caller's token with -32010.
+      fs.writeFileSync(path.join(workspace.dir, 'touched.js'), 'export const v = 1;\n');
+      const fresh: any = runtime.observe({ level: 'L0' });
+      expect(fresh.workspaceVersion).not.toBe(digest);
+      expect(() => runtime.observe({ level: 'L0', ifVersion: digest })).toThrowError(/STALE_RESOURCE_VERSION/);
+      try {
+        runtime.observe({ level: 'L0', ifVersion: digest });
+      } catch (err: any) {
+        expect(err.code).toBe(-32010);
+        expect(err.data.reason).toBe('stale_version');
+        expect(err.data.current).toBe(fresh.workspaceVersion);
+      }
+
+      const understood: any = runtime.understand({ query: 'causality' });
+      expect(understood.workspaceVersion).toBe(fresh.workspaceVersion);
+      const uShort: any = runtime.understand({ query: 'causality', ifVersion: fresh.workspaceVersion });
+      expect(uShort.unchanged).toBe(true);
+    });
+  });
+
 });
