@@ -74,6 +74,16 @@ export class Dispatcher {
           return success(id, this.runtime.getSource(params));
         case 'oumv/applyEdit':
           return success(id, this.runtime.applyEdit(params));
+        case 'oumv/previewEdit':
+          return success(id, this.runtime.previewEdit(params));
+        case 'oumv/cancel':
+          return success(id, this.runtime.cancel(params));
+        case 'oumv/index':
+          return success(id, this.runtime.index(params));
+        case 'oumv/query':
+          return success(id, await this.runtime.query(params));
+        case 'oumv/build':
+          return success(id, await this.runtime.build(params));
         case 'oumv/verify':
           return success(id, await this.runtime.verify(params));
         default:

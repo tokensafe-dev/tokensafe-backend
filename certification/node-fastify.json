@@ -1,10 +1,10 @@
 {
   "adapterName": "node-fastify",
   "framework": "fastify",
-  "specVersion": "1.5.0",
-  "fixtureVersion": 10,
-  "total": 37,
-  "passed": 37,
+  "specVersion": "1.6.0",
+  "fixtureVersion": 11,
+  "total": 42,
+  "passed": 42,
   "failed": 0,
   "skipped": 0,
   "attainedLevel": 3,
@@ -195,12 +195,37 @@
       "status": "passed"
     },
     {
+      "id": "preview-edit-does-not-write",
+      "level": 3,
+      "status": "passed"
+    },
+    {
+      "id": "apply-edit-idempotency-key-replays",
+      "level": 3,
+      "status": "passed"
+    },
+    {
+      "id": "cancel-unknown-request-id-is-not-an-error",
+      "level": 1,
+      "status": "passed"
+    },
+    {
+      "id": "index-returns-ranked-matches",
+      "level": 3,
+      "status": "passed"
+    },
+    {
+      "id": "build-returns-status-and-diagnostics",
+      "level": 3,
+      "status": "passed"
+    },
+    {
       "id": "expired-session-is-rejected",
       "level": 3,
       "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-27T12:58:48.300Z",
+  "generatedAt": "2026-11-27T19:52:38.918Z",
   "environment": {
     "transport": "http",
     "node": "v24.14.0"

@@ -45,7 +45,10 @@ export function attachWebSocket(server: HttpServer, options: WsOptions): WsAttac
     // bound by `oumv/handshake`; `ws.send` serialises frames internally.
     const unsubscribe = runtime.subscribeEvents((event) => {
       if (!boundSession) return;
-      const method = event.type === 'state' ? 'notifications/oumv.state' : 'notifications/oumv.trace';
+      const method = {
+        state: 'notifications/oumv.state',
+        diagnostic: 'notifications/oumv.diagnostic',
+      }[event.type as string] ?? 'notifications/oumv.trace';
       try {
         ws.send(JSON.stringify({ jsonrpc: '2.0', method, params: { ...event.data, sessionId: boundSession } }));
       } catch {

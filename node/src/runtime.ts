@@ -18,7 +18,7 @@ import {
 import { resolveWorkspacePath, splitSourceTarget } from './paths.js';
 import { SessionRegistry } from './sessions.js';
 
-export const PROTOCOL_VERSION = '1.5.0';
+export const PROTOCOL_VERSION = '1.6.0';
 export const OBSERVE_LEVELS = ['L0', 'L1', 'L2', 'L3', 'L4'] as const;
 export type ObserveLevel = (typeof OBSERVE_LEVELS)[number];
 
@@ -43,12 +43,16 @@ export interface TraceEntry {
 export interface RuntimeCapabilities {
   observe: { levels: string[]; formats: string[] };
   understand: { causality: boolean; signalsGraph: boolean; impactAnalysis: boolean };
-  mutate: { occ: boolean; syntaxGuard: boolean; multiFile?: boolean };
-  verify: { multiMetric: boolean; surfaceDiff: boolean; sandboxRollback?: boolean };
-  /** §3 session lifecycle: true when the handshake honours `sessionTtlSeconds`. */
-  sessions?: { ttlSeconds?: boolean };
+  mutate: { occ: boolean; syntaxGuard: boolean; multiFile?: boolean; preview?: boolean };
+  verify: { multiMetric: boolean; surfaceDiff: boolean; sandboxRollback?: boolean; build?: boolean };
+  /** §3 session lifecycle (wire 1.5.0/1.6.0). */
+  sessions?: { ttlSeconds?: boolean; cancel?: boolean; idempotency?: boolean };
   /** Bindings this runtime actually mounted (spec §2.3/§2.4). */
   transports?: string[];
+  /** Wire 1.6.0 optional extensions (§14) + push diagnostics (§2.6). */
+  index?: { symbols?: boolean };
+  observeQuery?: { readOnly?: boolean };
+  events?: { diagnostic?: boolean };
 }
 
 /**
@@ -59,6 +63,12 @@ export interface RuntimeCapabilities {
 export interface VerifySandboxHook {
   db?: {
     run<T>(fn: () => Promise<T> | T): Promise<{ result: T; rolledBack: boolean; queries?: number }>;
+    /**
+     * §14.2 read-only data access (wire 1.6.0). The adopter supplies the query;
+     * the runtime additionally enforces the SELECT/EXPLAIN/PRAGMA/WITH prefix,
+     * but the connection itself should be read-only too.
+     */
+    query?(sql: string, params?: unknown[], limit?: number): Promise<{ columns: string[]; rows: unknown[][] }>;
   };
 }
 
@@ -80,6 +90,8 @@ export interface OumvRuntimeOptions {
   maxBodyBytes?: number;
   /** Optional database sandbox; advertises verify.sandboxRollback when present. */
   sandbox?: VerifySandboxHook;
+  /** §14.3 default build command (wire 1.6.0). */
+  buildCommand?: string;
 }
 
 export interface VerifyScope {
@@ -143,7 +155,7 @@ function replaceLines(source: string, startLine: number, endLine: number, replac
 /** One server-pushed event on SSE/WS (spec §2.3/§2.4); ids are monotonic. */
 export interface StreamEvent {
   id: number;
-  type: 'trace' | 'state';
+  type: 'trace' | 'state' | 'diagnostic';
   timestamp: string;
   data: Record<string, unknown>;
 }
@@ -169,6 +181,10 @@ export class OumvRuntime {
   private readonly enabled: { observe: boolean; understand: boolean; mutate: boolean; verify: boolean };
   private transports: string[] = ['http'];
   private readonly sandbox?: VerifySandboxHook;
+  /** §14.3 default build command; `params.command` overrides per call. */
+  buildCommand?: string;
+  /** §3 idempotency replay map (wire 1.6.0). */
+  private readonly idempotency: Map<string, Record<string, unknown>>;
   private handler?: http.RequestListener;
   private dispatchServer?: http.Server;
   private dispatchPort = 0;
@@ -189,6 +205,10 @@ export class OumvRuntime {
     this.maxBodyBytes = options.maxBodyBytes ?? 8 * 1024 * 1024;
     this.authToken = options.authToken || '';
     this.sandbox = options.sandbox;
+    // §14.3 configured build command; a params.command override is honoured per call.
+    this.buildCommand = options.buildCommand;
+    // §3 idempotency (wire 1.6.0): session-scoped key -> first final result.
+    this.idempotency = new Map<string, Record<string, unknown>>();
     this.sessions = new SessionRegistry(options.sessionTtlSeconds ?? 3600);
     this.handler = options.handler;
     this.enabled = {
@@ -282,7 +302,7 @@ export class OumvRuntime {
       const [majorRaw, minorRaw] = requestedVersion.split('.');
       const major = Number(majorRaw);
       const minor = Number(minorRaw);
-      if (!Number.isInteger(major) || !Number.isInteger(minor) || major !== 1 || minor > 5) {
+      if (!Number.isInteger(major) || !Number.isInteger(minor) || major !== 1 || minor > 6) {
         throw unsupported(
           `UNSUPPORTED_CAPABILITY: protocol version ${requestedVersion} (this runtime serves ${PROTOCOL_VERSION})`,
         );
@@ -291,17 +311,27 @@ export class OumvRuntime {
     const capabilities: RuntimeCapabilities = {
       observe: { levels: [...OBSERVE_LEVELS], formats: ['json'] },
       understand: { causality: true, signalsGraph: false, impactAnalysis: true },
-      mutate: { occ: true, syntaxGuard: true, multiFile: true },
-      verify: { multiMetric: true, surfaceDiff: false, sandboxRollback: Boolean(this.sandbox?.db) },
-      sessions: { ttlSeconds: true },
+      mutate: { occ: true, syntaxGuard: true, multiFile: true, preview: true },
+      verify: {
+        multiMetric: true,
+        surfaceDiff: false,
+        sandboxRollback: Boolean(this.sandbox?.db),
+        build: true,
+      },
+      index: { symbols: true },
+      observeQuery: { readOnly: Boolean(this.sandbox?.db?.query) },
+      sessions: { ttlSeconds: true, cancel: true, idempotency: true },
       transports: [...this.transports],
     };
     if (!this.enabled.understand) {
       capabilities.understand = { causality: false, signalsGraph: false, impactAnalysis: false };
     }
-    if (!this.enabled.mutate) capabilities.mutate = { occ: false, syntaxGuard: false, multiFile: false };
+    if (!this.enabled.mutate) capabilities.mutate = { occ: false, syntaxGuard: false, multiFile: false, preview: false };
     if (!this.enabled.verify) {
-      capabilities.verify = { multiMetric: false, surfaceDiff: false, sandboxRollback: false };
+      capabilities.verify = { multiMetric: false, surfaceDiff: false, sandboxRollback: false, build: false };
+      capabilities.index = { symbols: false };
+      capabilities.observeQuery = { readOnly: false };
+      capabilities.sessions = { ttlSeconds: false, cancel: false, idempotency: false };
     }
 
     // §3.1: narrow to the client's request; an empty intersection stays empty.
@@ -564,6 +594,237 @@ export class OumvRuntime {
   }
 
   applyEdit(params: Record<string, any> = {}): Record<string, unknown> {
+    // §3 idempotency (wire 1.6.0): a retry with the same key replays the first result.
+    const idemKey = this.idempotencyKey(params);
+    if (idemKey && this.idempotency.has(idemKey)) {
+      return this.idempotency.get(idemKey) as Record<string, unknown>;
+    }
+    const result = this.applyEditUncached(params);
+    if (idemKey && result && result.status === 'APPLIED') {
+      this.idempotency.set(idemKey, result);
+    }
+    return result;
+  }
+
+  private idempotencyKey(params: Record<string, any>): string | undefined {
+    const key = params.idempotencyKey;
+    if (!key) return undefined;
+    return `${String(params.sessionId ?? 'default')}:${String(key)}`;
+  }
+
+  /** §3 best-effort cancellation: nothing here is observably in-flight (§3 contract). */
+  cancel(params: Record<string, any> = {}): Record<string, unknown> {
+    if (params.target === 'last') return { cancelled: false, finished: true };
+    return { cancelled: false, requestId: params.requestId };
+  }
+
+  /** §4.4 dry-run: applyEdit's guard order, no bytes written, diff optional. */
+  previewEdit(params: Record<string, any> = {}): Record<string, unknown> {
+    if (!this.enabled.mutate) throw permissionDenied('PERMISSION_DENIED: mutate capability is disabled');
+    const idemKey = this.idempotencyKey(params);
+    if (idemKey && this.idempotency.has(idemKey)) {
+      return this.idempotency.get(idemKey) as Record<string, unknown>;
+    }
+    const items: Array<Record<string, any>> = Array.isArray(params.edits) && params.edits.length > 0
+      ? params.edits
+      : [params];
+    if (items.length > 16) {
+      throw validationFailed('VALIDATION_FAILED: batch must hold 1..16 items', { reason: 'batch_size' });
+    }
+    const previews = items.map((item) => this.previewOne(item));
+    const result: Record<string, unknown> = { status: 'PREVIEW', applied: false, previews };
+    if (idemKey) this.idempotency.set(idemKey, result);
+    return result;
+  }
+
+  private previewOne(item: Record<string, any>): Record<string, unknown> {
+    const rel = String(item?.path ?? item?.filePath ?? '').trim();
+    if (!rel) throw invalidParams('INVALID_PARAMS: path is required');
+    const resolved = resolveWorkspacePath(rel, this.workspaceDir);
+    const mode = String(item?.mode ?? 'replace').toLowerCase();
+    if (!['replace', 'create', 'patch', 'symbol', 'delete', 'rename'].includes(mode)) {
+      throw unsupported(`UNSUPPORTED_CAPABILITY: unknown preview mode ${JSON.stringify(mode)}`);
+    }
+    const expectedVersion = String(item?.expectedVersion ?? '').trim();
+    const exists = fs.existsSync(resolved) && fs.statSync(resolved).isFile();
+    if (mode === 'create') {
+      if (expectedVersion) {
+        throw validationFailed('VALIDATION_FAILED: expectedVersion must be omitted for mode=create', {
+          reason: 'create_forbids_version',
+          path: rel,
+        });
+      }
+      if (exists) {
+        throw conflict('CONFLICT_DETECTED: file already exists; use mode=replace with its version', {
+          reason: 'file_exists',
+          path: rel,
+        });
+      }
+    } else {
+      if (!exists) throw resourceNotFound(`RESOURCE_NOT_FOUND: ${rel}`);
+      const current = fs.readFileSync(resolved, 'utf-8');
+      const currentVersion = sha256(current);
+      if (!expectedVersion) {
+        throw validationFailed('VALIDATION_FAILED: expectedVersion is required to preview an edit of an existing file', {
+          reason: 'expected_version_required',
+          path: rel,
+          current: currentVersion,
+        });
+      }
+      if (expectedVersion !== currentVersion) {
+        throw conflict(
+          `CONFLICT_DETECTED: version mismatch: expected ${expectedVersion}, current is ${currentVersion}`,
+          { reason: 'version_mismatch', path: rel },
+        );
+      }
+    }
+    const replacement = String(item?.replacement ?? item?.source ?? '');
+    // Guard order (§4.3): the syntax pre-flight runs before any would-be write.
+    const syntax = checkSyntax(resolved, replacement);
+    const currentText = exists ? fs.readFileSync(resolved, 'utf-8') : '';
+    const newVersion = sha256(replacement);
+    return {
+      path: rel,
+      mode,
+      unchanged: currentText === replacement,
+      ...(exists ? { currentVersion: sha256(currentText) } : {}),
+      newVersion,
+      ...(syntax ? { syntaxCheck: syntax } : {}),
+      wouldApply: true,
+    };
+  }
+
+  /** §14.1 repo-wide symbol search over the workspace tree (honest L1-grade index). */
+  index(params: Record<string, any> = {}): Record<string, unknown> {
+    const query = String(params.query ?? '').trim();
+    if (!query) throw invalidParams('INVALID_PARAMS: query is required');
+    const q = query.toLowerCase();
+    const kinds = Array.isArray(params.kinds) ? (params.kinds as string[]).map((k) => String(k).toLowerCase()) : [];
+    const scope = String(params.scope ?? '').replace(/^\/+/, '');
+    const cap = Math.max(1, Math.min(Number(params.limit) || 25, 200));
+    const scored: Array<{ rank: number; file: string; name: string; kind: string; line: number; lineEnd: number }> = [];
+    const SKIP = new Set(['.git', 'node_modules', 'dist', 'build', '.tokensafe', '.oumv', 'coverage', '.next']);
+    const walk = (dir: string): void => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        if (entry.isDirectory()) {
+          if (!SKIP.has(entry.name)) walk(path.join(dir, entry.name));
+          continue;
+        }
+        if (!/\.(js|mjs|cjs|ts|tsx|jsx)$/.test(entry.name)) continue;
+        const abs = path.join(dir, entry.name);
+        const rel = path.relative(this.workspaceDir, abs).split(path.sep).join('/');
+        if (scope && !rel.startsWith(scope)) continue;
+        let stat: fs.Stats;
+        try {
+          stat = fs.statSync(abs);
+        } catch {
+          continue;
+        }
+        if (stat.size > 512 * 1024) continue;
+        let text: string;
+        try {
+          text = fs.readFileSync(abs, 'utf-8');
+        } catch {
+          continue;
+        }
+        const patterns: Array<[RegExp, string]> = [
+          [/\b(?:export\s+)?(?:default\s+)?(?:async\s+)?function\s+([A-Za-z_$][\w$]*)/g, 'function'],
+          [/\b(?:export\s+)?(?:abstract\s+)?class\s+([A-Za-z_$][\w$]*)/g, 'class'],
+          [/\b(?:export\s+)?const\s+([A-Za-z_$][\w$]*)\s*[:=]/g, 'variable'],
+        ];
+        for (const [regex, kind] of patterns) {
+          for (const match of text.matchAll(regex)) {
+            const name = match[1];
+            const lower = name.toLowerCase();
+            let rank = -1;
+            if (q === lower) rank = 0;
+            else if (lower.startsWith(q)) rank = 1;
+            else if (q.length >= 2 && lower.includes(q)) rank = 2;
+            if (rank < 0) continue;
+            if (kinds.length && !kinds.includes(kind)) continue;
+            const line = text.slice(0, match.index ?? 0).split('\n').length;
+            scored.push({ rank, file: rel, name, kind, line, lineEnd: line });
+          }
+        }
+      }
+    };
+    walk(this.workspaceDir);
+    scored.sort((a, b) => a.rank - b.rank || a.file.localeCompare(b.file) || a.name.localeCompare(b.name));
+    const matches = scored.slice(0, cap).map((entry) => ({
+      resourceId: `${entry.kind}:${entry.name}@${entry.file}`,
+      name: entry.name,
+      kind: entry.kind,
+      file: entry.file,
+      lines: [entry.line, entry.lineEnd],
+      match: ({ 0: 'exact', 1: 'prefix', 2: 'substring' } as Record<number, string>)[entry.rank],
+    }));
+    return { matches, truncated: scored.length > matches.length, totalMatches: scored.length };
+  }
+
+  /** §14.2 read-only data access through the adopter's sandbox query hook. */
+  async query(params: Record<string, any> = {}): Promise<Record<string, unknown>> {
+    const hook = this.sandbox?.db?.query;
+    if (!hook) {
+      throw unsupported('UNSUPPORTED_CAPABILITY: no read-only database query hook is configured');
+    }
+    const statement = String(params.sql ?? '').trim().replace(/;\s*$/, '');
+    const first = (statement.split(/[\s(]+/)[0] ?? '').toUpperCase();
+    if (!['SELECT', 'EXPLAIN', 'PRAGMA', 'WITH'].includes(first)) {
+      throw new OumvError(ERROR_CODES.SECURITY_VIOLATION, 'SECURITY_VIOLATION: only SELECT/EXPLAIN/PRAGMA statements are accepted', {
+        reason: 'query_forbidden',
+      });
+    }
+    const limit = Math.max(1, Math.min(Number(params.limit) || 100, 1000));
+    const { columns, rows } = await hook(statement, Array.isArray(params.params) ? params.params : [], limit);
+    return { columns, rows, rowCount: rows.length, truncated: rows.length >= limit };
+  }
+
+  /** §14.3 run the build/test command and return structured diagnostics. */
+  async build(params: Record<string, any> = {}): Promise<Record<string, unknown>> {
+    const { execFile } = await import('node:child_process');
+    const command = String(params.command ?? this.buildCommand ?? '').trim();
+    if (!command) {
+      return {
+        status: 'skipped',
+        command: 'none',
+        diagnostics: [],
+        skipReason: 'no build command is configured for this runtime (set buildCommand or pass command)',
+      };
+    }
+    const [argv0, ...argvRest] = command.split(/\s+/);
+    const timeoutMs = Math.max(1000, Math.min(Number(params.timeoutMs) || 120000, 600000));
+    const started = Date.now();
+    const diagnostics: Array<Record<string, unknown>> = [];
+    let failed = false;
+    await new Promise<void>((resolve) => {
+      execFile(argv0, argvRest, { cwd: this.workspaceDir, timeout: timeoutMs, windowsHide: true }, (err, stdout, stderr) => {
+        failed = Boolean(err);
+        for (const line of String(stderr || '').split('\n').concat(String(stdout || '').split('\n'))) {
+          if (!line.trim() || diagnostics.length >= 50) continue;
+          const low = line.toLowerCase();
+          diagnostics.push({
+            severity: low.includes('error') || low.includes('failed') ? 'error' : low.includes('warn') ? 'warning' : 'info',
+            source: 'build',
+            message: line.slice(0, 500),
+            tool: argv0,
+          });
+        }
+        resolve();
+      });
+    });
+    for (const diag of diagnostics.filter((d) => d.severity === 'error').slice(0, 20)) {
+      this.publishEvent('diagnostic', diag);
+    }
+    return {
+      status: failed ? 'failed' : 'passed',
+      command,
+      diagnostics,
+      durationMs: Date.now() - started,
+      truncated: diagnostics.length >= 50,
+    };
+  }
+
+  private applyEditUncached(params: Record<string, any> = {}): Record<string, unknown> {
     // Wire 1.5.0: a request carrying `edits` is a multi-file atomic batch.
     if (Array.isArray(params.edits) && params.edits.length > 0) {
       const result = this.applyEditBatch(params);
