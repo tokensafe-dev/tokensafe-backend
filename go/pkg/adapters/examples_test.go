@@ -133,17 +133,48 @@ func TestWireExamples(t *testing.T) {
 		"expectedVersion": markers.EditVersion,
 	})
 
+	// Wire 1.6.0 optional surface (spec §3/§4.4/§14). Error captures are golden
+	// too: they document the honest refusals a conforming runtime must answer.
+	add(files, "oumv/previewEdit", "dry-run create", map[string]interface{}{
+		"path":        "cert_preview_new.go",
+		"mode":        "create",
+		"replacement": "package cert\n\nvar Previewed = true\n",
+	})
+	add(files, "oumv/previewEdit", "dry-run versioned edit", map[string]interface{}{
+		"path":            markers.EditTarget,
+		"mode":            "replace",
+		"replacement":     markers.EditContent,
+		"expectedVersion": markers.EditVersion,
+	})
+	add(files, "oumv/previewEdit", "create refuses an existing file", map[string]interface{}{
+		"path":        markers.EditTarget,
+		"mode":        "create",
+		"replacement": "package cert\n",
+	})
+	add(files, "oumv/index", "exact symbol search", map[string]interface{}{"query": "value", "limit": 10})
+	add(files, "oumv/index", "prefix search", map[string]interface{}{"query": "sym", "limit": 10})
+	add(files, "oumv/query", "no engine wired", map[string]interface{}{"sql": "SELECT 1"})
+	add(files, "oumv/build", "skipped without a configured command", map[string]interface{}{})
+	add(files, "oumv/build", "deterministic command passes", map[string]interface{}{"command": "echo ok"})
+	add(files, "oumv/cancel", "unknown requestId is a result", map[string]interface{}{"requestId": "op-unknown"})
+	add(files, "oumv/cancel", "target last is already finished", map[string]interface{}{"target": "last"})
+
 	if err := os.MkdirAll(outDir, 0o755); err != nil {
 		t.Fatalf("create examples dir: %v", err)
 	}
 	for method, file := range files {
 		name := map[string]string{
-			"oumv/handshake":  "handshake.json",
-			"oumv/observe":    "observe.json",
-			"oumv/understand": "understand.json",
-			"oumv/getSource":  "getSource.json",
-			"oumv/applyEdit":  "applyEdit.json",
-			"oumv/verify":     "verify.json",
+			"oumv/handshake":   "handshake.json",
+			"oumv/observe":     "observe.json",
+			"oumv/understand":  "understand.json",
+			"oumv/getSource":   "getSource.json",
+			"oumv/applyEdit":   "applyEdit.json",
+			"oumv/verify":      "verify.json",
+			"oumv/previewEdit": "previewEdit.json",
+			"oumv/index":       "index.json",
+			"oumv/query":       "query.json",
+			"oumv/build":       "build.json",
+			"oumv/cancel":      "cancel.json",
 		}[method]
 		raw, err := json.MarshalIndent(file, "", "  ")
 		if err != nil {
