@@ -104,7 +104,7 @@ func ResolveRuntimeConfig(base *RuntimeConfig) (RuntimeConfig, error) {
 	cfg := RuntimeConfig{
 		Environment:  env,
 		Name:         "tokensafe-backend",
-		Version:      "0.7.0",
+		Version:      "0.9.0",
 		WorkspaceDir: ".",
 		Transport: TransportConfig{
 			Enabled: false,
@@ -334,7 +334,7 @@ func DefaultDevelopmentRuntimeConfig() *RuntimeConfig {
 		Enabled:      true,
 		Environment:  DetectEnvironment(),
 		Name:         "tokensafe-backend",
-		Version:      "0.7.0",
+		Version:      "0.9.0",
 		WorkspaceDir: workspace,
 		Transport: TransportConfig{
 			Enabled: true,
