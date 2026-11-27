@@ -1,10 +1,10 @@
 {
   "adapterName": "python-fastapi",
   "framework": "fastapi",
-  "specVersion": "1.3.0",
-  "fixtureVersion": 8,
-  "total": 33,
-  "passed": 33,
+  "specVersion": "1.4.0",
+  "fixtureVersion": 9,
+  "total": 34,
+  "passed": 34,
   "failed": 0,
   "attainedLevel": 3,
   "levels": {
@@ -210,7 +210,13 @@
       "level": 1,
       "status": "passed",
       "error": ""
+    },
+    {
+      "id": "verify-sandbox-rolls-back",
+      "level": 2,
+      "status": "passed",
+      "error": ""
     }
   ],
-  "generatedAt": "2026-11-27T09:53:45Z"
+  "generatedAt": "2026-11-27T10:29:41Z"
 }

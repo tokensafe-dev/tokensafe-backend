@@ -27,16 +27,16 @@
 ## Certification (spec §10)
 
 <!-- certification:start -->
-**8 adapters certified against 33 language-neutral cases** (`fixtureVersion` 8): 6 at Level 3 and 2 source-level adapter(s) at Level 2, each with its single L3 gap named below. Generated from `certification/*.json` by `scripts/render_certification.py`; CI fails when this block no longer matches the reports.
+**8 adapters certified against 33 language-neutral cases** (`fixtureVersion` 9): 6 at Level 3 and 2 source-level adapter(s) at Level 2, each with its single L3 gap named below. A report with 34 cases also ran the sandbox capability case its runtime advertises. Generated from `certification/*.json` by `scripts/render_certification.py`; CI fails when this block no longer matches the reports.
 
 | Adapter | Framework | Transport exercised | Level | Cases | Report |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `go-chi` | chi | HTTP `POST /__oumv/rpc` | **3** | 33/33 | [certification/go-chi.json](certification/go-chi.json) |
-| `go-gin` | Gin | HTTP `POST /__oumv/rpc` | **3** | 33/33 | [certification/go-gin.json](certification/go-gin.json) |
-| `go-stdhttp` | net/http | HTTP `POST /__oumv/rpc` | **3** | 33/33 | [certification/go-stdhttp.json](certification/go-stdhttp.json) |
-| `node-express` | Express | Node `POST /__oumv/rpc` | **3** | 33/33 | [certification/node-express.json](certification/node-express.json) |
-| `node-fastify` | Fastify | Node `POST /__oumv/rpc` | **3** | 33/33 | [certification/node-fastify.json](certification/node-fastify.json) |
-| `python-fastapi` | FastAPI | ASGI `POST /__oumv/rpc` | **3** | 33/33 | [certification/python-fastapi.json](certification/python-fastapi.json) |
+| `go-chi` | chi | HTTP `POST /__oumv/rpc` | **3** | 34/34 | [certification/go-chi.json](certification/go-chi.json) |
+| `go-gin` | Gin | HTTP `POST /__oumv/rpc` | **3** | 34/34 | [certification/go-gin.json](certification/go-gin.json) |
+| `go-stdhttp` | net/http | HTTP `POST /__oumv/rpc` | **3** | 34/34 | [certification/go-stdhttp.json](certification/go-stdhttp.json) |
+| `node-express` | Express | Node `POST /__oumv/rpc` | **3** | 34/34 | [certification/node-express.json](certification/node-express.json) |
+| `node-fastify` | Fastify | Node `POST /__oumv/rpc` | **3** | 34/34 | [certification/node-fastify.json](certification/node-fastify.json) |
+| `python-fastapi` | FastAPI | ASGI `POST /__oumv/rpc` | **3** | 34/34 | [certification/python-fastapi.json](certification/python-fastapi.json) |
 
 Source-level adapters scan the framework's route declarations statically, apply OCC-checked edits and run a real verify command, but they do not boot the application — so they record no live request traces, `observe-l4-returns-recorded-traces` fails, and Level 3 is not claimed:
 
@@ -54,10 +54,10 @@ Transport certificates run the same suite over the optional bindings, plus the f
 
 | Certificate | Adapter | Transport | Cases |
 | :--- | :--- | :--- | :--- |
-| [transports/node-express-sse.json](certification/transports/node-express-sse.json) | `node-express-sse` | sse | 34/34 |
-| [transports/node-express-ws.json](certification/transports/node-express-ws.json) | `node-express-ws` | ws | 34/34 |
-| [transports/node-fastify-sse.json](certification/transports/node-fastify-sse.json) | `node-fastify-sse` | sse | 34/34 |
-| [transports/node-fastify-ws.json](certification/transports/node-fastify-ws.json) | `node-fastify-ws` | ws | 34/34 |
+| [transports/node-express-sse.json](certification/transports/node-express-sse.json) | `node-express-sse` | sse | 35/35 |
+| [transports/node-express-ws.json](certification/transports/node-express-ws.json) | `node-express-ws` | ws | 35/35 |
+| [transports/node-fastify-sse.json](certification/transports/node-fastify-sse.json) | `node-fastify-sse` | sse | 35/35 |
+| [transports/node-fastify-ws.json](certification/transports/node-fastify-ws.json) | `node-fastify-ws` | ws | 35/35 |
 | [transports/node-stdio.json](certification/transports/node-stdio.json) | `node-stdio` | stdio | 33/33 |
 | [transports/python-stdio.json](certification/transports/python-stdio.json) | `python-stdio` | stdio | 33/33 |
 <!-- certification:end -->

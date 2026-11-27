@@ -21,7 +21,7 @@ import (
 )
 
 // SpecVersion is the protocol version this runner certifies against.
-const SpecVersion = "1.3.0"
+const SpecVersion = "1.4.0"
 
 // Case is one language-neutral conformance case.
 type Case struct {
@@ -40,6 +40,8 @@ type Case struct {
 	ExpectArrayField            string `json:"expectArrayField"`
 	ExpectEvidence              bool   `json:"expectEvidence"`
 	ExpectVersionMatchesContent string `json:"expectVersionMatchesContent"`
+	// RequiresCapability gates a capabilityCase on the handshake claim.
+	RequiresCapability string `json:"requiresCapability,omitempty"`
 }
 
 // Spec is the fixture file: cases plus the version metadata they were written against.
@@ -48,6 +50,8 @@ type Spec struct {
 	FixtureVersion   int               `json:"fixtureVersion"`
 	LevelDefinitions map[string]string `json:"levelDefinitions"`
 	Cases            []Case            `json:"cases"`
+	// CapabilityCases run only when the runtime advertises RequiresCapability.
+	CapabilityCases []Case `json:"capabilityCases"`
 }
 
 // Markers carries the concrete values substituted for ${MARKER} placeholders.
@@ -79,6 +83,8 @@ type Markers struct {
 	// mode=patch hunk splices over it (the whole content, replaced).
 	EditContentVersion string
 	PatchReplacement   string
+	// Wire 1.4.0: the target a sandbox capability case dispatches against.
+	SandboxTarget string
 }
 
 // CaseResult is the outcome of one case.
@@ -166,6 +172,24 @@ func Run(dispatcher Dispatcher, spec Spec, markers Markers) Report {
 		report.Cases = append(report.Cases, result)
 	}
 
+	// Capability cases prove an advertised claim; a runtime that does not make the
+	// claim is not penalised, the case simply is not part of its report.
+	if len(spec.CapabilityCases) > 0 {
+		capabilities := advertisedCapabilities(dispatcher)
+		for _, tc := range spec.CapabilityCases {
+			if !capabilityEnabled(capabilities, tc.RequiresCapability) {
+				continue
+			}
+			result := CaseResult{ID: tc.ID, Level: tc.Level, Status: "passed"}
+			resp := dispatch(dispatcher, tc.ID, tc.Method, markers.substitute(tc.Params))
+			if errMsg := check(tc, resp, markers); errMsg != "" {
+				result.Status, result.Error = "failed", errMsg
+			}
+			report.Cases = append(report.Cases, result)
+		}
+	}
+
+	report.Total = len(report.Cases)
 	for _, c := range report.Cases {
 		if c.Status == "passed" {
 			report.Passed++
@@ -176,6 +200,43 @@ func Run(dispatcher Dispatcher, spec Spec, markers Markers) Report {
 	report.AttainedLevel = attainedLevel(report.Cases)
 	report.Levels = summarizeLevels(report.Cases)
 	return report
+}
+
+// advertisedCapabilities reads the handshake capability object as a map so case
+// gating does not depend on the concrete result type of any runtime.
+func advertisedCapabilities(d Dispatcher) map[string]interface{} {
+	resp := dispatch(d, "capability-handshake", "oumv/handshake", map[string]interface{}{})
+	if resp == nil || resp.Error != nil || resp.Result == nil {
+		return nil
+	}
+	raw, err := json.Marshal(resp.Result)
+	if err != nil {
+		return nil
+	}
+	var parsed struct {
+		Capabilities map[string]interface{} `json:"capabilities"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return nil
+	}
+	return parsed.Capabilities
+}
+
+// capabilityEnabled walks a dotted capability path and requires literal true.
+func capabilityEnabled(capabilities map[string]interface{}, path string) bool {
+	if capabilities == nil || path == "" {
+		return false
+	}
+	var current interface{} = capabilities
+	for _, segment := range strings.Split(path, ".") {
+		record, ok := current.(map[string]interface{})
+		if !ok {
+			return false
+		}
+		current = record[segment]
+	}
+	enabled, ok := current.(bool)
+	return ok && enabled
 }
 
 // Save writes the report as JSON (creating parent directories as needed).
@@ -328,6 +389,7 @@ func (m Markers) substitute(params map[string]interface{}) map[string]interface{
 		"${RENAME_VERSION}":       m.RenameVersion,
 		"${EDIT_CONTENT_VERSION}": m.EditContentVersion,
 		"${PATCH_REPLACEMENT}":    m.PatchReplacement,
+		"${SANDBOX_TARGET}":       m.SandboxTarget,
 	}
 	var walk func(value interface{}) interface{}
 	walk = func(value interface{}) interface{} {

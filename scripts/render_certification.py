@@ -80,8 +80,8 @@ def render(reports: list[tuple[str, dict]]) -> str:
     problems: list[str] = []
     if len(versions) != 1:
         problems.append(f"mixed fixtureVersion values: {sorted(str(v) for v in versions)}")
-    if len(totals) != 1:
-        problems.append(f"mixed case counts: {sorted(str(t) for t in totals)}")
+    # Totals may legitimately differ: capability cases run only for adapters that
+    # advertise the claim, so 33 is the base suite, 34 adds the sandbox case.
     # A Level 2 claim is legitimate when the gap is a named case (a sidecar that
     # does not run the framework cannot record live traces). A Level 2 report with
     # an unnamed failure is not: it must list the failing case ids.
@@ -94,7 +94,8 @@ def render(reports: list[tuple[str, dict]]) -> str:
     if problems:
         raise SystemExit("cannot render a truthful block:\n  - " + "\n  - ".join(problems))
 
-    version, total = versions.pop(), totals.pop()
+    version = versions.pop()
+    total = min(totals)
     level3 = [(n, r) for n, r in reports if r.get("attainedLevel", 0) >= 3 and not r.get("failed")]
     source_level = [(n, r) for n, r in reports if (n, r) not in level3]
 
@@ -102,7 +103,8 @@ def render(reports: list[tuple[str, dict]]) -> str:
         lead = (
             f"**{len(reports)} adapters certified against {total} language-neutral cases** "
             f"(`fixtureVersion` {version}): {len(level3)} at Level 3 and {len(source_level)} "
-            "source-level adapter(s) at Level 2, each with its single L3 gap named below."
+            "source-level adapter(s) at Level 2, each with its single L3 gap named below. "
+            "A report with 34 cases also ran the sandbox capability case its runtime advertises."
         )
     else:
         lead = (

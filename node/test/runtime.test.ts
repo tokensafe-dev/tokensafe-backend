@@ -210,4 +210,58 @@ describe('OumvRuntime core', () => {
     runtime.recordState(relative, String(result.newVersion), 'patch');
     expect(seen).toHaveLength(1); // a closed subscription receives nothing
   });
+
+  it('runs verify inside the adopter DB sandbox and reports the observed rollback', async () => {
+    const workspace = createWorkspace();
+    cleanup = workspace.cleanup;
+    let executed = 0;
+    let rolledBack = false;
+    const runtime = new OumvRuntime({
+      workspaceDir: workspace.dir,
+      sandbox: {
+        db: {
+          run: async (fn) => {
+            const result = await fn();
+            rolledBack = true;
+            return { result, rolledBack: true, queries: 3 };
+          },
+        },
+      },
+    });
+    runtime.setHandler((req, res) => {
+      executed += 1;
+      res.setHeader('x-dry-run', String(req.headers['x-tokensafe-dry-run'] ?? ''));
+      res.statusCode = 200;
+      res.end('{"ok":true}');
+    });
+
+    const result: any = await runtime.verify({
+      target: 'POST /api/items',
+      sandbox: { mode: 'rollback' },
+    });
+
+    expect(executed).toBe(1);
+    expect(rolledBack).toBe(true);
+    expect(result.rolledBack).toBe(true);
+    expect(result.rollbackStatus).toBe('verified');
+    expect(result.dbDiff).toEqual({ rollback: true, queries: 3, driver: 'app-hook' });
+    expect(result.scope.notExecuted).not.toContain('persistent database state');
+
+    const handshake: any = runtime.handshake({});
+    expect(handshake.capabilities.verify.sandboxRollback).toBe(true);
+    expect(handshake.capabilities.transports).toContain('http');
+  });
+
+  it('refuses a sandbox request when no hook is configured', async () => {
+    const runtime = new OumvRuntime({ workspaceDir: process.cwd() });
+    runtime.setHandler((_req, res) => {
+      res.statusCode = 200;
+      res.end('{}');
+    });
+    await expect(runtime.verify({ target: 'GET /', sandbox: { mode: 'rollback' } })).rejects.toThrow(
+      /RUNTIME_UNAVAILABLE/
+    );
+    const handshake: any = runtime.handshake({});
+    expect(handshake.capabilities.verify.sandboxRollback).toBe(false);
+  });
 });

@@ -118,6 +118,7 @@ func workspace(t *testing.T, tmpDir, l2Target string) conformance.Markers {
 		L2Target:           l2Target,
 		L3Target:           editTarget,
 		VerifyTarget:       l2Target,
+		SandboxTarget:      "POST /__oumv_sandbox_probe",
 	}
 }
 
@@ -165,6 +166,7 @@ func TestAdapterCertification(t *testing.T) {
 				engine.GET("/api/v1/orders", func(c *gin.Context) {
 					c.JSON(http.StatusOK, gin.H{"orders": []string{}})
 				})
+				engine.POST("/__oumv_sandbox_probe", gin.WrapF(sandboxProbe))
 				ginAdapter.Mount(engine, rt)
 				// Routes exist before Mount: tracing must come from the wrapper,
 				// not from r.Use (gin freezes handler chains at registration).
@@ -180,6 +182,7 @@ func TestAdapterCertification(t *testing.T) {
 					w.WriteHeader(http.StatusOK)
 					_, _ = w.Write([]byte(`{"orders":[]}`))
 				})
+				router.Post("/__oumv_sandbox_probe", sandboxProbe)
 				if err := chiAdapter.Mount(router, rt); err != nil {
 					t.Fatalf("mount chi adapter: %v", err)
 				}
@@ -195,6 +198,7 @@ func TestAdapterCertification(t *testing.T) {
 					w.WriteHeader(http.StatusOK)
 					_, _ = w.Write([]byte(`{"orders":[]}`))
 				})
+				mux.HandleFunc("POST /__oumv_sandbox_probe", sandboxProbe)
 				mux.Mount("/__oumv/rpc")
 				return mux
 			},
@@ -206,6 +210,7 @@ func TestAdapterCertification(t *testing.T) {
 		t.Run(tc.id, func(t *testing.T) {
 			workspaceDir := t.TempDir()
 			rt := newTestRuntime(t, "tokensafe-"+tc.framework, workspaceDir)
+			rt.SetDBSandbox(newCertSandbox(t))
 			handler := tc.build(t, rt)
 			server := httptest.NewServer(handler)
 			defer server.Close()

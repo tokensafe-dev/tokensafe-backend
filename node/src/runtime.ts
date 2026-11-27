@@ -18,7 +18,7 @@ import {
 import { resolveWorkspacePath, splitSourceTarget } from './paths.js';
 import { SessionRegistry } from './sessions.js';
 
-export const PROTOCOL_VERSION = '1.3.0';
+export const PROTOCOL_VERSION = '1.4.0';
 export const OBSERVE_LEVELS = ['L0', 'L1', 'L2', 'L3', 'L4'] as const;
 export type ObserveLevel = (typeof OBSERVE_LEVELS)[number];
 
@@ -44,7 +44,20 @@ export interface RuntimeCapabilities {
   observe: { levels: string[]; formats: string[] };
   understand: { causality: boolean; signalsGraph: boolean; impactAnalysis: boolean };
   mutate: { occ: boolean; syntaxGuard: boolean };
-  verify: { multiMetric: boolean; surfaceDiff: boolean };
+  verify: { multiMetric: boolean; surfaceDiff: boolean; sandboxRollback?: boolean };
+  /** Bindings this runtime actually mounted (spec §2.3/§2.4). */
+  transports?: string[];
+}
+
+/**
+ * Application-provided database sandbox hook (spec §4). The runtime has no ORM of
+ * its own: the adopter supplies `run`, which executes the verify request inside a
+ * transaction it always rolls back and reports whether that rollback happened.
+ */
+export interface VerifySandboxHook {
+  db?: {
+    run<T>(fn: () => Promise<T> | T): Promise<{ result: T; rolledBack: boolean; queries?: number }>;
+  };
 }
 
 export interface OumvRuntimeOptions {
@@ -63,6 +76,8 @@ export interface OumvRuntimeOptions {
   }>;
   transportPath?: string;
   maxBodyBytes?: number;
+  /** Optional database sandbox; advertises verify.sandboxRollback when present. */
+  sandbox?: VerifySandboxHook;
 }
 
 export interface VerifyScope {
@@ -151,6 +166,7 @@ export class OumvRuntime {
   private readonly startTime = Date.now();
   private readonly enabled: { observe: boolean; understand: boolean; mutate: boolean; verify: boolean };
   private transports: string[] = ['http'];
+  private readonly sandbox?: VerifySandboxHook;
   private handler?: http.RequestListener;
   private dispatchServer?: http.Server;
   private dispatchPort = 0;
@@ -170,6 +186,7 @@ export class OumvRuntime {
     this.transportPath = options.transportPath || '/__oumv/rpc';
     this.maxBodyBytes = options.maxBodyBytes ?? 8 * 1024 * 1024;
     this.authToken = options.authToken || '';
+    this.sandbox = options.sandbox;
     this.sessions = new SessionRegistry(options.sessionTtlSeconds ?? 3600);
     this.handler = options.handler;
     this.enabled = {
@@ -263,7 +280,7 @@ export class OumvRuntime {
       const [majorRaw, minorRaw] = requestedVersion.split('.');
       const major = Number(majorRaw);
       const minor = Number(minorRaw);
-      if (!Number.isInteger(major) || !Number.isInteger(minor) || major !== 1 || minor > 3) {
+      if (!Number.isInteger(major) || !Number.isInteger(minor) || major !== 1 || minor > 4) {
         throw unsupported(
           `UNSUPPORTED_CAPABILITY: protocol version ${requestedVersion} (this runtime serves ${PROTOCOL_VERSION})`,
         );
@@ -273,13 +290,16 @@ export class OumvRuntime {
       observe: { levels: [...OBSERVE_LEVELS], formats: ['json'] },
       understand: { causality: true, signalsGraph: false, impactAnalysis: true },
       mutate: { occ: true, syntaxGuard: true },
-      verify: { multiMetric: true, surfaceDiff: false },
+      verify: { multiMetric: true, surfaceDiff: false, sandboxRollback: Boolean(this.sandbox?.db) },
+      transports: [...this.transports],
     };
     if (!this.enabled.understand) {
       capabilities.understand = { causality: false, signalsGraph: false, impactAnalysis: false };
     }
     if (!this.enabled.mutate) capabilities.mutate = { occ: false, syntaxGuard: false };
-    if (!this.enabled.verify) capabilities.verify = { multiMetric: false, surfaceDiff: false };
+    if (!this.enabled.verify) {
+      capabilities.verify = { multiMetric: false, surfaceDiff: false, sandboxRollback: false };
+    }
 
     // §3.1: narrow to the client's request; an empty intersection stays empty.
     const requested = params.requestedCapabilities;
@@ -842,6 +862,37 @@ export class OumvRuntime {
   /* ------------------------------------------------------------------ verify */
 
   async verify(params: Record<string, any> = {}): Promise<Record<string, unknown>> {
+    const sandbox = params?.sandbox as { mode?: string } | undefined;
+    if (sandbox && sandbox.mode) {
+      if (sandbox.mode !== 'rollback') {
+        throw unsupported(`UNSUPPORTED_CAPABILITY: sandbox mode ${JSON.stringify(sandbox.mode)}`);
+      }
+      const hook = this.sandbox?.db;
+      if (!hook) {
+        throw resourceUnavailable(
+          'RUNTIME_UNAVAILABLE: sandbox=rollback requested but no database sandbox is configured'
+        );
+      }
+      // The adopter's hook owns the transaction; we only report what it observes.
+      const outcome = await hook.run(() => this.verifyInternal(params, true));
+      const result = outcome.result as Record<string, unknown>;
+      result.rolledBack = outcome.rolledBack;
+      result.rollbackStatus = outcome.rolledBack ? 'verified' : 'unverified';
+      result.dbDiff = {
+        rollback: outcome.rolledBack,
+        ...(typeof outcome.queries === 'number' ? { queries: outcome.queries } : {}),
+        driver: 'app-hook',
+      };
+      const scope = result.scope as VerifyScope | undefined;
+      if (scope && outcome.rolledBack) {
+        scope.notExecuted = scope.notExecuted.filter((item) => item !== 'persistent database state');
+      }
+      return result;
+    }
+    return this.verifyInternal(params, false);
+  }
+
+  private async verifyInternal(params: Record<string, any>, dryRun: boolean): Promise<Record<string, unknown>> {
     if (!this.enabled.verify) throw permissionDenied('PERMISSION_DENIED: verify capability is disabled');
     const topTarget = String(params.target ?? '').trim();
     const steps = Array.isArray(params.steps) ? params.steps : [];
@@ -863,6 +914,7 @@ export class OumvRuntime {
             path: url,
             headers: {
               'content-type': 'application/json',
+              ...(dryRun ? { 'x-tokensafe-dry-run': 'true' } : {}),
               ...(body ? { 'content-length': Buffer.byteLength(body).toString() } : {}),
               ...(headers && typeof headers === 'object' ? headers : {}),
             },
@@ -906,8 +958,9 @@ export class OumvRuntime {
         });
       }
       const last = results[results.length - 1];
+      const status = results.every((step) => step.status === 'passed') ? 'passed' : 'failed';
       return {
-        status: 'passed',
+        status,
         target: topTarget || last.target,
         statusCode: last.statusCode,
         steps: results,

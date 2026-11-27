@@ -331,7 +331,7 @@ func DefaultDevelopmentRuntimeConfig() *RuntimeConfig {
 		Enabled:      true,
 		Environment:  DetectEnvironment(),
 		Name:         "tokensafe-backend",
-		Version:      "0.4.6",
+		Version:      "0.6.0",
 		WorkspaceDir: workspace,
 		Transport: TransportConfig{
 			Enabled: true,

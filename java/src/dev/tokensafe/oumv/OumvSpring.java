@@ -70,9 +70,9 @@ public final class OumvSpring {
 
     static final String NAME = "oumv-java-spring";
     static final String VERSION = "0.1.0";
-    static final String PROTOCOL_VERSION = "1.3.0";
+    static final String PROTOCOL_VERSION = "1.4.0";
     static final int SUPPORTED_MAJOR = 1;
-    static final int SUPPORTED_MINOR_MAX = 3;
+    static final int SUPPORTED_MINOR_MAX = 4;
     static final String PROFILE = "backend";
     static final String FRAMEWORK = "spring";
     static final String[] OBSERVE_LEVELS = { "L0", "L1", "L2", "L3" };

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"context"
 	"crypto/sha256"
+	"database/sql"
 	"encoding/hex"
 	"encoding/json"
 	"fmt"
@@ -22,6 +23,7 @@ import (
 	"sync/atomic"
 	"time"
 
+	"github.com/tokensafe-dev/tokensafe-backend/go/pkg/db"
 	"github.com/tokensafe-dev/tokensafe-backend/go/pkg/mutate"
 	"github.com/tokensafe-dev/tokensafe-backend/go/pkg/protocol"
 )
@@ -51,6 +53,7 @@ type Runtime struct {
 	traceIdx     int
 	sessions     *SessionRegistry
 	transports   []string
+	dbSandbox    *db.Sandbox
 	events       []protocol.StreamEvent
 	eventSeq     uint64
 	subs         map[chan protocol.StreamEvent]struct{}
@@ -175,6 +178,15 @@ func (r *Runtime) Name() string          { return r.name }
 func (r *Runtime) Version() string       { return r.version }
 func (r *Runtime) Config() RuntimeConfig { return r.config }
 func (r *Runtime) IsEnabled() bool       { return r.config.Enabled }
+
+// SetDBSandbox wires a database sandbox. When set, `verify` with
+// `sandbox:{mode:"rollback"}` runs the whole request inside a transaction that is
+// always rolled back, and the capability is advertised (spec §4, wire 1.4.0).
+func (r *Runtime) SetDBSandbox(sandbox *db.Sandbox) {
+	r.mu.Lock()
+	r.dbSandbox = sandbox
+	r.mu.Unlock()
+}
 
 // RecordTrace records an observed request execution into the bounded L4 trace
 // ring buffer. Feeds Understand (causality) with real runtime evidence and
@@ -444,6 +456,10 @@ func (r *Runtime) Handshake(ctx context.Context, params *protocol.OumvHandshakeP
 	}
 
 	caps := protocol.DefaultBackendCapabilities()
+	r.mu.RLock()
+	caps.Verify.SandboxRollback = r.dbSandbox != nil
+	r.mu.RUnlock()
+	caps.Transports = r.transportsOrDefault()
 	if !r.config.Capabilities.Observe {
 		caps.Observe = protocol.ObserveCapability{}
 	}
@@ -1375,7 +1391,69 @@ func (r *Runtime) SetHandler(h http.Handler) {
 }
 
 // Verify executes Pillar 4: Sub-millisecond action verification via in-memory httptest.
+// Verify dispatches an action and, when `sandbox:{mode:"rollback"}` is requested,
+// runs the whole request inside a database transaction that is always rolled back
+// (spec §4, wire 1.4.0). Evidence is reported, never assumed: rolledBack is set
+// only after ExecuteDryRun confirms the transaction was not committed.
 func (r *Runtime) Verify(ctx context.Context, params *protocol.VerifyParams) (*protocol.VerifyResult, *protocol.OumvError) {
+	if params != nil && params.Sandbox != nil && strings.TrimSpace(params.Sandbox.Mode) != "" {
+		mode := strings.ToLower(strings.TrimSpace(params.Sandbox.Mode))
+		if mode != "rollback" {
+			return nil, &protocol.OumvError{
+				Code:    protocol.ErrUnsupportedCapability,
+				Message: "UNSUPPORTED_CAPABILITY: unknown sandbox mode " + params.Sandbox.Mode,
+				Data:    map[string]string{"reason": "unknown_sandbox_mode"},
+			}
+		}
+		r.mu.RLock()
+		sandbox := r.dbSandbox
+		r.mu.RUnlock()
+		if sandbox == nil {
+			return nil, &protocol.OumvError{
+				Code:    protocol.ErrRuntimeUnavailable,
+				Message: "RUNTIME_UNAVAILABLE: sandbox=rollback requested but no database sandbox is configured",
+			}
+		}
+
+		var result *protocol.VerifyResult
+		var verifyErr *protocol.OumvError
+		report, err := sandbox.ExecuteDryRun(ctx, func(dryCtx context.Context, tx *sql.Tx) error {
+			result, verifyErr = r.verify(dryCtx, params, tx)
+			return nil
+		})
+		if err != nil {
+			return nil, &protocol.OumvError{
+				Code:    protocol.ErrInternalError,
+				Message: "DB_SANDBOX_ERROR: " + err.Error(),
+			}
+		}
+		if verifyErr != nil {
+			return nil, verifyErr
+		}
+
+		rolledBack := report != nil && !report.Committed
+		result.RolledBack = &rolledBack
+		if rolledBack {
+			result.RollbackStatus = "verified"
+			result.DBDiff = &protocol.VerifyDBDiff{Rollback: true, Driver: "database/sql"}
+			if result.Scope != nil {
+				kept := make([]string, 0, len(result.Scope.NotExecuted))
+				for _, item := range result.Scope.NotExecuted {
+					if item != "persistent database state" {
+						kept = append(kept, item)
+					}
+				}
+				result.Scope.NotExecuted = kept
+			}
+		} else {
+			result.RollbackStatus = "unverified"
+		}
+		return result, nil
+	}
+	return r.verify(ctx, params, nil)
+}
+
+func (r *Runtime) verify(ctx context.Context, params *protocol.VerifyParams, tx *sql.Tx) (*protocol.VerifyResult, *protocol.OumvError) {
 	if !r.config.Capabilities.Verify {
 		return nil, protocol.NewPermissionDeniedError("verify capability is disabled by policy")
 	}
@@ -1406,6 +1484,12 @@ func (r *Runtime) Verify(ctx context.Context, params *protocol.VerifyParams) (*p
 			}
 		}
 		req := httptest.NewRequest(method, path, body)
+		if tx != nil && ctx != nil {
+			req = req.WithContext(context.WithValue(ctx, db.TxContextKey, tx))
+			req.Header.Set("X-TokenSafe-Dry-Run", "true")
+		} else if ctx != nil {
+			req = req.WithContext(ctx)
+		}
 		if body != nil {
 			req.Header.Set("Content-Type", "application/json")
 		}
@@ -1435,9 +1519,16 @@ func (r *Runtime) Verify(ctx context.Context, params *protocol.VerifyParams) (*p
 			r.RecordTrace(m, p, p, "", rec.Code, duration, "")
 		}
 		last := results[len(results)-1]
+		status := "passed"
+		for _, step := range results {
+			if step.Status != "passed" {
+				status = "failed"
+				break
+			}
+		}
 		return &protocol.VerifyResult{
-			Success:    true,
-			Status:     "passed",
+			Success:    status == "passed",
+			Status:     status,
 			Target:     params.Target,
 			StatusCode: last.StatusCode,
 			Diff: map[string]interface{}{

@@ -11,7 +11,9 @@ from pathlib import Path
 
 import httpx
 import pytest
-from fastapi import FastAPI
+from fastapi import FastAPI, Request
+from fastapi.responses import JSONResponse
+from sqlalchemy import create_engine, text
 
 from tokensafe_python import conformance
 from tokensafe_python.adapters.fastapi import mount_tokensafe
@@ -30,7 +32,24 @@ async def test_conformance_certification(tmp_path):
     (tmp_path / "conformance_rename_source.py").write_text("value = 2\n", encoding="utf-8")
 
     app = FastAPI()
-    mounted = mount_tokensafe(app, auto_discover=False, project_root=str(tmp_path))
+    engine = create_engine(f"sqlite:///{tmp_path / 'cert.sqlite'}")
+    with engine.begin() as conn:
+        conn.execute(text("CREATE TABLE cert_probe (id INTEGER PRIMARY KEY, v INTEGER)"))
+        conn.execute(text("INSERT INTO cert_probe (id, v) VALUES (1, 0)"))
+    mounted = mount_tokensafe(
+        app, auto_discover=False, project_root=str(tmp_path), db_engine=engine
+    )
+
+    @app.post("/__oumv_sandbox_probe")
+    async def sandbox_probe(request: Request):
+        """Writes only under the dry-run header and rolls the transaction back."""
+        if request.headers.get("x-tokensafe-dry-run") != "true":
+            return JSONResponse({"error": "dry-run header required"}, status_code=400)
+        with engine.connect() as conn:
+            tx = conn.begin()
+            conn.execute(text("UPDATE cert_probe SET v = 1 WHERE id = 1"))
+            tx.rollback()
+        return {"ok": True}
     # L2 needs a real target: a registered model and route, not a fabricated one.
     mounted.runtime.register_schema("Order", {"type": "object", "properties": {"id": {"type": "string"}}})
     mounted.runtime.register_route("/api/v1/orders", "GET", "list_orders")
@@ -78,17 +97,19 @@ async def test_conformance_certification(tmp_path):
     failures = [c for c in report["cases"] if c["status"] != "passed"]
     assert not failures, failures
     assert report["attainedLevel"] == 3, (report["attainedLevel"], report["levels"])
-    assert report["specVersion"] == "1.3.0"
+    assert report["specVersion"] == "1.4.0"
 
 
 def test_fixture_file_has_level_tagged_v6_shape():
     data = json.loads(FIXTURES.read_text(encoding="utf-8"))
-    assert data["fixtureVersion"] == 8
-    assert data["protocolVersion"] == "1.3.0"
+    assert data["fixtureVersion"] == 9
+    assert data["protocolVersion"] == "1.4.0"
     assert sorted(data["levelDefinitions"]) == ["1", "2", "3"]
     # Push cases belong to transport certificates; the native runners assert the
     # request/response suite and leave them to `oumv-certify --sse/--ws`.
     assert {case["transport"] for case in data.get("pushCases", [])} <= {"sse", "ws"}
+    # Capability cases are gated on the handshake claim.
+    assert all(case.get("requiresCapability") for case in data.get("capabilityCases", []))
 
     levels = {case["level"] for case in data["cases"]}
     assert levels == {1, 2, 3}

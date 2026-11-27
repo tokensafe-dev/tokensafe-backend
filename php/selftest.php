@@ -130,7 +130,7 @@ function finish(): void
 // --- Symfony attribute routing (scan-only mode) ---------------------------
 
 if (($argv[3] ?? '') === '--symfony') {
-    $hs = result(rpc('oumv/handshake', ['protocolVersion' => '1.3.0']));
+    $hs = result(rpc('oumv/handshake', ['protocolVersion' => '1.4.0']));
     check('symfony: handshake serves the backend profile', ($hs['profile'] ?? '') === 'backend');
     $l0 = result(rpc('oumv/observe', ['level' => 'L0']));
     check('symfony: framework detected from composer.json', ($l0['data']['framework'] ?? '') === 'symfony', (string) ($l0['data']['framework'] ?? ''));
@@ -168,7 +168,7 @@ if (($argv[3] ?? '') === '--symfony') {
 $handshake = rpc('oumv/handshake', ['protocolVersion' => '1.0.0']);
 $hs = result($handshake);
 check('handshake returns result', isset($handshake['result']));
-check('handshake protocolVersion is 1.3.0', ($hs['protocolVersion'] ?? '') === '1.3.0', (string) ($hs['protocolVersion'] ?? ''));
+check('handshake protocolVersion is 1.4.0', ($hs['protocolVersion'] ?? '') === '1.4.0', (string) ($hs['protocolVersion'] ?? ''));
 check('handshake profile is backend', ($hs['profile'] ?? '') === 'backend');
 check('handshake names runtimeInfo', ($hs['runtimeInfo']['name'] ?? '') === 'oumv-php' && ($hs['runtimeInfo']['version'] ?? '') !== '');
 check('handshake issues sessionId', is_string($hs['sessionId'] ?? null) && str_starts_with((string) $hs['sessionId'], 'sess-'));

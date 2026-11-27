@@ -11,7 +11,7 @@ performs OCC-guarded source mutations with a workspace jail.
 * **No modification of the project.** It never boots the application and never writes
   into it except through `oumv/applyEdit` (plus `.tokensafe/backups/` and the
   out-of-repository discovery descriptor).
-* **Honest conformance claim: Level 2** (fixtures v7 / wire `1.3.0`), certified report
+* **Honest conformance claim: Level 2** (fixtures v9 / wire `1.3.0`), certified report
   in [`../certification/java-spring.json`](../certification/java-spring.json).
   Level 3 is *not* claimed: L4 request traces and runtime causality require a live
   application, and this sidecar deliberately does not fake them.

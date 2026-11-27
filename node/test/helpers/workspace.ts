@@ -70,6 +70,7 @@ export function createWorkspace(): Workspace {
       renameSource: 'rename_source.js',
       renameTarget: 'rename_target.js',
       renameVersion: sha(RENAME_SOURCE),
+      sandboxTarget: 'POST /__oumv_sandbox_probe',
     },
     cleanup: () => fs.rmSync(dir, { recursive: true, force: true }),
   };
@@ -87,10 +88,15 @@ export async function runFixtures(
   framework: string
 ): Promise<FixtureRun> {
   const { loadFixtures, runFixtureSuite, httpTransport } = require(CONFORMANCE_CJS);
-  const report = await runFixtureSuite(httpTransport({ url }), loadFixtures(FIXTURES), markers, {
+  const transport = httpTransport({ url });
+  // Capability cases run only for claims the runtime actually makes.
+  const handshake = await transport.request({ jsonrpc: '2.0', id: 'certify-handshake', method: 'oumv/handshake', params: {} });
+  const capabilities = (handshake.result as any)?.capabilities;
+  const report = await runFixtureSuite(transport, loadFixtures(FIXTURES), markers, {
     adapterName,
     framework,
     environment: { transport: 'http', node: process.version },
+    capabilities,
   });
   const outDir = process.env.CERT_OUT_DIR;
   if (outDir) {

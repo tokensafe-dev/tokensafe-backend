@@ -40,8 +40,10 @@ type MutateCapability struct {
 type VerifyCapability struct {
 	MultiMetric bool `json:"multiMetric"`
 	SurfaceDiff bool `json:"surfaceDiff,omitempty"`
-	DBSandbox   bool `json:"-"`
-	PayloadDiff bool `json:"-"`
+	// SandboxRollback is advertised only when a database sandbox is configured.
+	SandboxRollback bool `json:"sandboxRollback,omitempty"`
+	DBSandbox       bool `json:"-"`
+	PayloadDiff     bool `json:"-"`
 }
 
 // OumvCapabilities aggregates all functional pillars supported by client/runtime.
@@ -50,6 +52,8 @@ type OumvCapabilities struct {
 	Understand UnderstandCapability `json:"understand"`
 	Mutate     MutateCapability     `json:"mutate"`
 	Verify     VerifyCapability     `json:"verify"`
+	// Transports lists the bindings this runtime actually mounted (spec §2.3/§2.4).
+	Transports []string `json:"transports,omitempty"`
 }
 
 // OumvHandshakeParams is sent by the AI Agent during initialization.

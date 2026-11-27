@@ -47,7 +47,17 @@ describe('Express transport certificates', () => {
     app.post('/api/orders', (_req, res) => {
       res.status(201).json({ id: 1 });
     });
-    const runtime = new OumvRuntime({ workspaceDir: workspace.dir });
+    app.post('/__oumv_sandbox_probe', (req, res) => {
+      if (req.headers['x-tokensafe-dry-run'] !== 'true') {
+        res.status(400).json({ error: 'dry-run header required' });
+        return;
+      }
+      res.json({ ok: true });
+    });
+    const runtime = new OumvRuntime({
+      workspaceDir: workspace.dir,
+      sandbox: { db: { run: async (fn) => ({ result: await fn(), rolledBack: true, queries: 1 }) } },
+    });
     const adapter = mountTokensafe(app, { runtime });
     const server: Server = app.listen(0, '127.0.0.1');
     await new Promise<void>((resolve) => server.once('listening', resolve));
@@ -83,21 +93,29 @@ describe('Express transport certificates', () => {
       const source = sseEventSource({ url: live.eventsUrl });
       try {
         await source.start();
+        const http = httpTransport({ url: live.rpcUrl });
+        const handshake = await http.request({
+          jsonrpc: '2.0',
+          id: 'certify-handshake',
+          method: 'oumv/handshake',
+          params: {},
+        });
         const report = await runFixtureSuite(
-          httpTransport({ url: live.rpcUrl }),
+          http,
           loadFixtures(FIXTURES_PATH),
           live.workspace.markers,
           {
             adapterName: 'node-express-sse',
             framework: 'express',
             environment: { transport: 'sse', node: process.version },
+            capabilities: (handshake.result as any)?.capabilities,
             push: source,
             pushTimeoutMs: 5_000,
           }
         );
         if (report.failed > 0) console.log(report.cases.filter((entry: any) => entry.status !== 'passed'));
         expect(report.failed).toBe(0);
-        expect(report.total).toBe(34);
+        expect(report.total).toBe(35);
         writeReport('transports/node-express-sse.json', report);
       } finally {
         await source.close();
@@ -113,16 +131,23 @@ describe('Express transport certificates', () => {
       const { loadFixtures, runFixtureSuite, wsTransport } = require(CONFORMANCE_ENTRY);
       const transport = wsTransport({ url: live.wsUrl });
       try {
+        const handshake = await transport.request({
+          jsonrpc: '2.0',
+          id: 'certify-handshake',
+          method: 'oumv/handshake',
+          params: {},
+        });
         const report = await runFixtureSuite(transport, loadFixtures(FIXTURES_PATH), live.workspace.markers, {
           adapterName: 'node-express-ws',
           framework: 'express',
           environment: { transport: 'ws', node: process.version },
+          capabilities: (handshake.result as any)?.capabilities,
           push: transport,
           pushTimeoutMs: 5_000,
         });
         if (report.failed > 0) console.log(report.cases.filter((entry: any) => entry.status !== 'passed'));
         expect(report.failed).toBe(0);
-        expect(report.total).toBe(34);
+        expect(report.total).toBe(35);
         writeReport('transports/node-express-ws.json', report);
       } finally {
         await transport.close?.();
@@ -142,12 +167,21 @@ describe('Fastify transport certificates', () => {
   async function startServer() {
     const workspace = createWorkspace();
     const app = Fastify({ logger: false });
-    const runtime = new OumvRuntime({ workspaceDir: workspace.dir });
+    const runtime = new OumvRuntime({
+      workspaceDir: workspace.dir,
+      sandbox: { db: { run: async (fn) => ({ result: await fn(), rolledBack: true, queries: 1 }) } },
+    });
     const adapter = await registerTokensafe(app, { runtime });
     // The adapter learns routes through an onRoute hook, so they are added after
     // registration (same order as the adapter's own suite).
     app.get('/api/orders', async () => ({ orders: [] }));
     app.post('/api/orders', async (_request, reply) => reply.code(201).send({ id: 1 }));
+    app.post('/__oumv_sandbox_probe', async (request, reply) => {
+      if (request.headers['x-tokensafe-dry-run'] !== 'true') {
+        return reply.code(400).send({ error: 'dry-run header required' });
+      }
+      return { ok: true };
+    });
     await app.listen({ port: 0, host: '127.0.0.1' });
     const port = (app.server.address() as AddressInfo).port;
     const attachment = adapter.attachWebSocket();
@@ -181,21 +215,29 @@ describe('Fastify transport certificates', () => {
       const source = sseEventSource({ url: live.eventsUrl });
       try {
         await source.start();
+        const http = httpTransport({ url: live.rpcUrl });
+        const handshake = await http.request({
+          jsonrpc: '2.0',
+          id: 'certify-handshake',
+          method: 'oumv/handshake',
+          params: {},
+        });
         const report = await runFixtureSuite(
-          httpTransport({ url: live.rpcUrl }),
+          http,
           loadFixtures(FIXTURES_PATH),
           live.workspace.markers,
           {
             adapterName: 'node-fastify-sse',
             framework: 'fastify',
             environment: { transport: 'sse', node: process.version },
+            capabilities: (handshake.result as any)?.capabilities,
             push: source,
             pushTimeoutMs: 5_000,
           }
         );
         if (report.failed > 0) console.log(report.cases.filter((entry: any) => entry.status !== 'passed'));
         expect(report.failed).toBe(0);
-        expect(report.total).toBe(34);
+        expect(report.total).toBe(35);
         writeReport('transports/node-fastify-sse.json', report);
       } finally {
         await source.close();
@@ -211,16 +253,23 @@ describe('Fastify transport certificates', () => {
       const { loadFixtures, runFixtureSuite, wsTransport } = require(CONFORMANCE_ENTRY);
       const transport = wsTransport({ url: live.wsUrl });
       try {
+        const handshake = await transport.request({
+          jsonrpc: '2.0',
+          id: 'certify-handshake',
+          method: 'oumv/handshake',
+          params: {},
+        });
         const report = await runFixtureSuite(transport, loadFixtures(FIXTURES_PATH), live.workspace.markers, {
           adapterName: 'node-fastify-ws',
           framework: 'fastify',
           environment: { transport: 'ws', node: process.version },
+          capabilities: (handshake.result as any)?.capabilities,
           push: transport,
           pushTimeoutMs: 5_000,
         });
         if (report.failed > 0) console.log(report.cases.filter((entry: any) => entry.status !== 'passed'));
         expect(report.failed).toBe(0);
-        expect(report.total).toBe(34);
+        expect(report.total).toBe(35);
         writeReport('transports/node-fastify-ws.json', report);
       } finally {
         await transport.close?.();

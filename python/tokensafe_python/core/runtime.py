@@ -308,10 +308,10 @@ class OUMVRuntime:
                 major, minor = int(parts[0]), int(parts[1])
             except (IndexError, ValueError):
                 raise OumvError(UNSUPPORTED_CAPABILITY, f"UNSUPPORTED_CAPABILITY: protocol version {requested_version!r}")
-            if major != 1 or minor > 3:
+            if major != 1 or minor > 4:
                 raise OumvError(
                     UNSUPPORTED_CAPABILITY,
-                    f"UNSUPPORTED_CAPABILITY: protocol version {requested_version} (this runtime serves 1.3.0)",
+                    f"UNSUPPORTED_CAPABILITY: protocol version {requested_version} (this runtime serves 1.4.0)",
                 )
         session_id = self.sessions.create()
         caps = {
@@ -321,7 +321,14 @@ class OUMVRuntime:
             "understand": {"causality": True, "signalsGraph": False, "impactAnalysis": True},
             "mutate": {"occ": True, "syntaxGuard": True, "ephemeralDispatch": False},
             # No DOM/a11y surface exists on the backend profile.
-            "verify": {"multiMetric": True, "surfaceDiff": False},
+            "verify": {
+                "multiMetric": True,
+                "surfaceDiff": False,
+                # Only claim rollback when both an engine and a dispatcher exist.
+                "sandboxRollback": self.db_sandbox.has_engine() and self._action_executor is not None,
+            },
+            # Bindings this runtime mounts (spec §2.3/§2.4).
+            "transports": ["http", "sse", "ws"],
         }
         # §3.1: honour the client's request by narrowing the advertised set. Arrays
         # are filters; an empty intersection stays empty ("cannot serve").
@@ -334,7 +341,7 @@ class OUMVRuntime:
         if req_formats:
             caps["observe"]["formats"] = [fmt for fmt in caps["observe"]["formats"] if fmt in req_formats]
         return {
-            "protocolVersion": "1.3.0",
+            "protocolVersion": "1.4.0",
             "profile": "backend",
             "sessionId": session_id,
             "ttlSeconds": self.sessions.ttl,
@@ -1041,8 +1048,133 @@ class OUMVRuntime:
             result["rollbackHint"] = f"Previous content backed up at {backup_path}"
         return result
 
+    async def _verify_in_sandbox(self, kwargs: Dict[str, Any]) -> Dict[str, Any]:
+        """Runs verify inside one sandbox window and rolls it back before answering.
+
+        Evidence rule (spec §4): `verified` only when a ROLLBACK was observed on the
+        configured engine during the window; an engine without a rollback is
+        `unverified`; no engine at all is `not_applicable`. The application
+        cooperates through the `X-TokenSafe-Dry-Run` header the executor sets, so a
+        runtime never claims a rollback it did not observe.
+        """
+        if not self._action_executor:
+            raise OumvError(
+                -32008,
+                "RUNTIME_UNAVAILABLE: no application executor is mounted for verification",
+            )
+
+        steps = kwargs.get("steps") or []
+        requests: List[Dict[str, Any]] = []
+        if isinstance(steps, list) and steps:
+            for step in steps:
+                step = step or {}
+                target = str(step.get("target") or "")
+                parts = target.strip().split(" ", 1)
+                if len(parts) == 2:
+                    method, path = parts[0].upper(), parts[1]
+                else:
+                    method, path = "POST", parts[0] if parts else target
+                requests.append(
+                    {"target": target, "method": method, "path": path, "payload": step.get("payload"), "headers": None}
+                )
+        else:
+            target = str(kwargs.get("target") or "")
+            parts = target.strip().split(" ", 1)
+            method = str(kwargs.get("method") or (parts[0].upper() if len(parts) == 2 else "POST"))
+            path = parts[1] if len(parts) == 2 else (parts[0] if parts else target)
+            requests.append(
+                {
+                    "target": target,
+                    "method": method,
+                    "path": path,
+                    "payload": kwargs.get("payload"),
+                    "headers": kwargs.get("headers"),
+                }
+            )
+
+        results: List[Dict[str, Any]] = []
+        total = 0.0
+        self.db_sandbox.start_recording()
+        try:
+            for request in requests:
+                started = time.perf_counter()
+                try:
+                    body, status_code = await self._action_executor(
+                        path=request["path"] or "/",
+                        method=request["method"] or "GET",
+                        body=request["payload"],
+                        headers=request["headers"] or {},
+                        query_params={},
+                        dry_run=True,
+                    )
+                except Exception as exc:  # noqa: BLE001 - reported as a failed step
+                    body, status_code = {"error": str(exc)}, 500
+                elapsed = (time.perf_counter() - started) * 1000.0
+                total += elapsed
+                results.append(
+                    {
+                        "target": request["target"],
+                        "statusCode": int(status_code),
+                        "status": "passed" if status_code < 400 else "failed",
+                        "responseBody": body,
+                    }
+                )
+        finally:
+            queries = self.db_sandbox.stop_recording()
+
+        if self.db_sandbox.has_engine():
+            rollback_verified = self.db_sandbox.rollback_observed()
+            rollback_status = "verified" if rollback_verified else "unverified"
+        else:
+            rollback_verified = False
+            rollback_status = "not_applicable"
+
+        not_executed = ["external processes", "real network"]
+        if not rollback_verified:
+            not_executed.append("persistent database state")
+
+        last = results[-1]
+        payload: Dict[str, Any] = {
+            "status": "passed" if all(step["status"] == "passed" for step in results) else "failed",
+            "target": kwargs.get("target") or last["target"],
+            "statusCode": last["statusCode"],
+            "steps": results,
+            "diff": {"stepCount": len(results), "status": last["statusCode"], "responseBody": last.get("responseBody")},
+            "timings": {
+                "t_action_ms": total,
+                "t_schema_ms": 0.0,
+                "t_propagation_ms": 0.0,
+                "t_dom_ms": 0.0,
+                "t_total_ms": total,
+            },
+            "durationMs": total,
+            "scope": {
+                "checked": ["one sandbox window over the dispatched steps"],
+                "notExecuted": not_executed,
+                "notSupported": ["browser/DOM assertions"],
+            },
+            "rolledBack": rollback_verified,
+            "rollbackStatus": rollback_status,
+        }
+        if self.db_sandbox.has_engine():
+            dialect = getattr(self.db_sandbox._engine, "dialect", None)  # noqa: SLF001 - evidence only
+            payload["dbDiff"] = {
+                "rollback": rollback_verified,
+                "queries": len(queries),
+                "driver": getattr(dialect, "name", None) or "sqlalchemy",
+            }
+        return payload
+
     async def handle_oumv_verify(self, **kwargs) -> Dict[str, Any]:
         """Verifies state/DOM assertions or simulated mutation diffs."""
+        sandbox = kwargs.get("sandbox") or {}
+        if isinstance(sandbox, dict) and sandbox.get("mode"):
+            if sandbox.get("mode") != "rollback":
+                raise OumvError(
+                    UNSUPPORTED_CAPABILITY,
+                    f"UNSUPPORTED_CAPABILITY: sandbox mode {sandbox.get('mode')!r}",
+                )
+            return await self._verify_in_sandbox(kwargs)
         steps = kwargs.get("steps") or []
         if isinstance(steps, list) and steps:
             results: List[Dict[str, Any]] = []
@@ -1070,7 +1202,7 @@ class OUMVRuntime:
                 )
             last = results[-1]
             return {
-                "status": "passed",
+                "status": "passed" if all(step["status"] == "passed" for step in results) else "failed",
                 "target": kwargs.get("target") or last["target"],
                 "statusCode": last["statusCode"],
                 "steps": results,

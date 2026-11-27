@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
-SPEC_VERSION = "1.3.0"
+SPEC_VERSION = "1.4.0"
 
 
 @dataclass
@@ -46,6 +46,8 @@ class Markers:
     rename_source: str = ""
     rename_target: str = ""
     rename_version: str = ""
+    # Fixtures v9: the target a sandbox capability case dispatches against.
+    sandbox_target: str = "POST /__oumv_sandbox_probe"
 
     def substitute(self, params: Dict[str, Any]) -> Dict[str, Any]:
         replacements = {
@@ -71,6 +73,7 @@ class Markers:
             "${RENAME_SOURCE}": self.rename_source,
             "${RENAME_TARGET}": self.rename_target,
             "${RENAME_VERSION}": self.rename_version,
+            "${SANDBOX_TARGET}": self.sandbox_target,
         }
         def walk(value: Any) -> Any:
             if isinstance(value, str):
@@ -215,6 +218,18 @@ def summarize_levels(cases: List[Dict[str, Any]]) -> Dict[str, str]:
     return levels
 
 
+def _capability_enabled(capabilities: Dict[str, Any], path: str) -> bool:
+    """Walks a dotted capability path and requires literal True."""
+    if not path:
+        return False
+    current: Any = capabilities
+    for segment in path.split("."):
+        if not isinstance(current, dict):
+            return False
+        current = current.get(segment)
+    return current is True
+
+
 async def run_conformance(
     post: Callable[[str, Dict[str, Any]], Awaitable[Dict[str, Any]]],
     spec_path: str | Path,
@@ -252,6 +267,24 @@ async def run_conformance(
                 outcome["status"] = "failed"
                 outcome["error"] = message
         results.append(outcome)
+
+    # Capability cases prove an advertised claim; a runtime that does not make the
+    # claim is not penalised, the case simply is not part of its report.
+    if spec.get("capabilityCases"):
+        handshake = await post("oumv/handshake", {})
+        capabilities = {}
+        if not handshake.get("error"):
+            capabilities = (handshake.get("result") or {}).get("capabilities") or {}
+        for case in spec["capabilityCases"]:
+            if not _capability_enabled(capabilities, str(case.get("requiresCapability") or "")):
+                continue
+            outcome = {"id": case["id"], "level": case["level"], "status": "passed", "error": ""}
+            body = await post(case["method"], markers.substitute(case.get("params", {})))
+            message = _check(case, body, markers)
+            if message:
+                outcome["status"] = "failed"
+                outcome["error"] = message
+            results.append(outcome)
 
     passed = sum(1 for r in results if r["status"] == "passed")
     return {

@@ -24,14 +24,34 @@ describe('Fastify adapter', () => {
   let rpcUrl: string;
   let dispose: () => Promise<void>;
   let closeWs: () => Promise<void>;
+  let probeRows = 0;
 
   beforeAll(async () => {
     workspace = createWorkspace();
     app = Fastify({ logger: false });
-    const runtime = new OumvRuntime({ workspaceDir: workspace.dir });
+    const runtime = new OumvRuntime({
+      workspaceDir: workspace.dir,
+      sandbox: {
+        db: {
+          run: async <T>(fn: () => Promise<T> | T) => {
+            const before = probeRows;
+            const result = await fn();
+            probeRows = before; // the sandbox rolls back whatever the probe wrote
+            return { result, rolledBack: true, queries: 2 };
+          },
+        },
+      },
+    });
     const adapter = await registerTokensafe(app, { runtime });
     app.get('/api/orders', async () => ({ orders: [] }));
     app.post('/api/orders', async (_request, reply) => reply.code(201).send({ id: 1 }));
+    app.post('/__oumv_sandbox_probe', async (request, reply) => {
+      if (request.headers['x-tokensafe-dry-run'] !== 'true') {
+        return reply.code(400).send({ error: 'dry-run header required' });
+      }
+      probeRows += 1;
+      return { ok: true };
+    });
 
     await app.listen({ port: 0, host: '127.0.0.1' });
     const port = (app.server.address() as AddressInfo).port;
@@ -55,7 +75,10 @@ describe('Fastify adapter', () => {
     });
     const endpoints = ((await response.json()) as any).result.data.endpoints;
     const paths = endpoints.map((endpoint: any) => `${endpoint.method} ${endpoint.path}`).sort();
-    expect(paths).toEqual(['GET /api/orders', 'POST /api/orders']);
+    // The sandbox probe route is mounted alongside the application's routes.
+    expect(paths).toEqual(
+      expect.arrayContaining(['GET /api/orders', 'POST /api/orders', 'POST /__oumv_sandbox_probe'])
+    );
   });
 
   it.runIf(hasConformanceRunner)(

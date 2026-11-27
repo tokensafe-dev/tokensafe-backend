@@ -12,6 +12,7 @@ describe('Express adapter', () => {
   let rpcUrl: string;
   let dispose: () => Promise<void>;
   let runtime: OumvRuntime;
+  let probeRows = 0;
 
   beforeAll(async () => {
     workspace = createWorkspace();
@@ -19,12 +20,33 @@ describe('Express adapter', () => {
     app.use(express.json());
     // Runtime first, so tracing can wrap the app routes, then mount: mount-time
     // introspection picks those routes up for L1.
-    runtime = new OumvRuntime({ workspaceDir: workspace.dir });    app.use(tracingMiddleware(runtime));
+    runtime = new OumvRuntime({
+      workspaceDir: workspace.dir,
+      sandbox: {
+        db: {
+          run: async <T>(fn: () => Promise<T> | T) => {
+            const before = probeRows;
+            const result = await fn();
+            probeRows = before; // the sandbox rolls back whatever the probe wrote
+            return { result, rolledBack: true, queries: 1 };
+          },
+        },
+      },
+    });
+    app.use(tracingMiddleware(runtime));
     app.get('/api/orders', (req, res) => {
       res.json({ orders: [] });
     });
     app.post('/api/orders', (req, res) => {
       res.status(201).json({ id: 1 });
+    });
+    app.post('/__oumv_sandbox_probe', (req, res) => {
+      if (req.headers['x-tokensafe-dry-run'] !== 'true') {
+        res.status(400).json({ error: 'dry-run header required' });
+        return;
+      }
+      probeRows += 1;
+      res.json({ ok: true });
     });
     const adapter = mountTokensafe(app, { runtime });
 
@@ -149,6 +171,25 @@ describe('Express adapter', () => {
       timeoutMs: 300,
     });
     expect(nothing).not.toContain('src/state-probe.ts');
+  });
+
+  it('runs verify under the DB sandbox and restores the probe state', async () => {
+    const response = await fetch(rpcUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({
+        jsonrpc: '2.0',
+        id: 1,
+        method: 'oumv/verify',
+        params: { target: 'POST /__oumv_sandbox_probe', sandbox: { mode: 'rollback' } },
+      }),
+    });
+    const body = (await response.json()) as any;
+    expect(body.result.rolledBack).toBe(true);
+    expect(body.result.rollbackStatus).toBe('verified');
+    expect(body.result.dbDiff).toEqual({ rollback: true, queries: 1, driver: 'app-hook' });
+    expect(body.result.scope.notExecuted).not.toContain('persistent database state');
+    expect(probeRows).toBe(0);
   });
 
   it('rejects a wrong session token with 401', async () => {
