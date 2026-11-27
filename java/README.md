@@ -11,7 +11,7 @@ performs OCC-guarded source mutations with a workspace jail.
 * **No modification of the project.** It never boots the application and never writes
   into it except through `oumv/applyEdit` (plus `.tokensafe/backups/` and the
   out-of-repository discovery descriptor).
-* **Honest conformance claim: Level 2** (fixtures v9 / wire `1.3.0`), certified report
+* **Honest conformance claim: Level 2** (fixtures v11 / wire `1.6.0`), certified report
   in [`../certification/java-spring.json`](../certification/java-spring.json).
   Level 3 is *not* claimed: L4 request traces and runtime causality require a live
   application, and this sidecar deliberately does not fake them.
@@ -67,7 +67,7 @@ java java/src/dev/tokensafe/oumv/OumvSpring.java --root testdata/spring-app --sc
 java .../OumvSpring.java --root testdata/spring-app --port 7331 --token dev-token &
 curl -s http://127.0.0.1:7331/__oumv/rpc \
   -H 'Content-Type: application/json' -H 'X-OUMV-Session-Token: dev-token' \
-  -d '{"jsonrpc":"2.0","id":1,"method":"oumv/handshake","params":{"protocolVersion":"1.3.0"}}'
+  -d '{"jsonrpc":"2.0","id":1,"method":"oumv/handshake","params":{"protocolVersion":"1.3.0"}}'  # any 1.x ≤ 1.6.0 is accepted
 ```
 
 * `POST /__oumv/rpc` accepts one object or a batch array. Responses are arrays in any
@@ -230,7 +230,7 @@ application state. No rollback is ever claimed.
 ## Certification
 
 Report: [`../certification/java-spring.json`](../certification/java-spring.json) —
-**attainedLevel 2**, **32/33** fixtures passed. The single failure is the Level 3 case
+**attainedLevel 2**, **32/33** fixtures passed (fixtures v11, wire 1.6.0). The single failure is the Level 3 case
 `observe-l4-returns-recorded-traces`, which answers `-32006` by design:
 
 ```

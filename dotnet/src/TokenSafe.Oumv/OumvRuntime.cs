@@ -11,7 +11,7 @@ namespace TokenSafe.Oumv;
 /// </summary>
 public sealed class OumvRuntime
 {
-    public const string ProtocolVersion = "1.5.0";
+    public const string ProtocolVersion = "1.6.0";
 
     private readonly OumvOptions _options;
     private readonly SourceEditor _editor;
@@ -187,7 +187,7 @@ public sealed class OumvRuntime
         {
             var parts = requestedVersion.Split('.');
             if (parts.Length < 2 || !int.TryParse(parts[0], out var major) || !int.TryParse(parts[1], out var minor) ||
-                major != 1 || minor > 5)
+                major != 1 || minor > 6)
                 throw OumvException.Unsupported(
                     $"UNSUPPORTED_CAPABILITY: protocol version {requestedVersion} (this runtime serves {ProtocolVersion})",
                     new Dictionary<string, object?> { ["reason"] = "unsupported_version" });

@@ -17,7 +17,7 @@ package dev.tokensafe.oumv;
  *   - verify runs the real configured command (default `javac {file}`) and reports
  *     its real exit status; it never claims an HTTP dispatch it did not perform.
  *
- * Wire contract: OUMV spec v1.4.0 (protocolVersion 1.5.0), backend profile.
+ * Wire contract: OUMV spec v1.5.0 (protocolVersion 1.6.0), backend profile.
  */
 
 import com.sun.net.httpserver.Headers;
@@ -70,9 +70,9 @@ public final class OumvSpring {
 
     static final String NAME = "oumv-java-spring";
     static final String VERSION = "0.1.0";
-    static final String PROTOCOL_VERSION = "1.5.0";
+    static final String PROTOCOL_VERSION = "1.6.0";
     static final int SUPPORTED_MAJOR = 1;
-    static final int SUPPORTED_MINOR_MAX = 5;
+    static final int SUPPORTED_MINOR_MAX = 6;
     static final String PROFILE = "backend";
     static final String FRAMEWORK = "spring";
     static final String[] OBSERVE_LEVELS = { "L0", "L1", "L2", "L3" };

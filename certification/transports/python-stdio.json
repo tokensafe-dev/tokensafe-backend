@@ -1,10 +1,10 @@
 {
   "adapterName": "python-stdio",
   "framework": "python",
-  "specVersion": "1.5.0",
-  "fixtureVersion": 10,
-  "total": 36,
-  "passed": 36,
+  "specVersion": "1.6.0",
+  "fixtureVersion": 11,
+  "total": 41,
+  "passed": 41,
   "failed": 0,
   "attainedLevel": 3,
   "levels": {
@@ -224,13 +224,43 @@
       "error": ""
     },
     {
+      "id": "preview-edit-does-not-write",
+      "level": 3,
+      "status": "passed",
+      "error": ""
+    },
+    {
+      "id": "apply-edit-idempotency-key-replays",
+      "level": 3,
+      "status": "passed",
+      "error": ""
+    },
+    {
+      "id": "cancel-unknown-request-id-is-not-an-error",
+      "level": 1,
+      "status": "passed",
+      "error": ""
+    },
+    {
+      "id": "index-returns-ranked-matches",
+      "level": 3,
+      "status": "passed",
+      "error": ""
+    },
+    {
+      "id": "build-returns-status-and-diagnostics",
+      "level": 3,
+      "status": "passed",
+      "error": ""
+    },
+    {
       "id": "expired-session-is-rejected",
       "level": 3,
       "status": "passed",
       "error": ""
     }
   ],
-  "generatedAt": "2026-11-27T12:58:32Z",
+  "generatedAt": "2026-11-27T20:10:55Z",
   "environment": {
     "transport": "stdio",
     "python": "3.13.5"

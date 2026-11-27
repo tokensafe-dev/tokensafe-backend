@@ -1,8 +1,8 @@
 {
   "adapterName": "dotnet-aspnetcore",
   "framework": "aspnetcore",
-  "specVersion": "1.5.0",
-  "fixtureVersion": 10,
+  "specVersion": "1.6.0",
+  "fixtureVersion": 11,
   "total": 37,
   "passed": 37,
   "failed": 0,
@@ -200,7 +200,7 @@
       "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-27T14:58:00.426Z",
+  "generatedAt": "2026-11-27T20:11:39.599Z",
   "environment": {
     "transport": "http",
     "profile": "backend",

@@ -1,7 +1,7 @@
 # OUMV PHP sidecar (`oumv-php`)
 
 A **dependency-free** PHP implementation of the OUMV backend profile (wire
-`protocolVersion` **1.3.0**, spec `agent-oumv/spec/SPEC.md`). One file, no
+`protocolVersion` **1.6.0**, spec `agent-oumv/spec/SPEC.md`). One file, no
 Composer, no framework boot:
 
 ```
@@ -22,7 +22,7 @@ a workspace jail, a `php -l` pre-flight and automatic backups.
 | 3 | **failed by design** | 0/1 — `observe-l4-returns-recorded-traces` |
 
 Report: [`certification/php-laravel.json`](../certification/php-laravel.json)
-(fixtures v9, spec 1.3.0, 32/33 cases).
+(fixtures v11, spec wire 1.6.0, 32/33 cases).
 
 Level 3 requires L4 request traces and runtime causality derived from real
 executions. This sidecar has **no live PHP application** attached: `verify` runs
