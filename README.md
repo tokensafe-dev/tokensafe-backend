@@ -29,7 +29,7 @@
 ## Certification (spec §10)
 
 <!-- certification:start -->
-**9 adapters certified against 33 language-neutral cases** (`fixtureVersion` 11): 7 at Level 3 and 2 source-level adapter(s) at Level 2, each with its single L3 gap named below. A report with 34 cases also ran the sandbox capability case its runtime advertises. Generated from `certification/*.json` by `scripts/render_certification.py`; CI fails when this block no longer matches the reports.
+**10 adapters certified against 33 language-neutral cases** (`fixtureVersion` 11): 8 at Level 3 and 2 source-level adapter(s) at Level 2, each with its single L3 gap named below. A report with 34 cases also ran the sandbox capability case its runtime advertises. Generated from `certification/*.json` by `scripts/render_certification.py`; CI fails when this block no longer matches the reports.
 
 | Adapter | Framework | Transport exercised | Level | Cases | Report |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -40,6 +40,7 @@
 | `node-express` | Express | Node `POST /__oumv/rpc` | **3** | 42/42 | [certification/node-express.json](certification/node-express.json) |
 | `node-fastify` | Fastify | Node `POST /__oumv/rpc` | **3** | 42/42 | [certification/node-fastify.json](certification/node-fastify.json) |
 | `python-fastapi` | FastAPI | ASGI `POST /__oumv/rpc` | **3** | 44/44 | [certification/python-fastapi.json](certification/python-fastapi.json) |
+| `python-stdio` | python | — | **3** | 41/41 | [certification/python-stdio.json](certification/python-stdio.json) |
 
 Source-level adapters scan the framework's route declarations statically, apply OCC-checked edits and run a real verify command, but they do not boot the application — so they record no live request traces, `observe-l4-returns-recorded-traces` fails, and Level 3 is not claimed:
 
