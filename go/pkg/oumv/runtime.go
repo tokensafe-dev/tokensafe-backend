@@ -15,6 +15,7 @@ import (
 	"net/http"
 	"net/http/httptest"
 	"os"
+	"sort"
 	"path/filepath"
 	"runtime"
 	"strconv"
@@ -536,7 +537,33 @@ func intersectStrings(implemented, requested []string) []string {
 }
 
 // Observe executes Pillar 1: Progressive Context Disclosure (L0 to L4).
+// Observe executes Pillar 1 with the §8 ifVersion freshness handshake
+// (wire 1.6.0): a matching workspaceVersion token answers the short unchanged
+// envelope; a stale one answers -32010 STALE_RESOURCE_VERSION with data.current.
 func (r *Runtime) Observe(ctx context.Context, params *protocol.ObserveParams) (*protocol.ObserveResult, *protocol.OumvError) {
+	digest := r.WorkspaceDigest()
+	if params != nil && strings.TrimSpace(params.IfVersion) != "" {
+		if params.IfVersion != digest {
+			return nil, &protocol.OumvError{
+				Code:    protocol.ErrStaleResourceVersion,
+				Message: fmt.Sprintf("STALE_RESOURCE_VERSION: the workspace changed since the caller's snapshot (expected %s, current is %s) — refetch without ifVersion", params.IfVersion, digest),
+				Data:    map[string]string{"reason": "stale_version", "current": digest, "expected": params.IfVersion},
+			}
+		}
+		level := params.Level
+		if level == "" {
+			level = protocol.LevelL0Pulse
+		}
+		return &protocol.ObserveResult{Level: level, Format: "json", Unchanged: true, WorkspaceVersion: digest}, nil
+	}
+	res, oerr := r.observeUncached(ctx, params)
+	if oerr == nil && res != nil {
+		res.WorkspaceVersion = digest
+	}
+	return res, oerr
+}
+
+func (r *Runtime) observeUncached(ctx context.Context, params *protocol.ObserveParams) (*protocol.ObserveResult, *protocol.OumvError) {
 	if !r.config.Capabilities.Observe {
 		return nil, protocol.NewPermissionDeniedError("observe capability is disabled by policy")
 	}
@@ -836,7 +863,32 @@ func (r *Runtime) tracesForTarget(target string) ([]protocol.TraceEntry, string)
 // (adapters' trace middleware, or in-memory oumv/verify dispatches) —
 // never fabricated. When no trace exists, Observed=false with an
 // actionable note.
+// Understand executes Pillar 2 with the §8 ifVersion freshness handshake
+// (wire 1.6.0), mirroring Observe.
 func (r *Runtime) Understand(ctx context.Context, params *protocol.UnderstandParams) (*protocol.UnderstandResult, *protocol.OumvError) {
+	digest := r.WorkspaceDigest()
+	if params != nil && strings.TrimSpace(params.IfVersion) != "" {
+		if params.IfVersion != digest {
+			return nil, &protocol.OumvError{
+				Code:    protocol.ErrStaleResourceVersion,
+				Message: fmt.Sprintf("STALE_RESOURCE_VERSION: the workspace changed since the caller's snapshot (expected %s, current is %s) — refetch without ifVersion", params.IfVersion, digest),
+				Data:    map[string]string{"reason": "stale_version", "current": digest, "expected": params.IfVersion},
+			}
+		}
+		query := params.Query
+		if query == "" {
+			query = protocol.QueryCausality
+		}
+		return &protocol.UnderstandResult{Query: query, Unchanged: true, WorkspaceVersion: digest}, nil
+	}
+	res, oerr := r.understandUncached(ctx, params)
+	if oerr == nil && res != nil {
+		res.WorkspaceVersion = digest
+	}
+	return res, oerr
+}
+
+func (r *Runtime) understandUncached(ctx context.Context, params *protocol.UnderstandParams) (*protocol.UnderstandResult, *protocol.OumvError) {
 	if !r.config.Capabilities.Understand {
 		return nil, protocol.NewPermissionDeniedError("understand capability is disabled by policy")
 	}
@@ -2115,6 +2167,46 @@ func occurrenceDetails(region, target string, lineOffset int) []Occurrence {
 func hashVersion(data []byte) string {
 	sum := sha256.Sum256(data)
 	return "sha256:" + hex.EncodeToString(sum[:])
+}
+
+// workspaceDigestSkipDirs are the inventory directories whose churn does not
+// describe the workspace's analysis surface (build output, tool state).
+var workspaceDigestSkipDirs = map[string]bool{
+	".git": true, "node_modules": true, ".venv": true, "venv": true,
+	"__pycache__": true, ".tokensafe": true, ".oumv": true, "dist": true,
+	"build": true, ".pytest_cache": true, "target": true,
+}
+
+// WorkspaceDigest is the §8 result-versioning token (wire 1.6.0): a sha256 over
+// the workspace inventory (relative path, size, mtime). Any touched file
+// changes it, so an agent can learn exactly when foreign edits made a cached
+// observe/understand answer stale.
+func (r *Runtime) WorkspaceDigest() string {
+	root := r.config.WorkspaceDir
+	entries := []string{}
+	_ = filepath.WalkDir(root, func(path string, d os.DirEntry, err error) error {
+		if err != nil {
+			return nil
+		}
+		if d.IsDir() {
+			if workspaceDigestSkipDirs[d.Name()] {
+				return filepath.SkipDir
+			}
+			return nil
+		}
+		info, statErr := d.Info()
+		if statErr != nil {
+			return nil
+		}
+		rel, relErr := filepath.Rel(root, path)
+		if relErr != nil {
+			return nil
+		}
+		entries = append(entries, fmt.Sprintf("%s:%d:%d", filepath.ToSlash(rel), info.Size(), info.ModTime().UnixNano()))
+		return nil
+	})
+	sort.Strings(entries)
+	return hashVersion([]byte(strings.Join(entries, "\n")))
 }
 
 // backupPrevious copies the current bytes into .tokensafe/backups before a

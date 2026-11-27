@@ -13,6 +13,9 @@ const (
 type UnderstandParams struct {
 	Query  UnderstandQuery `json:"query"`
 	Target string          `json:"target"` // Endpoint, function, error ID or type name
+	// IfVersion is the §8 freshness handshake (wire 1.6.0): a previously
+	// returned workspaceVersion token; mismatch answers -32010.
+	IfVersion string `json:"ifVersion,omitempty"`
 }
 
 // UnderstandResult is the container for understand query responses.
@@ -22,6 +25,9 @@ type UnderstandResult struct {
 	Impact    *ImpactResult    `json:"impact,omitempty"`
 	Causality *CausalityResult `json:"causality,omitempty"`
 	TypeGraph *TypeGraphResult `json:"typeGraph,omitempty"`
+	// §8 result versioning (wire 1.6.0): freshness token + short-answer flag.
+	WorkspaceVersion string `json:"workspaceVersion,omitempty"`
+	Unchanged        bool   `json:"unchanged,omitempty"`
 }
 
 // EvidenceMetadata carries provenance for understand results (spec §6.2).

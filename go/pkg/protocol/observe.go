@@ -19,6 +19,10 @@ type ObserveParams struct {
 	// Limit and Cursor page L1/L4 collections (spec §4.1); zero limit means "all".
 	Limit  int    `json:"limit,omitempty"`
 	Cursor string `json:"cursor,omitempty"`
+	// IfVersion is the §8 freshness handshake (wire 1.6.0): a previously returned
+	// workspaceVersion token. Match -> short {unchanged, workspaceVersion};
+	// mismatch -> -32010 STALE_RESOURCE_VERSION with data.current.
+	IfVersion string `json:"ifVersion,omitempty"`
 }
 
 // ObserveResult defines the response payload for `oumv/observe`.
@@ -29,6 +33,11 @@ type ObserveResult struct {
 	Format        string      `json:"format"`
 	Data          interface{} `json:"data"`
 	TokenEstimate int         `json:"tokenEstimate,omitempty"`
+	// §8 result versioning (wire 1.6.0): the freshness token over the workspace
+	// inventory; set on every observe answer (short unchanged answers included).
+	WorkspaceVersion string `json:"workspaceVersion,omitempty"`
+	// Unchanged is true only for the short ifVersion-match answer.
+	Unchanged bool `json:"unchanged,omitempty"`
 }
 
 // L0PulseData represents the lean L0 system pulse (~30 tokens).
