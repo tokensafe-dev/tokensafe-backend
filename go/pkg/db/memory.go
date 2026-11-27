@@ -44,5 +44,7 @@ func NewMemorySandbox() *Sandbox {
 	if err != nil {
 		return nil
 	}
-	return NewSandbox(connection)
+	// The memory driver proves rollback only: the handshake must not advertise
+	// observeQuery for an engine that cannot execute queries.
+	return NewSandboxWithoutReads(connection)
 }

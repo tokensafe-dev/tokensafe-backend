@@ -39,6 +39,11 @@ type ApplyEditParams struct {
 	Path            string `json:"path"`
 	Replacement     string `json:"replacement"`
 	ExpectedVersion string `json:"expectedVersion"` // "sha256:..." (mandatory for replace)
+	// §2.1/§3 correlation & idempotency (wire 1.6.0); advisory, never required.
+	SessionID      string `json:"sessionId,omitempty"`
+	RequestID      string `json:"requestId,omitempty"`
+	TimeoutMs      int    `json:"timeoutMs,omitempty"`
+	IdempotencyKey string `json:"idempotencyKey,omitempty"`
 	// Mode is "replace" (default) or "create"; create forbids expectedVersion and
 	// refuses to overwrite an existing file (spec §4.3).
 	Mode string `json:"mode,omitempty"`

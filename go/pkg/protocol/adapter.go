@@ -4,13 +4,18 @@ import "context"
 
 // Standard OUMV RPC Methods
 const (
-	MethodHandshake  = "oumv/handshake"
-	MethodDisconnect = "oumv/disconnect"
-	MethodObserve    = "oumv/observe"
-	MethodUnderstand = "oumv/understand"
-	MethodGetSource  = "oumv/getSource"
-	MethodApplyEdit  = "oumv/applyEdit"
-	MethodVerify     = "oumv/verify"
+	MethodHandshake   = "oumv/handshake"
+	MethodDisconnect  = "oumv/disconnect"
+	MethodObserve     = "oumv/observe"
+	MethodUnderstand  = "oumv/understand"
+	MethodGetSource   = "oumv/getSource"
+	MethodApplyEdit   = "oumv/applyEdit"
+	MethodVerify      = "oumv/verify"
+	MethodPreviewEdit = "oumv/previewEdit" // wire 1.6.0
+	MethodCancel      = "oumv/cancel"      // wire 1.6.0
+	MethodIndex       = "oumv/index"       // wire 1.6.0
+	MethodQuery       = "oumv/query"       // wire 1.6.0
+	MethodBuild       = "oumv/build"       // wire 1.6.0
 )
 
 // OumvRuntimeAdapter is the core contract that every backend runtime adapter must satisfy.
@@ -40,3 +45,29 @@ type OumvRuntimeAdapter interface {
 	// Verify executes Pillar 4: Sub-millisecond local action and state verification.
 	Verify(ctx context.Context, params *VerifyParams) (*VerifyResult, *OumvError)
 }
+
+// Optional wire 1.6.0 capabilities (spec §3/§4.4/§14). A runtime that does not
+// implement them answers -32601 like any unknown method; the dispatcher probes
+// these interfaces so existing adapters stay valid unchanged.
+type (
+	// PreviewEditor is the §4.4 dry-run of applyEdit.
+	PreviewEditor interface {
+		PreviewEdit(ctx context.Context, params *PreviewEditParams) (*PreviewEditResult, *OumvError)
+	}
+	// Canceller answers §3 best-effort cancellation.
+	Canceller interface {
+		Cancel(ctx context.Context, params *CancelParams) (*CancelResult, *OumvError)
+	}
+	// Indexer serves the §14.1 repo-wide symbol search.
+	Indexer interface {
+		Index(ctx context.Context, params *IndexParams) (*IndexResult, *OumvError)
+	}
+	// Querier serves the §14.2 read-only data access.
+	Querier interface {
+		Query(ctx context.Context, params *QueryParams) (*QueryResult, *OumvError)
+	}
+	// Builder serves the §14.3 build/test diagnostics.
+	Builder interface {
+		Build(ctx context.Context, params *BuildParams) (*BuildResult, *OumvError)
+	}
+)

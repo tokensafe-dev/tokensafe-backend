@@ -58,6 +58,8 @@ type Runtime struct {
 	eventSeq     uint64
 	subs         map[chan protocol.StreamEvent]struct{}
 	mu           sync.RWMutex
+	// §3 idempotency (wire 1.6.0): session:key -> first final applyEdit result.
+	idempotency sync.Map
 }
 
 // maxRequestTraces bounds the in-memory L4 trace ring buffer.
@@ -448,7 +450,7 @@ func (r *Runtime) Handshake(ctx context.Context, params *protocol.OumvHandshakeP
 	// echo of a version the runtime cannot honour.
 	if params != nil && strings.TrimSpace(params.ProtocolVersion) != "" {
 		major, minor, ok := parseProtocolVersion(params.ProtocolVersion)
-		if !ok || major != 1 || minor > 5 {
+		if !ok || major != 1 || minor > 6 {
 			return nil, protocol.NewUnsupportedCapabilityError(
 				"protocol version " + params.ProtocolVersion + " (this runtime serves " + protocol.CurrentProtocolVersion + ")",
 			)
@@ -458,6 +460,8 @@ func (r *Runtime) Handshake(ctx context.Context, params *protocol.OumvHandshakeP
 	caps := protocol.DefaultBackendCapabilities()
 	r.mu.RLock()
 	caps.Verify.SandboxRollback = r.dbSandbox != nil
+	// §14.2: read-only data access is honest only with a wired, query-capable engine.
+	caps.ObserveQuery = &protocol.ObserveQueryCapability{ReadOnly: r.dbSandbox.SupportsReads()}
 	r.mu.RUnlock()
 	caps.Transports = r.transportsOrDefault()
 	if !r.config.Capabilities.Observe {
@@ -1049,7 +1053,28 @@ func (r *Runtime) GetSource(ctx context.Context, params *protocol.GetSourceParam
 // ApplyEdit executes Pillar 3B: Applies source edit with OCC and pre-flight syntax checks.
 // ApplyEdit applies a mutation and, on success, publishes the new resource state
 // to streaming clients (spec §2.3 `event: state`, §2.4 notifications/oumv.state).
+// idempotencyKey scopes a client key to its session (§3).
+func idempotencyKey(sessionID, key string) string {
+	return sessionID + ":" + key
+}
+
+// ApplyEdit applies an OCC edit — with §3 idempotency replay when a key is given.
 func (r *Runtime) ApplyEdit(ctx context.Context, params *protocol.ApplyEditParams) (*protocol.ApplyEditResult, *protocol.OumvError) {
+	if params != nil && strings.TrimSpace(params.IdempotencyKey) != "" {
+		key := idempotencyKey(params.SessionID, params.IdempotencyKey)
+		if cached, ok := r.idempotency.Load(key); ok {
+			return cached.(*protocol.ApplyEditResult), nil
+		}
+		result, err := r.applyEditUncached(ctx, params)
+		if err == nil && result != nil && result.Status == "APPLIED" {
+			r.idempotency.Store(key, result)
+		}
+		return result, err
+	}
+	return r.applyEditUncached(ctx, params)
+}
+
+func (r *Runtime) applyEditUncached(ctx context.Context, params *protocol.ApplyEditParams) (*protocol.ApplyEditResult, *protocol.OumvError) {
 	// Wire 1.5.0: a request carrying `edits` is a multi-file atomic batch.
 	if params != nil && len(params.Edits) > 0 {
 		result, err := r.applyEditBatch(ctx, params)

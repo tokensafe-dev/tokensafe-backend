@@ -78,6 +78,9 @@ type RuntimeConfig struct {
 	Transport    TransportConfig    `json:"transport"`
 	Security     SecurityConfig     `json:"security"`
 	Capabilities CapabilitiesConfig `json:"capabilities"`
+	// BuildCommand is the §14.3 default build/test command (shell-split, run in
+	// the workspace root). Empty = oumv/build answers `skipped` with a reason.
+	BuildCommand string `json:"buildCommand,omitempty"`
 }
 
 // IsLoopbackHost returns true if the host string is a local loopback address.

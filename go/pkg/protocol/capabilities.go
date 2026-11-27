@@ -34,15 +34,21 @@ type MutateCapability struct {
 	SyntaxGuard bool `json:"syntaxGuard"`
 	// MultiFile advertises the atomic batch envelope (wire 1.5.0).
 	MultiFile bool `json:"multiFile,omitempty"`
+	// Preview advertises the §4.4 dry-run `oumv/previewEdit` (wire 1.6.0).
+	Preview bool `json:"preview,omitempty"`
 	// Not implemented: kept off the wire entirely (schema forbids unknown fields).
 	TypeGuard bool `json:"-"`
 }
 
-// SessionCapability defines the session-lifecycle features (wire 1.5.0).
+// SessionCapability defines the session-lifecycle features (wire 1.5.0/1.6.0).
 type SessionCapability struct {
 	// TTLSeconds is true when the handshake honours a client-requested
 	// `sessionTtlSeconds` and echoes the granted lifetime as `ttlSeconds`.
 	TTLSeconds bool `json:"ttlSeconds,omitempty"`
+	// Cancel is true when `oumv/cancel` is accepted (§3, wire 1.6.0).
+	Cancel bool `json:"cancel,omitempty"`
+	// Idempotency is true when applyEdit/previewEdit honour `idempotencyKey` (§3).
+	Idempotency bool `json:"idempotency,omitempty"`
 }
 
 // VerifyCapability defines supported verification features.
@@ -51,8 +57,25 @@ type VerifyCapability struct {
 	SurfaceDiff bool `json:"surfaceDiff,omitempty"`
 	// SandboxRollback is advertised only when a database sandbox is configured.
 	SandboxRollback bool `json:"sandboxRollback,omitempty"`
-	DBSandbox       bool `json:"-"`
-	PayloadDiff     bool `json:"-"`
+	// Build advertises the §14.3 `oumv/build` structured diagnostics (wire 1.6.0).
+	Build bool `json:"build,omitempty"`
+	DBSandbox   bool `json:"-"`
+	PayloadDiff bool `json:"-"`
+}
+
+// IndexCapability advertises the §14.1 repo-wide symbol search (wire 1.6.0).
+type IndexCapability struct {
+	Symbols bool `json:"symbols,omitempty"`
+}
+
+// ObserveQueryCapability advertises the §14.2 read-only data access (wire 1.6.0).
+type ObserveQueryCapability struct {
+	ReadOnly bool `json:"readOnly,omitempty"`
+}
+
+// EventsCapability advertises the §2.6 push diagnostics (wire 1.6.0).
+type EventsCapability struct {
+	Diagnostic bool `json:"diagnostic,omitempty"`
 }
 
 // OumvCapabilities aggregates all functional pillars supported by client/runtime.
@@ -63,8 +86,12 @@ type OumvCapabilities struct {
 	Verify     VerifyCapability     `json:"verify"`
 	// Transports lists the bindings this runtime actually mounted (spec §2.3/§2.4).
 	Transports []string `json:"transports,omitempty"`
-	// Sessions advertises the TTL negotiation the handshake honours (wire 1.5.0).
+	// Sessions advertises the session-lifecycle features the handshake honours.
 	Sessions *SessionCapability `json:"sessions,omitempty"`
+	// Index/ObserveQuery/Events advertise the wire 1.6.0 optional surface (§14, §2.6).
+	Index        *IndexCapability        `json:"index,omitempty"`
+	ObserveQuery *ObserveQueryCapability `json:"observeQuery,omitempty"`
+	Events       *EventsCapability       `json:"events,omitempty"`
 }
 
 // OumvHandshakeParams is sent by the AI Agent during initialization.
@@ -106,15 +133,20 @@ func DefaultBackendCapabilities() OumvCapabilities {
 			OCC:         true,
 			SyntaxGuard: true,
 			MultiFile:   true,
+			Preview:     true,
 			TypeGuard:   false,
 		},
 		Verify: VerifyCapability{
 			MultiMetric: true,
 			// Verification runs the real handler in-memory; no DB sandbox and no
-			// expected/actual payload diff are produced.
+			// expected/actual payload diff are produced. Build is served from a
+			// configured (or per-call) command; without one it answers skipped.
 			DBSandbox:   false,
 			PayloadDiff: false,
+			Build:       true,
 		},
-		Sessions: &SessionCapability{TTLSeconds: true},
+		Sessions:     &SessionCapability{TTLSeconds: true, Cancel: true, Idempotency: true},
+		Index:        &IndexCapability{Symbols: true},
+		ObserveQuery: &ObserveQueryCapability{ReadOnly: true},
 	}
 }

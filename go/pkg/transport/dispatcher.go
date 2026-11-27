@@ -164,6 +164,93 @@ func (d *Dispatcher) Dispatch(ctx context.Context, req *protocol.OumvRequest) *p
 		}
 		return protocol.NewSuccessResponse(req.ID, res)
 
+	// Wire 1.6.0 optional surface (spec §3/§4.4/§14): a runtime that does not
+	// implement the method answers -32601 like any unknown method.
+	case protocol.MethodPreviewEdit:
+		impl, ok := d.adapter.(protocol.PreviewEditor)
+		if !ok {
+			return protocol.NewErrorResponse(req.ID, protocol.NewMethodNotFoundError(req.Method))
+		}
+		var params protocol.PreviewEditParams
+		if len(req.Params) > 0 {
+			if err := json.Unmarshal(req.Params, &params); err != nil {
+				return protocol.NewErrorResponse(req.ID, protocol.NewInvalidParamsError(err.Error()))
+			}
+		}
+		res, oumvErr := impl.PreviewEdit(ctx, &params)
+		if oumvErr != nil {
+			return protocol.NewErrorResponse(req.ID, oumvErr)
+		}
+		return protocol.NewSuccessResponse(req.ID, res)
+
+	case protocol.MethodCancel:
+		impl, ok := d.adapter.(protocol.Canceller)
+		if !ok {
+			return protocol.NewErrorResponse(req.ID, protocol.NewMethodNotFoundError(req.Method))
+		}
+		var params protocol.CancelParams
+		if len(req.Params) > 0 {
+			if err := json.Unmarshal(req.Params, &params); err != nil {
+				return protocol.NewErrorResponse(req.ID, protocol.NewInvalidParamsError(err.Error()))
+			}
+		}
+		res, oumvErr := impl.Cancel(ctx, &params)
+		if oumvErr != nil {
+			return protocol.NewErrorResponse(req.ID, oumvErr)
+		}
+		return protocol.NewSuccessResponse(req.ID, res)
+
+	case protocol.MethodIndex:
+		impl, ok := d.adapter.(protocol.Indexer)
+		if !ok {
+			return protocol.NewErrorResponse(req.ID, protocol.NewMethodNotFoundError(req.Method))
+		}
+		var params protocol.IndexParams
+		if len(req.Params) > 0 {
+			if err := json.Unmarshal(req.Params, &params); err != nil {
+				return protocol.NewErrorResponse(req.ID, protocol.NewInvalidParamsError(err.Error()))
+			}
+		}
+		res, oumvErr := impl.Index(ctx, &params)
+		if oumvErr != nil {
+			return protocol.NewErrorResponse(req.ID, oumvErr)
+		}
+		return protocol.NewSuccessResponse(req.ID, res)
+
+	case protocol.MethodQuery:
+		impl, ok := d.adapter.(protocol.Querier)
+		if !ok {
+			return protocol.NewErrorResponse(req.ID, protocol.NewMethodNotFoundError(req.Method))
+		}
+		var params protocol.QueryParams
+		if len(req.Params) > 0 {
+			if err := json.Unmarshal(req.Params, &params); err != nil {
+				return protocol.NewErrorResponse(req.ID, protocol.NewInvalidParamsError(err.Error()))
+			}
+		}
+		res, oumvErr := impl.Query(ctx, &params)
+		if oumvErr != nil {
+			return protocol.NewErrorResponse(req.ID, oumvErr)
+		}
+		return protocol.NewSuccessResponse(req.ID, res)
+
+	case protocol.MethodBuild:
+		impl, ok := d.adapter.(protocol.Builder)
+		if !ok {
+			return protocol.NewErrorResponse(req.ID, protocol.NewMethodNotFoundError(req.Method))
+		}
+		var params protocol.BuildParams
+		if len(req.Params) > 0 {
+			if err := json.Unmarshal(req.Params, &params); err != nil {
+				return protocol.NewErrorResponse(req.ID, protocol.NewInvalidParamsError(err.Error()))
+			}
+		}
+		res, oumvErr := impl.Build(ctx, &params)
+		if oumvErr != nil {
+			return protocol.NewErrorResponse(req.ID, oumvErr)
+		}
+		return protocol.NewSuccessResponse(req.ID, res)
+
 	default:
 		return protocol.NewErrorResponse(req.ID, protocol.NewMethodNotFoundError(req.Method))
 	}

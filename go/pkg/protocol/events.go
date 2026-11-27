@@ -10,7 +10,7 @@ import (
 // regardless of how the payload is shaped.
 type StreamEvent struct {
 	ID        uint64          `json:"id"`
-	Type      string          `json:"type"` // trace | state
+	Type      string          `json:"type"` // trace | state | diagnostic
 	Timestamp time.Time       `json:"timestamp"`
 	Data      json.RawMessage `json:"data"`
 }

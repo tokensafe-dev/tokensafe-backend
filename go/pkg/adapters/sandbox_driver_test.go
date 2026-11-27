@@ -41,7 +41,9 @@ func (*certSandboxTx) Rollback() error { atomic.AddInt32(&certSandboxRollbacks, 
 
 func init() { sql.Register("oumv-cert-sandbox", certSandboxDriver{}) }
 
-// newCertSandbox returns a sandbox wired to the fake driver.
+// newCertSandbox returns a sandbox wired to the fake driver. The driver proves
+// rollback only, so the sandbox is constructed without reads: the handshake
+// must not advertise observeQuery for an engine that cannot execute queries.
 func newCertSandbox(t *testing.T) *db.Sandbox {
 	t.Helper()
 	connection, err := sql.Open("oumv-cert-sandbox", "")
@@ -49,7 +51,7 @@ func newCertSandbox(t *testing.T) *db.Sandbox {
 		t.Fatalf("open cert sandbox driver: %v", err)
 	}
 	t.Cleanup(func() { _ = connection.Close() })
-	return db.NewSandbox(connection)
+	return db.NewSandboxWithoutReads(connection)
 }
 
 // sandboxProbe is the route the capability case dispatches: it only writes when
