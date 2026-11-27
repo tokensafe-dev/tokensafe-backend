@@ -27,16 +27,16 @@
 ## Certification (spec §10)
 
 <!-- certification:start -->
-**6 adapters certified at Level 3** — 25 language-neutral cases (`fixtureVersion` 6) over the transport an agent actually uses. Generated from `certification/*.json` by `scripts/render_certification.py`; CI fails when this block no longer matches the reports.
+**6 adapters certified at Level 3** — 33 language-neutral cases (`fixtureVersion` 7) over the transport an agent actually uses. Generated from `certification/*.json` by `scripts/render_certification.py`; CI fails when this block no longer matches the reports.
 
 | Adapter | Framework | Transport exercised | Level | Cases | Report |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `go-chi` | chi | HTTP `POST /__oumv/rpc` | **3** | 25/25 | [certification/go-chi.json](certification/go-chi.json) |
-| `go-gin` | Gin | HTTP `POST /__oumv/rpc` | **3** | 25/25 | [certification/go-gin.json](certification/go-gin.json) |
-| `go-stdhttp` | net/http | HTTP `POST /__oumv/rpc` | **3** | 25/25 | [certification/go-stdhttp.json](certification/go-stdhttp.json) |
-| `node-express` | Express | Node `POST /__oumv/rpc` | **3** | 25/25 | [certification/node-express.json](certification/node-express.json) |
-| `node-fastify` | Fastify | Node `POST /__oumv/rpc` | **3** | 25/25 | [certification/node-fastify.json](certification/node-fastify.json) |
-| `python-fastapi` | FastAPI | ASGI `POST /__oumv/rpc` | **3** | 25/25 | [certification/python-fastapi.json](certification/python-fastapi.json) |
+| `go-chi` | chi | HTTP `POST /__oumv/rpc` | **3** | 33/33 | [certification/go-chi.json](certification/go-chi.json) |
+| `go-gin` | Gin | HTTP `POST /__oumv/rpc` | **3** | 33/33 | [certification/go-gin.json](certification/go-gin.json) |
+| `go-stdhttp` | net/http | HTTP `POST /__oumv/rpc` | **3** | 33/33 | [certification/go-stdhttp.json](certification/go-stdhttp.json) |
+| `node-express` | Express | Node `POST /__oumv/rpc` | **3** | 33/33 | [certification/node-express.json](certification/node-express.json) |
+| `node-fastify` | Fastify | Node `POST /__oumv/rpc` | **3** | 33/33 | [certification/node-fastify.json](certification/node-fastify.json) |
+| `python-fastapi` | FastAPI | ASGI `POST /__oumv/rpc` | **3** | 33/33 | [certification/python-fastapi.json](certification/python-fastapi.json) |
 <!-- certification:end -->
 
 Levels are cumulative and a skipped case never counts as a pass — a missing capability caps the claim instead of inflating it. The same fixtures also run over **stdio** (§2.5) against the Node and Python runtimes: [`certification/transports/node-stdio.json`](certification/transports/node-stdio.json) and [`python-stdio.json`](certification/transports/python-stdio.json), both Level 3, 20/20. Regenerate locally:

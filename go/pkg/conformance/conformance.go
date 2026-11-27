@@ -21,7 +21,7 @@ import (
 )
 
 // SpecVersion is the protocol version this runner certifies against.
-const SpecVersion = "1.1.0"
+const SpecVersion = "1.3.0"
 
 // Case is one language-neutral conformance case.
 type Case struct {
@@ -74,6 +74,11 @@ type Markers struct {
 	RenameSource      string
 	RenameTarget      string
 	RenameVersion     string
+
+	// Wire 1.3.0: the version of EDIT_CONTENT once written, and the text a
+	// mode=patch hunk splices over it (the whole content, replaced).
+	EditContentVersion string
+	PatchReplacement   string
 }
 
 // CaseResult is the outcome of one case.
@@ -301,26 +306,28 @@ func Version(content []byte) string {
 
 func (m Markers) substitute(params map[string]interface{}) map[string]interface{} {
 	replacements := map[string]string{
-		"${FIXTURE_FILE}":        m.FixtureFile,
-		"${MISSING_FILE}":        m.MissingFile,
-		"${EDIT_TARGET_FILE}":    m.EditTarget,
-		"${EDIT_TARGET_VERSION}": m.EditVersion,
-		"${NEW_FILE}":            m.NewFile,
-		"${EDIT_CONTENT}":        m.EditContent,
-		"${BROKEN_CONTENT}":      m.BrokenContent,
-		"${L2_TARGET}":           m.L2Target,
-		"${L3_TARGET}":           m.L3Target,
-		"${VERIFY_TARGET}":       m.VerifyTarget,
-		"${SYMBOL_FILE}":         m.SymbolFile,
-		"${SYMBOL_NAME}":         m.SymbolName,
-		"${SYMBOL_REPLACEMENT}":  m.SymbolReplacement,
-		"${SYMBOL_VERSION}":      m.SymbolVersion,
-		"${SYMBOL_FILE_CONTENT}": m.SymbolFileContent,
-		"${DELETE_FILE}":         m.DeleteFile,
-		"${DELETE_VERSION}":      m.DeleteVersion,
-		"${RENAME_SOURCE}":       m.RenameSource,
-		"${RENAME_TARGET}":       m.RenameTarget,
-		"${RENAME_VERSION}":      m.RenameVersion,
+		"${FIXTURE_FILE}":         m.FixtureFile,
+		"${MISSING_FILE}":         m.MissingFile,
+		"${EDIT_TARGET_FILE}":     m.EditTarget,
+		"${EDIT_TARGET_VERSION}":  m.EditVersion,
+		"${NEW_FILE}":             m.NewFile,
+		"${EDIT_CONTENT}":         m.EditContent,
+		"${BROKEN_CONTENT}":       m.BrokenContent,
+		"${L2_TARGET}":            m.L2Target,
+		"${L3_TARGET}":            m.L3Target,
+		"${VERIFY_TARGET}":        m.VerifyTarget,
+		"${SYMBOL_FILE}":          m.SymbolFile,
+		"${SYMBOL_NAME}":          m.SymbolName,
+		"${SYMBOL_REPLACEMENT}":   m.SymbolReplacement,
+		"${SYMBOL_VERSION}":       m.SymbolVersion,
+		"${SYMBOL_FILE_CONTENT}":  m.SymbolFileContent,
+		"${DELETE_FILE}":          m.DeleteFile,
+		"${DELETE_VERSION}":       m.DeleteVersion,
+		"${RENAME_SOURCE}":        m.RenameSource,
+		"${RENAME_TARGET}":        m.RenameTarget,
+		"${RENAME_VERSION}":       m.RenameVersion,
+		"${EDIT_CONTENT_VERSION}": m.EditContentVersion,
+		"${PATCH_REPLACEMENT}":    m.PatchReplacement,
 	}
 	var walk func(value interface{}) interface{}
 	walk = func(value interface{}) interface{} {

@@ -15,7 +15,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
-SPEC_VERSION = "1.1.0"
+SPEC_VERSION = "1.3.0"
 
 
 @dataclass
@@ -28,6 +28,10 @@ class Markers:
     edit_target: str
     edit_version: str
     edit_content: str = "value = 42\n"
+    # Wire 1.3.0: the version of edit_content once written, and the text a
+    # mode=patch hunk splices over it (the whole content, replaced).
+    edit_content_version: str = "sha256:" + __import__("hashlib").sha256(b"value = 42\n").hexdigest()
+    patch_replacement: str = "# patched by conformance\nvalue = 42\n"
     broken_content: str = "def broken(:\n"
     l2_target: str = ""
     l3_target: str = ""
@@ -51,6 +55,8 @@ class Markers:
             "${EDIT_TARGET_FILE}": self.edit_target,
             "${EDIT_TARGET_VERSION}": self.edit_version,
             "${EDIT_CONTENT}": self.edit_content,
+            "${EDIT_CONTENT_VERSION}": self.edit_content_version,
+            "${PATCH_REPLACEMENT}": self.patch_replacement,
             "${BROKEN_CONTENT}": self.broken_content,
             "${L2_TARGET}": self.l2_target,
             "${L3_TARGET}": self.l3_target,

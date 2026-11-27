@@ -72,14 +72,13 @@ async def test_l2_exposes_declared_operation_contract():
     assert result["data"]["operation"]["inputSchema"] == {"order_id": "int"}
     assert "Order status must become cancelled" in result["data"]["operation"]["verification"]
 
-    # L2 without target lists all declared operations
+    # L2 without a target is -32602 (§5.2): a contract is always about one target.
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
         resp = await client.post(
             "/__oumv/rpc",
             json={"jsonrpc": "2.0", "id": 2, "method": "oumv/observe", "params": {"level": "L2"}},
         )
-    operations = resp.json()["result"]["data"]["operations"]
-    assert any(op["id"] == "orders.cancel" for op in operations)
+    assert resp.json()["error"]["code"] == -32602
 
 
 @pytest.mark.asyncio

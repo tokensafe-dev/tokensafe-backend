@@ -18,6 +18,7 @@ from tokensafe_python.core.discovery import DiscoveryManager
 from tokensafe_python.core.session import SessionRegistry
 from tokensafe_python.protocol.errors import (
     OumvError,
+    INVALID_PARAMS,
     CONFLICT_DETECTED,
     SYNTAX_ERROR,
     SECURITY_VIOLATION,
@@ -49,6 +50,7 @@ class OUMVRuntime:
         self.discovery = DiscoveryManager(project_root=project_root)
         self.sessions = SessionRegistry()
         self.rpc = JSONRPCHandler()
+        self._start_monotonic = time.monotonic()
 
         self._routes: List[Dict[str, Any]] = []
         self._schemas: Dict[str, Any] = {}
@@ -173,8 +175,21 @@ class OUMVRuntime:
             return traces
         return [t for t in traces if target in (t["target"], t["method"]) or t["target"].startswith(target)]
 
-    def _read_source(self, path: Optional[str], symbol: Optional[str] = None) -> Dict[str, Any]:
-        """Reads project source with its sha256 OCC token (L3 / getSource)."""
+    def _read_source(
+        self,
+        path: Optional[str],
+        symbol: Optional[str] = None,
+        start_line: Optional[int] = None,
+        end_line: Optional[int] = None,
+        if_version: Optional[str] = None,
+    ) -> Dict[str, Any]:
+        """Reads project source with its sha256 OCC token (L3 / getSource).
+
+        Wire 1.3.0: `startLine`/`endLine` return a 1-based inclusive window (end past
+        EOF is clamped) while `version` stays the hash of the whole file, so OCC never
+        depends on the window; `ifVersion` is the dedup pointer and answers
+        `{unchanged: true}` with no source instead of resending bytes.
+        """
         abs_path = self._resolve_project_file(path or "")
         if not abs_path or not os.path.isfile(abs_path):
             raise OumvError(RESOURCE_NOT_FOUND, f"RESOURCE_NOT_FOUND: {path}")
@@ -185,10 +200,18 @@ class OUMVRuntime:
         except UnicodeDecodeError:
             raise OumvError(VALIDATION_FAILED, f"VALIDATION_FAILED: {path} is not valid UTF-8 source")
         version = "sha256:" + hashlib.sha256(data).hexdigest()
-        start_line, end_line = 1, text.count("\n") + (0 if text.endswith("\n") else 1)
+        if if_version and if_version == version:
+            result = {"path": path, "version": version, "unchanged": True}
+            if symbol:
+                result["symbol"] = symbol
+            return result
+
+        lines = text.splitlines()
+        line_count = max(1, len(lines))
+        start_line = start_line if start_line and start_line > 0 else 1
+        end_line = end_line if end_line and end_line > 0 else line_count
         source = text
         if symbol:
-            lines = text.splitlines()
             start = next((i for i, line in enumerate(lines) if symbol in line), None)
             if start is None:
                 raise OumvError(RESOURCE_NOT_FOUND, f"RESOURCE_NOT_FOUND: symbol {symbol!r} not found in {path}")
@@ -199,19 +222,38 @@ class OUMVRuntime:
                 if line.strip() and (len(line) - len(line.lstrip())) <= indent:
                     break
                 end = i
-            source = "\n".join(lines[start:end + 1])
             start_line, end_line = start + 1, end + 1
-        return {
+
+        start_line = min(max(1, start_line), line_count)
+        end_line = min(max(start_line, end_line), line_count)
+        source = "\n".join(lines[start_line - 1:end_line])
+        result = {
             "path": path,
-            "symbol": symbol or "",
             "source": source,
             "version": version,
             "startLine": start_line,
             "endLine": end_line,
         }
+        if symbol:
+            result["symbol"] = symbol
+        return result
 
     async def handle_handshake(self, **kwargs) -> Dict[str, Any]:
         """UARP / OUMV Protocol Handshake (session lifecycle & capability negotiation)."""
+        # §11: serve our own MINOR and every earlier one; another MAJOR is -32006,
+        # never a silent echo of a version this runtime cannot honour.
+        requested_version = str(kwargs.get("protocolVersion") or "").strip()
+        if requested_version:
+            parts = requested_version.split(".")
+            try:
+                major, minor = int(parts[0]), int(parts[1])
+            except (IndexError, ValueError):
+                raise OumvError(UNSUPPORTED_CAPABILITY, f"UNSUPPORTED_CAPABILITY: protocol version {requested_version!r}")
+            if major != 1 or minor > 3:
+                raise OumvError(
+                    UNSUPPORTED_CAPABILITY,
+                    f"UNSUPPORTED_CAPABILITY: protocol version {requested_version} (this runtime serves 1.3.0)",
+                )
         session_id = self.sessions.create()
         caps = {
             # JSON only (no YAML emitter), no frontend signals graph: the backend
@@ -233,13 +275,13 @@ class OUMVRuntime:
         if req_formats:
             caps["observe"]["formats"] = [fmt for fmt in caps["observe"]["formats"] if fmt in req_formats]
         return {
-            "protocolVersion": "1.2.0",
+            "protocolVersion": "1.3.0",
             "profile": "backend",
             "sessionId": session_id,
             "ttlSeconds": self.sessions.ttl,
             "runtimeInfo": {
                 "name": "tokensafe-python",
-                "version": "0.3.0",
+                "version": "0.8.0",
                 "framework": self.framework,
             },
             "capabilities": caps,
@@ -249,9 +291,11 @@ class OUMVRuntime:
         """Closes a handshake session (spec §3)."""
         return {"closed": self.sessions.delete(sessionId)}
 
-    async def handle_get_source(self, path: Optional[str] = None, symbol: Optional[str] = None, **kwargs) -> Dict[str, Any]:
+    async def handle_get_source(self, path: Optional[str] = None, symbol: Optional[str] = None,
+                                startLine: Optional[int] = None, endLine: Optional[int] = None,
+                                ifVersion: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         """Pillar 3A: source with the sha256 OCC token (same contract as Go)."""
-        return self._read_source(path, symbol)
+        return self._read_source(path, symbol, start_line=startLine, end_line=endLine, if_version=ifVersion)
 
     async def handle_observe(self, level: str = "L0", target: Optional[str] = None, limit: Optional[int] = None, cursor: Optional[str] = None, **kwargs) -> Dict[str, Any]:
         """Progressive context observation (L0 Pulse, L1 Surface, L2 Contract, L3 Source, L4 Traces).
@@ -261,23 +305,21 @@ class OUMVRuntime:
         """
         lvl = (level or "L0").upper()
         if lvl == "L0":
+            # §4.1 backend L0: pulse fields only. framework/modelsCount belong to L1/L2.
             data: Dict[str, Any] = {
                 "status": "HEALTHY",
-                "framework": self.framework,
-                "routesCount": len(self._routes),
-                "modelsCount": len(self._schemas),
-                "timestamp": self.state.to_timestamp(),
+                "uptimeSeconds": int(time.monotonic() - self._start_monotonic),
+                "activeRoutes": len(self._routes),
+                "errorCount1m": sum(1 for t in self._traces if t.get("error")),
             }
             token_estimate = 30
         elif lvl == "L1":
             page, has_more, next_cursor = self._page(self._routes, limit, cursor)
             data = {
-                "framework": self.framework,
                 "endpoints": [
-                    {"method": r["method"], "path": r["path"], "summary": r.get("summary", "")}
+                    {"method": r["method"], "path": r["path"], "handlerName": r.get("handler", "")}
                     for r in page
                 ],
-                "models": list(self._schemas.keys()),
             }
             if limit:
                 data["hasMore"] = has_more
@@ -286,6 +328,8 @@ class OUMVRuntime:
             token_estimate = 30 + 15 * len(page)
         elif lvl == "L2":
             evidence = {"provenance": "runtime", "sourceAdapter": "tokensafe-python", "confidence": "confirmed"}
+            if not target:
+                raise OumvError(INVALID_PARAMS, "INVALID_PARAMS: target endpoint or handler required for L2 contract")
             if target:
                 if target in self._operations:
                     data = {"target": target, "operation": self._operations[target], "evidence": evidence}
@@ -316,9 +360,24 @@ class OUMVRuntime:
         elif lvl == "L4":
             traces = self._traces_for(target)
             page, has_more, next_cursor = self._page(traces, limit, cursor)
+            # §4.1 backend L4 trace items are {method, path, statusCode, durationMs,
+            # timestamp}: the internal record keeps `target`/`error`, the wire does not.
+            def _wire_trace(t: Dict[str, Any]) -> Dict[str, Any]:
+                method, path = t.get("method", ""), t.get("target", "")
+                head, _, tail = path.partition(" ")
+                if head.isupper() and tail:
+                    method, path = head, tail
+                return {
+                    "method": method,
+                    "path": path,
+                    "statusCode": t.get("statusCode", 200),
+                    "durationMs": t.get("durationMs", 0),
+                    "timestamp": t.get("timestamp", ""),
+                }
+
             data = {
                 "target": target or "",
-                "traces": page,
+                "traces": [_wire_trace(t) for t in page],
                 "traceCount": len(traces),
                 "note": "" if traces else "no RPC traces recorded yet: call oumv/verify or execute a request first",
                 "evidence": {"provenance": "runtime", "sourceAdapter": "tokensafe-python", "confidence": "confirmed"},
@@ -401,7 +460,12 @@ class OUMVRuntime:
                 "evidence": {"provenance": "static", "sourceAdapter": "tokensafe-python", "confidence": "probable"},
             }
             return {"query": "impact", "target": impact["target"], "impact": impact, "impactAnalysis": static}
-        return {"status": "ok", "query": query}
+        # §5.2: an unknown query is -32006, never a success with an "ok" body.
+        raise OumvError(
+            UNSUPPORTED_CAPABILITY,
+            f"UNSUPPORTED_CAPABILITY: unknown understand query {query!r}",
+            {"reason": "unknown_query"},
+        )
 
     async def handle_oumv_mutate(self, **kwargs) -> Dict[str, Any]:
         """Applies an OCC source edit (replace/create/symbol/delete/rename) or simulates an action."""
@@ -416,8 +480,9 @@ class OUMVRuntime:
             replacement = kwargs.get("source")
         expected_version = kwargs.get("expectedVersion") or kwargs.get("expected_version")
         rename_to = kwargs.get("renameTo") or kwargs.get("rename_to")
+        hunks = kwargs.get("hunks")
         mode = str(kwargs.get("mode") or "replace").lower()
-        if mode not in ("replace", "create", "symbol", "delete", "rename"):
+        if mode not in ("replace", "create", "symbol", "delete", "rename", "patch"):
             raise OumvError(
                 UNSUPPORTED_CAPABILITY,
                 f"UNSUPPORTED_CAPABILITY: unknown applyEdit mode {mode!r}",
@@ -432,6 +497,10 @@ class OUMVRuntime:
             return self._rename_source_file(
                 path=path, rename_to=rename_to, replacement=replacement, expected_version=expected_version
             )
+        if mode == "patch":
+            return self._apply_patch_edit(
+                path=path, hunks=hunks, expected_version=expected_version
+            )
         if replacement is None:
             # No replacement: report the current OCC version (getSource-style probe).
             version = self._file_version(path)
@@ -445,6 +514,138 @@ class OUMVRuntime:
         return self._apply_source_edit(
             path=path, symbol=symbol, replacement=replacement, expected_version=expected_version
         )
+
+    def _apply_patch_edit(self, *, path: str, hunks: Any, expected_version: Optional[str]) -> Dict[str, Any]:
+        """mode=patch (spec §4.3, wire 1.3.0): splice exact snippets under OCC.
+
+        Hunks apply in order to the evolving text; the first failure aborts with no
+        bytes written. Legacy `version`/`mode` keys are never emitted.
+        """
+        root_abs = self._project_root_abs()
+        abs_path = self._resolve_project_file(path or "")
+        if not abs_path or not os.path.isfile(abs_path):
+            raise OumvError(RESOURCE_NOT_FOUND, f"RESOURCE_NOT_FOUND: {path}")
+        if not isinstance(hunks, list) or not hunks:
+            raise OumvError(
+                VALIDATION_FAILED,
+                "VALIDATION_FAILED: hunks is required for mode=patch",
+                {"reason": "hunks_required"},
+            )
+        with open(abs_path, "rb") as f:
+            current_bytes = f.read()
+        current_version = "sha256:" + hashlib.sha256(current_bytes).hexdigest()
+        if not expected_version:
+            raise OumvError(
+                VALIDATION_FAILED,
+                "VALIDATION_FAILED: expectedVersion is required to edit an existing file — call oumv/getSource (or observe L3) and pass its version",
+                {"reason": "expected_version_required", "current": current_version},
+            )
+        if expected_version != current_version:
+            raise OumvError(
+                CONFLICT_DETECTED,
+                f"CONFLICT_DETECTED: version mismatch: expected {expected_version}, current is {current_version}",
+                {"reason": "version_mismatch"},
+            )
+
+        text = current_bytes.decode("utf-8")
+        for index, hunk in enumerate(hunks):
+            hunk = hunk or {}
+            target = hunk.get("target") or ""
+            replacement = hunk.get("replacement")
+            replacement = "" if replacement is None else str(replacement)
+            if not target:
+                raise OumvError(
+                    VALIDATION_FAILED,
+                    f"VALIDATION_FAILED: hunk {index} has an empty target",
+                    {"reason": "target_required", "hunk": index},
+                )
+            start_off, end_off = self._hunk_window(text, hunk, index)
+            region = text[start_off:end_off]
+            count = region.count(target)
+            if count == 0:
+                raise OumvError(
+                    RESOURCE_NOT_FOUND,
+                    f"RESOURCE_NOT_FOUND: hunk {index} target does not occur in the file",
+                    {"reason": "target_not_found", "hunk": index},
+                )
+            if count > 1 and not hunk.get("replaceAll"):
+                lines: List[int] = []
+                pos = 0
+                while len(lines) < 5:
+                    found = region.find(target, pos)
+                    if found < 0:
+                        break
+                    lines.append(1 + region.count("\n", 0, found))
+                    pos = found + len(target)
+                raise OumvError(
+                    VALIDATION_FAILED,
+                    f"VALIDATION_FAILED: hunk {index} target occurs {count} times; narrow it with startLine/endLine or set replaceAll",
+                    {"reason": "target_not_unique", "hunk": index, "count": count, "lines": lines},
+                )
+            if hunk.get("replaceAll"):
+                region = region.replace(target, replacement)
+            else:
+                region = region.replace(target, replacement, 1)
+            text = text[:start_off] + region + text[end_off:]
+
+        syntax_check = self._syntax_check(abs_path, text)
+        if syntax_check["status"] == "failed":
+            raise OumvError(
+                SYNTAX_ERROR,
+                f"SYNTAX_ERROR: edit rejected ({syntax_check['tool']}): {syntax_check['error']}",
+                data={"syntaxCheck": syntax_check},
+            )
+
+        backup_path = None
+        try:
+            backup_dir = os.path.join(root_abs, ".tokensafe", "backups")
+            os.makedirs(backup_dir, exist_ok=True)
+            digest = hashlib.sha256(current_bytes).hexdigest()[:8]
+            backup_path = os.path.join(backup_dir, f"{digest}_{os.path.basename(abs_path)}.bak")
+            with open(backup_path, "wb") as f:
+                f.write(current_bytes)
+        except Exception:
+            backup_path = None
+
+        with open(abs_path, "w", encoding="utf-8") as f:
+            f.write(text)
+
+        result = {
+            "status": "APPLIED",
+            "path": path,
+            "newVersion": "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest(),
+            "syntaxCheck": syntax_check,
+            "hunksApplied": len(hunks),
+        }
+        if backup_path:
+            result["backupPath"] = backup_path
+            result["rollbackHint"] = f"Previous content backed up at {backup_path}"
+        return result
+
+    @staticmethod
+    def _hunk_window(text: str, hunk: Dict[str, Any], index: int) -> "tuple[int, int]":
+        """Byte range a hunk searches, from 1-based inclusive startLine/endLine."""
+        start_line = hunk.get("startLine")
+        end_line = hunk.get("endLine")
+        if not start_line and not end_line:
+            return 0, len(text)
+        lines = text.split("\n")
+        start = max(1, int(start_line or 1))
+        end = int(end_line or len(lines))
+        if start > len(lines):
+            start = len(lines)
+        if end > len(lines):
+            end = len(lines)
+        if end < start:
+            raise OumvError(
+                VALIDATION_FAILED,
+                "VALIDATION_FAILED: endLine precedes startLine",
+                {"reason": "inverted_line_range", "hunk": index},
+            )
+        offsets = [0]
+        for line in lines[:-1]:
+            offsets.append(offsets[-1] + len(line) + 1)
+        return offsets[start - 1], offsets[end - 1] + len(lines[end - 1])
 
     def _create_source_file(self, *, path: str, replacement: str, expected_version: Optional[str]) -> Dict[str, Any]:
         """mode=create (spec §4.3): write a file that must not exist yet."""
@@ -764,15 +965,16 @@ class OUMVRuntime:
             f.write(replacement)
 
         new_version = "sha256:" + hashlib.sha256(replacement.encode("utf-8")).hexdigest()
+        # §4.6: `version` is a deprecated alias that must be accepted but never
+        # emitted; `mode` was never in the response schema.
         result = {
             "status": "APPLIED",
             "path": path,
-            "symbol": symbol,
-            "version": new_version,
             "newVersion": new_version,
-            "mode": "RUNTIME_DIRECT_EDIT",
             "syntaxCheck": syntax_check,
         }
+        if symbol:
+            result["symbol"] = symbol
         if backup_path:
             result["backupPath"] = backup_path
             result["rollbackHint"] = f"Previous content backed up at {backup_path}"
@@ -860,9 +1062,8 @@ class OUMVRuntime:
                     "notSupported": ["browser/DOM assertions"],
                 },
                 "statusCode": sim.status_code,
-                "response": sim.response,
-                "rolledBack": sim.rolled_back,
-                "rollbackStatus": sim.rollback_status,
+                "responseBody": sim.response,
+                **({"rolledBack": True, "rollbackStatus": sim.rollback_status} if sim.rolled_back else {}),
             }
         elif "action" in kwargs and isinstance(kwargs["action"], dict):
             sim = await self.handle_mutation_simulate(**kwargs)
@@ -885,14 +1086,13 @@ class OUMVRuntime:
                     "notSupported": ["browser/DOM assertions"],
                 },
                 "statusCode": sim.status_code,
-                "response": sim.response,
-                "rolledBack": sim.rolled_back,
-                "rollbackStatus": sim.rollback_status,
+                "responseBody": sim.response,
+                **({"rolledBack": True, "rollbackStatus": sim.rollback_status} if sim.rolled_back else {}),
             }
         # Nothing to check is not a pass (spec §4.4): ask for a target/action instead.
         raise OumvError(
-            VALIDATION_FAILED,
-            "VALIDATION_FAILED: verify requires a target, an action, or assertions",
+            INVALID_PARAMS,
+            "INVALID_PARAMS: verify requires a target, an action, or assertions",
         )
 
     async def handle_state_read(self, scope: Optional[str] = "all") -> StateReadResult:

@@ -60,7 +60,7 @@ async def test_real_edit_returns_true_occ_version(occ_app):
     })
     result = body["result"]
     assert result["status"] == "APPLIED"
-    assert result["mode"] == "RUNTIME_DIRECT_EDIT"
+    assert "mode" not in result and "version" not in result, "deprecated keys must not be emitted"
     # The returned version must match the actually-written content
     assert result["newVersion"] == _sha256_of(root / "service.py")
     with open(root / "service.py", encoding="utf-8") as f:

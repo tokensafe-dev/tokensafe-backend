@@ -18,7 +18,7 @@ import {
 import { resolveWorkspacePath, splitSourceTarget } from './paths.js';
 import { SessionRegistry } from './sessions.js';
 
-export const PROTOCOL_VERSION = '1.2.0';
+export const PROTOCOL_VERSION = '1.3.0';
 export const OBSERVE_LEVELS = ['L0', 'L1', 'L2', 'L3', 'L4'] as const;
 export type ObserveLevel = (typeof OBSERVE_LEVELS)[number];
 
@@ -91,10 +91,11 @@ function intersect(implemented: string[], requested?: unknown): string[] {
 export interface SourcePayload extends Record<string, unknown> {
   path: string;
   symbol?: string;
-  source: string;
+  source?: string;
+  unchanged?: boolean;
   version: string;
-  startLine: number;
-  endLine: number;
+  startLine?: number;
+  endLine?: number;
 }
 
 /** §4.1 limit/cursor: an absent limit returns the whole collection. */
@@ -196,6 +197,18 @@ export class OumvRuntime {
   /* --------------------------------------------------------------- handshake */
 
   handshake(params: Record<string, any> = {}): Record<string, unknown> {
+    // §11: serve our own MINOR and every earlier one; another MAJOR is -32006.
+    const requestedVersion = String(params.protocolVersion ?? '').trim();
+    if (requestedVersion) {
+      const [majorRaw, minorRaw] = requestedVersion.split('.');
+      const major = Number(majorRaw);
+      const minor = Number(minorRaw);
+      if (!Number.isInteger(major) || !Number.isInteger(minor) || major !== 1 || minor > 3) {
+        throw unsupported(
+          `UNSUPPORTED_CAPABILITY: protocol version ${requestedVersion} (this runtime serves ${PROTOCOL_VERSION})`,
+        );
+      }
+    }
     const capabilities: RuntimeCapabilities = {
       observe: { levels: [...OBSERVE_LEVELS], formats: ['json'] },
       understand: { causality: true, signalsGraph: false, impactAnalysis: true },
@@ -232,7 +245,7 @@ export class OumvRuntime {
     if (!this.enabled.observe) throw permissionDenied('PERMISSION_DENIED: observe capability is disabled');
     const level = String(params.level || 'L0').toUpperCase() as ObserveLevel;
     const format = String(params.format || 'json').toLowerCase();
-    if (!OBSERVE_LEVELS.includes(level)) throw invalidParams(`INVALID_PARAMS: unknown observe level ${level}`);
+    if (!OBSERVE_LEVELS.includes(level)) throw unsupported(`UNSUPPORTED_CAPABILITY: unknown observe level ${level}`);
     if (format !== 'json') throw unsupported(`UNSUPPORTED_CAPABILITY: format ${format} is not implemented`);
 
     switch (level) {
@@ -266,7 +279,7 @@ export class OumvRuntime {
         const target = String(params.target || '').trim();
         if (!target) throw invalidParams('INVALID_PARAMS: target is required for L2');
         const route = this.findRoute(target);
-        if (!route) throw targetNotFound(`TARGET_NOT_FOUND: no route matches ${JSON.stringify(target)}`);
+        if (!route) throw resourceNotFound(`RESOURCE_NOT_FOUND: no route matches ${JSON.stringify(target)}`);
         return {
           level,
           format: 'json',
@@ -294,7 +307,7 @@ export class OumvRuntime {
           level,
           format: 'json',
           data: source,
-          tokenEstimate: Math.ceil(source.source.length / 4),
+          tokenEstimate: Math.ceil((source.source ?? '').length / 4),
         };
       }
 
@@ -405,10 +418,22 @@ export class OumvRuntime {
   getSource(params: Record<string, any> = {}): Record<string, unknown> {
     const filePath = String(params.path ?? params.filePath ?? '').trim();
     if (!filePath) throw invalidParams('INVALID_PARAMS: path is required');
-    return this.readSource(filePath, params.symbol ? String(params.symbol) : undefined);
+    return this.readSource(
+      filePath,
+      params.symbol ? String(params.symbol) : undefined,
+      typeof params.startLine === 'number' ? params.startLine : undefined,
+      typeof params.endLine === 'number' ? params.endLine : undefined,
+      params.ifVersion ? String(params.ifVersion) : undefined,
+    );
   }
 
-  private readSource(filePath: string, symbol?: string): SourcePayload {
+  private readSource(
+    filePath: string,
+    symbol?: string,
+    startLine?: number,
+    endLine?: number,
+    ifVersion?: string,
+  ): SourcePayload {
     const resolved = resolveWorkspacePath(filePath, this.workspaceDir);
     if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
       throw resourceNotFound(`RESOURCE_NOT_FOUND: ${filePath}`);
@@ -417,9 +442,24 @@ export class OumvRuntime {
     const relative = path.relative(this.workspaceDir, resolved).split(path.sep).join('/');
     const version = sha256(full);
 
+    // Wire 1.3.0: the dedup pointer answers without resending bytes; version is
+    // always the whole file's hash, so OCC never depends on the window.
+    if (ifVersion && ifVersion === version) {
+      return { path: relative, version, unchanged: true, ...(symbol ? { symbol } : {}) };
+    }
+
     if (!symbol) {
-      const lines = full.split('\n').length + (full.endsWith('\n') ? 0 : 1);
-      return { path: relative, source: full, version, startLine: 1, endLine: lines };
+      const all = full.split('\n');
+      const start = Math.max(1, startLine ?? 1);
+      let end = endLine ?? all.length;
+      end = Math.min(Math.max(end, start), all.length);
+      return {
+        path: relative,
+        source: all.slice(start - 1, end).join('\n'),
+        version,
+        startLine: start,
+        endLine: end,
+      };
     }
     const range = extractSymbolRange(full, symbol);
     if (!range) throw resourceNotFound(`RESOURCE_NOT_FOUND: symbol ${JSON.stringify(symbol)} not found in ${relative}`);
@@ -468,8 +508,86 @@ export class OumvRuntime {
     }
 
     const mode = String(params.mode ?? 'replace').toLowerCase();
-    if (!['replace', 'create', 'symbol', 'delete', 'rename'].includes(mode)) {
+    if (!['replace', 'create', 'symbol', 'delete', 'rename', 'patch'].includes(mode)) {
       throw unsupported(`UNSUPPORTED_CAPABILITY: unknown applyEdit mode ${JSON.stringify(mode)}`);
+    }
+
+    if (mode === 'patch') {
+      if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+        throw resourceNotFound(`RESOURCE_NOT_FOUND: ${requestedPath}`);
+      }
+      const hunks: any[] = Array.isArray(params.hunks) ? params.hunks : [];
+      if (hunks.length === 0) {
+        throw validationFailed('VALIDATION_FAILED: hunks is required for mode=patch', { reason: 'hunks_required' });
+      }
+      const current = fs.readFileSync(resolved, 'utf-8');
+      const currentVersion = sha256(current);
+      const expectedVersion = String(params.expectedVersion ?? '').trim();
+      if (!expectedVersion) {
+        throw validationFailed(
+          'VALIDATION_FAILED: expectedVersion is required to edit an existing file — call oumv/getSource (or observe L3) and pass its version',
+          { reason: 'expected_version_required', current: currentVersion },
+        );
+      }
+      if (expectedVersion !== currentVersion) {
+        throw conflict('CONFLICT_DETECTED: version mismatch on patch', {
+          expected: expectedVersion,
+          current: currentVersion,
+        });
+      }
+      let text = current;
+      hunks.forEach((hunk: any, index: number) => {
+        const target = String(hunk?.target ?? '');
+        const replacement = String(hunk?.replacement ?? '');
+        if (!target) {
+          throw validationFailed(`VALIDATION_FAILED: hunk ${index} has an empty target`, {
+            reason: 'target_required',
+            hunk: index,
+          });
+        }
+        const [startOff, endOff] = hunkWindow(text, hunk, index);
+        const region = text.slice(startOff, endOff);
+        const count = region.split(target).length - 1;
+        if (count === 0) {
+          throw resourceNotFound(`RESOURCE_NOT_FOUND: hunk ${index} target does not occur in the file`);
+        }
+        if (count > 1 && !hunk.replaceAll) {
+          const lines: number[] = [];
+          let pos = 0;
+          while (lines.length < 5) {
+            const found = region.indexOf(target, pos);
+            if (found < 0) break;
+            lines.push(1 + (region.slice(0, found).match(/\n/g) || []).length);
+            pos = found + target.length;
+          }
+          throw validationFailed(
+            `VALIDATION_FAILED: hunk ${index} target occurs ${count} times; narrow it with startLine/endLine or set replaceAll`,
+            { reason: 'target_not_unique', hunk: index, count, lines },
+          );
+        }
+        const next = hunk.replaceAll ? region.split(target).join(replacement) : region.replace(target, replacement);
+        text = text.slice(0, startOff) + next + text.slice(endOff);
+      });
+      const syntax = checkSyntax(resolved, text);
+      let backupPath: string | undefined;
+      try {
+        const backupDir = path.join(this.workspaceDir, '.tokensafe', 'backups');
+        fs.mkdirSync(backupDir, { recursive: true });
+        const backupName = `${Date.now()}-${path.basename(resolved)}`;
+        backupPath = path.relative(this.workspaceDir, path.join(backupDir, backupName)).split(path.sep).join('/');
+        fs.writeFileSync(path.join(this.workspaceDir, backupPath), current, 'utf-8');
+      } catch {
+        backupPath = undefined;
+      }
+      fs.writeFileSync(resolved, text, 'utf-8');
+      return {
+        status: 'APPLIED',
+        path: path.relative(this.workspaceDir, resolved).split(path.sep).join('/'),
+        newVersion: sha256(text),
+        syntaxCheck: syntax,
+        hunksApplied: hunks.length,
+        ...(backupPath ? { backupPath } : {}),
+      };
     }
 
     if (mode === 'delete') {
@@ -802,6 +920,30 @@ export function parseVerifyTarget(target: string): { method: string; url: string
 }
 
 /** Pre-flight syntax guard (spec §4.3, `-32002`). */
+/** Byte range a patch hunk searches, from its 1-based inclusive startLine/endLine. */
+function hunkWindow(text: string, hunk: any, index: number): [number, number] {
+  const startLine = Number(hunk?.startLine ?? 0);
+  const endLine = Number(hunk?.endLine ?? 0);
+  if (!startLine && !endLine) return [0, text.length];
+  const lines = text.split('\n');
+  const start = Math.max(1, startLine || 1);
+  let end = endLine || lines.length;
+  if (start > lines.length) return [text.length, text.length];
+  if (end > lines.length) end = lines.length;
+  if (end < start) {
+    throw validationFailed('VALIDATION_FAILED: endLine precedes startLine', {
+      reason: 'inverted_line_range',
+      hunk: index,
+    });
+  }
+  let startOff = 0;
+  for (let i = 0; i < start - 1; i += 1) startOff += lines[i].length + 1;
+  let endOff = startOff;
+  for (let i = start - 1; i < end; i += 1) endOff += lines[i].length + 1;
+  endOff = Math.min(endOff - 1, text.length);
+  return [startOff, Math.max(startOff, endOff)];
+}
+
 export function checkSyntax(filePath: string, source: string): { status: 'passed' | 'skipped'; tool: string } {
   if (!/\.(c|m)?(t|j)sx?$/.test(filePath)) return { status: 'skipped', tool: 'none' };
   try {

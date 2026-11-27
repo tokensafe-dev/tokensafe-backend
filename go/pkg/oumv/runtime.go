@@ -339,6 +339,18 @@ func (r *Runtime) findRouteExact(method, path string) (protocol.RouteInfo, bool)
 
 // Handshake performs session initialization and capability negotiation.
 func (r *Runtime) Handshake(ctx context.Context, params *protocol.OumvHandshakeParams) (*protocol.OumvHandshakeResult, *protocol.OumvError) {
+	// §11: serve our own version and every earlier MINOR of the same MAJOR; another
+	// MAJOR (or a MINOR this runtime does not implement) is -32006, never a silent
+	// echo of a version the runtime cannot honour.
+	if params != nil && strings.TrimSpace(params.ProtocolVersion) != "" {
+		major, minor, ok := parseProtocolVersion(params.ProtocolVersion)
+		if !ok || major != 1 || minor > 3 {
+			return nil, protocol.NewUnsupportedCapabilityError(
+				"protocol version " + params.ProtocolVersion + " (this runtime serves " + protocol.CurrentProtocolVersion + ")",
+			)
+		}
+	}
+
 	caps := protocol.DefaultBackendCapabilities()
 	if !r.config.Capabilities.Observe {
 		caps.Observe = protocol.ObserveCapability{}
@@ -589,6 +601,20 @@ func (r *Runtime) Observe(ctx context.Context, params *protocol.ObserveParams) (
 	}
 }
 
+// parseProtocolVersion splits "MAJOR.MINOR[.PATCH]" into its numeric head.
+func parseProtocolVersion(v string) (int, int, bool) {
+	parts := strings.SplitN(strings.TrimSpace(v), ".", 3)
+	if len(parts) < 2 {
+		return 0, 0, false
+	}
+	major, err1 := strconv.Atoi(parts[0])
+	minor, err2 := strconv.Atoi(parts[1])
+	if err1 != nil || err2 != nil {
+		return 0, 0, false
+	}
+	return major, minor, true
+}
+
 // splitSourceTarget parses "path#symbol" / "path:symbol" into its parts.
 func splitSourceTarget(target string) (string, string) {
 	t := strings.TrimSpace(target)
@@ -835,42 +861,75 @@ func (r *Runtime) GetSource(ctx context.Context, params *protocol.GetSourceParam
 		return nil, protocol.NewResourceNotFoundError(params.Path)
 	}
 
-	hash := sha256.Sum256(data)
-	version := "sha256:" + hex.EncodeToString(hash[:])
+	version := hashVersion(data)
 
-	// If symbol is specified, parse file AST and locate exact function
+	// Dedup pointer (wire 1.3.0): the file still has the version the agent already
+	// saw, so there is nothing to resend — version alone keeps OCC usable.
+	if params.IfVersion != "" && params.IfVersion == version {
+		return &protocol.GetSourceResult{
+			Path:      params.Path,
+			Symbol:    params.Symbol,
+			Unchanged: true,
+			Version:   version,
+		}, nil
+	}
+
+	lines := strings.Split(string(data), "\n")
+	startLine, endLine := 1, len(lines)
+
+	// If symbol is specified, parse the file and locate the exact declaration. A
+	// symbol that is not there is -32009; returning the whole file under a symbol
+	// label would make the agent believe it read the thing it asked for.
 	if params.Symbol != "" {
 		fset := token.NewFileSet()
-		node, err := parser.ParseFile(fset, cleanPath, data, parser.ParseComments)
-		if err == nil {
-			for _, decl := range node.Decls {
-				if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == params.Symbol {
-					start := fset.Position(fn.Pos())
-					end := fset.Position(fn.End())
-					lines := strings.Split(string(data), "\n")
-					if start.Line <= len(lines) && end.Line <= len(lines) {
-						symbolSource := strings.Join(lines[start.Line-1:end.Line], "\n")
-						return &protocol.GetSourceResult{
-							Symbol:    params.Symbol,
-							Path:      params.Path,
-							Source:    symbolSource,
-							Version:   version,
-							StartLine: start.Line,
-							EndLine:   end.Line,
-						}, nil
-					}
-				}
+		node, parseErr := parser.ParseFile(fset, cleanPath, data, parser.ParseComments)
+		if parseErr != nil {
+			return nil, protocol.NewSyntaxError(
+				fmt.Sprintf("failed to parse %s: %v", params.Path, parseErr),
+				parseErr.Error(),
+			)
+		}
+		found := false
+		for _, decl := range node.Decls {
+			if fn, ok := decl.(*ast.FuncDecl); ok && fn.Name.Name == params.Symbol {
+				startLine = fset.Position(fn.Pos()).Line
+				endLine = fset.Position(fn.End()).Line
+				found = true
+				break
 			}
 		}
+		if !found {
+			return nil, protocol.NewResourceNotFoundError(params.Symbol + " in " + params.Path)
+		}
+	}
+
+	// Window (wire 1.3.0): 1-based inclusive; an endLine past EOF is clamped.
+	if params.StartLine > 0 {
+		startLine = params.StartLine
+	}
+	if params.EndLine > 0 {
+		endLine = params.EndLine
+	}
+	if startLine < 1 {
+		startLine = 1
+	}
+	if startLine > len(lines) {
+		startLine = len(lines)
+	}
+	if endLine > len(lines) {
+		endLine = len(lines)
+	}
+	if endLine < startLine {
+		endLine = startLine
 	}
 
 	return &protocol.GetSourceResult{
 		Symbol:    params.Symbol,
 		Path:      params.Path,
-		Source:    string(data),
+		Source:    strings.Join(lines[startLine-1:endLine], "\n"),
 		Version:   version,
-		StartLine: 1,
-		EndLine:   len(strings.Split(string(data), "\n")),
+		StartLine: startLine,
+		EndLine:   endLine,
 	}, nil
 }
 
@@ -890,7 +949,7 @@ func (r *Runtime) ApplyEdit(ctx context.Context, params *protocol.ApplyEditParam
 		mode = "replace"
 	}
 	switch mode {
-	case "replace", "create", "symbol", "delete", "rename":
+	case "replace", "create", "symbol", "delete", "rename", "patch":
 	default:
 		return nil, &protocol.OumvError{
 			Code:    protocol.ErrUnsupportedCapability,
@@ -935,6 +994,61 @@ func (r *Runtime) ApplyEdit(ctx context.Context, params *protocol.ApplyEditParam
 			SyntaxCheck: &protocol.SyntaxCheck{Status: "passed", Tool: "go/parser"},
 			Created:     true,
 			Success:     true,
+		}, nil
+	}
+
+	// patch mode (spec §4.3, wire 1.3.0): splice exact snippets into an existing file.
+	// Hunks apply in order to the evolving text, so a later hunk matches what the
+	// earlier ones produced; the first failure aborts with no bytes written.
+	if mode == "patch" {
+		currentData, readErr := os.ReadFile(cleanPath)
+		if readErr != nil {
+			return nil, protocol.NewResourceNotFoundError(params.Path)
+		}
+		if len(params.Hunks) == 0 {
+			return nil, protocol.NewValidationFailedError(
+				"VALIDATION_FAILED: hunks is required for mode=patch",
+				map[string]string{"reason": "hunks_required"},
+			)
+		}
+		currentVersion := hashVersion(currentData)
+		if strings.TrimSpace(params.ExpectedVersion) == "" {
+			return nil, protocol.NewValidationFailedError(
+				"VALIDATION_FAILED: expectedVersion is required to edit an existing file — call oumv/getSource (or observe L3) and pass its version",
+				map[string]string{"path": params.Path, "current": currentVersion},
+			)
+		}
+		if params.ExpectedVersion != currentVersion {
+			return nil, protocol.NewConflictError(
+				fmt.Sprintf("version mismatch: expected %s, current is %s", params.ExpectedVersion, currentVersion),
+				map[string]string{"expected": params.ExpectedVersion, "current": currentVersion},
+			)
+		}
+		patched, patchErr := applyHunks(string(currentData), params.Hunks)
+		if patchErr != nil {
+			return nil, patchErr
+		}
+		fset := token.NewFileSet()
+		if _, parseErr := parser.ParseFile(fset, cleanPath, []byte(patched), parser.ParseComments); parseErr != nil {
+			return nil, protocol.NewSyntaxError(
+				fmt.Sprintf("pre-flight syntax check failed: %v", parseErr),
+				parseErr.Error(),
+			)
+		}
+		if err := os.WriteFile(cleanPath, []byte(patched), 0644); err != nil {
+			return nil, &protocol.OumvError{
+				Code:    protocol.ErrInternalError,
+				Message: "failed to persist edit: " + err.Error(),
+			}
+		}
+		return &protocol.ApplyEditResult{
+			Status:       "APPLIED",
+			Path:         params.Path,
+			NewVersion:   hashVersion([]byte(patched)),
+			SyntaxCheck:  &protocol.SyntaxCheck{Status: "passed", Tool: "go/parser"},
+			HunksApplied: len(params.Hunks),
+			Success:      true,
+			Message:      fmt.Sprintf("%d hunk(s) applied", len(params.Hunks)),
 		}, nil
 	}
 
@@ -1062,6 +1176,13 @@ func (r *Runtime) ApplyEdit(ctx context.Context, params *protocol.ApplyEditParam
 		}, nil
 	}
 
+	if strings.TrimSpace(params.Replacement) == "" {
+		return nil, protocol.NewValidationFailedError(
+			"VALIDATION_FAILED: replacement is required for mode=replace",
+			map[string]string{"reason": "replacement_required"},
+		)
+	}
+
 	currentData, err := os.ReadFile(cleanPath)
 	if err != nil {
 		return nil, protocol.NewResourceNotFoundError(params.Path)
@@ -1156,7 +1277,10 @@ func (r *Runtime) Verify(ctx context.Context, params *protocol.VerifyParams) (*p
 	handler := r.handler
 	r.mu.RUnlock()
 	if handler == nil {
-		return nil, protocol.NewUnsupportedCapabilityError("no active HTTP handler configured for in-memory verification")
+		return nil, &protocol.OumvError{
+			Code:    protocol.ErrRuntimeUnavailable,
+			Message: "RUNTIME_UNAVAILABLE: no active HTTP handler configured for in-memory verification",
+		}
 	}
 
 	dispatch := func(target, methodOverride string, payload interface{}, headers map[string]string) (string, string, *httptest.ResponseRecorder, float64) {
@@ -1317,6 +1441,114 @@ func sliceFunctionAt(data []byte, line int) (string, int, int) {
 }
 
 // hashVersion is the OCC token for file bytes (spec §4.3).
+// applyHunks splices exact snippets into text, in order (spec §4.3 mode=patch).
+// A target must occur exactly once unless replaceAll is set or a line window
+// narrows the search; the first failing hunk returns an error and no text.
+func applyHunks(text string, hunks []protocol.PatchHunk) (string, *protocol.OumvError) {
+	for i, hunk := range hunks {
+		if hunk.Target == "" {
+			return "", protocol.NewValidationFailedError(
+				fmt.Sprintf("VALIDATION_FAILED: hunk %d has an empty target", i),
+				map[string]interface{}{"reason": "target_required", "hunk": i},
+			)
+		}
+		startOff, endOff, windowErr := hunkWindow(text, hunk)
+		if windowErr != nil {
+			return "", windowErr
+		}
+		region := text[startOff:endOff]
+		count := strings.Count(region, hunk.Target)
+		if count == 0 {
+			return "", &protocol.OumvError{
+				Code:    protocol.ErrResourceNotFound,
+				Message: fmt.Sprintf("RESOURCE_NOT_FOUND: hunk %d target does not occur in the file", i),
+				Data:    map[string]interface{}{"reason": "target_not_found", "hunk": i},
+			}
+		}
+		if count > 1 && !hunk.ReplaceAll {
+			return "", &protocol.OumvError{
+				Code:    protocol.ErrValidationFailed,
+				Message: fmt.Sprintf("VALIDATION_FAILED: hunk %d target occurs %d times; narrow it with startLine/endLine or set replaceAll", i, count),
+				Data: map[string]interface{}{
+					"reason": "target_not_unique",
+					"hunk":   i,
+					"count":  count,
+					"lines":  occurrenceLines(region, hunk.Target),
+				},
+			}
+		}
+		limit := 1
+		if hunk.ReplaceAll {
+			limit = -1
+		}
+		text = text[:startOff] + strings.Replace(region, hunk.Target, hunk.Replacement, limit) + text[endOff:]
+	}
+	return text, nil
+}
+
+// hunkWindow returns the byte range a hunk searches, from its 1-based inclusive
+// startLine/endLine. An endLine past EOF is clamped; an inverted range is -32011.
+func hunkWindow(text string, hunk protocol.PatchHunk) (int, int, *protocol.OumvError) {
+	if hunk.StartLine <= 0 && hunk.EndLine <= 0 {
+		return 0, len(text), nil
+	}
+	startLine := hunk.StartLine
+	if startLine <= 0 {
+		startLine = 1
+	}
+	lineCount := strings.Count(text, "\n") + 1
+	endLine := hunk.EndLine
+	if endLine <= 0 || endLine > lineCount {
+		endLine = lineCount
+	}
+	if startLine > lineCount {
+		startLine = lineCount
+	}
+	if endLine < startLine {
+		return 0, 0, protocol.NewValidationFailedError(
+			"VALIDATION_FAILED: endLine precedes startLine",
+			map[string]string{"reason": "inverted_line_range"},
+		)
+	}
+	startOff := 0
+	for line := 1; line < startLine; line++ {
+		idx := strings.IndexByte(text[startOff:], '\n')
+		if idx < 0 {
+			return len(text), len(text), nil
+		}
+		startOff += idx + 1
+	}
+	endOff := startOff
+	for line := startLine; line <= endLine; line++ {
+		idx := strings.IndexByte(text[endOff:], '\n')
+		if idx < 0 {
+			endOff = len(text)
+			break
+		}
+		endOff += idx + 1
+	}
+	if endOff > startOff && text[endOff-1] == '\n' {
+		endOff--
+	}
+	return startOff, endOff, nil
+}
+
+// occurrenceLines reports the 1-based line numbers of up to five target matches.
+func occurrenceLines(region, target string) []int {
+	lines := []int{}
+	offset := 0
+	for len(lines) < 5 {
+		idx := strings.Index(region[offset:], target)
+		if idx < 0 {
+			break
+		}
+		pos := offset + idx
+		lines = append(lines, 1+strings.Count(region[:pos], "\n"))
+		offset = pos + len(target)
+	}
+	return lines
+}
+
 func hashVersion(data []byte) string {
 	sum := sha256.Sum256(data)
 	return "sha256:" + hex.EncodeToString(sum[:])

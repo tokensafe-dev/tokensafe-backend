@@ -33,7 +33,7 @@ describe('OumvRuntime core', () => {
         return error.code;
       }
     };
-    expect(codeOf(() => runtime.observe({ level: 'L9' }))).toBe(-32602);
+    expect(codeOf(() => runtime.observe({ level: 'L9' }))).toBe(-32006);
     expect(codeOf(() => runtime.observe({ level: 'L0', format: 'yaml' }))).toBe(-32006);
   });
 

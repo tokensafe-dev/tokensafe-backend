@@ -78,13 +78,13 @@ async def test_conformance_certification(tmp_path):
     failures = [c for c in report["cases"] if c["status"] != "passed"]
     assert not failures, failures
     assert report["attainedLevel"] == 3, (report["attainedLevel"], report["levels"])
-    assert report["specVersion"] == "1.2.0"
+    assert report["specVersion"] == "1.3.0"
 
 
 def test_fixture_file_has_level_tagged_v6_shape():
     data = json.loads(FIXTURES.read_text(encoding="utf-8"))
-    assert data["fixtureVersion"] == 6
-    assert data["protocolVersion"] == "1.2.0"
+    assert data["fixtureVersion"] == 7
+    assert data["protocolVersion"] == "1.3.0"
     assert sorted(data["levelDefinitions"]) == ["1", "2", "3"]
 
     levels = {case["level"] for case in data["cases"]}

@@ -1,7 +1,7 @@
 {
-  "protocolVersion": "1.2.0",
+  "protocolVersion": "1.3.0",
   "spec": "https://github.com/tokensafe-dev/oumv/blob/main/spec/SPEC.md",
-  "description": "Language-neutral OUMV conformance cases (spec \u00a710). Each case declares the conformance Level (1|2|3) it certifies. A runtime attains Level N only when every case with level <= N passes; a failure at a higher level caps the claim but does not fail the lower levels. fixtureVersion 3 added session handshake, getSource and verify-result shape coverage; fixtureVersion 4 requires the observe `format` field the spec envelope mandates; fixtureVersion 5 covers applyEdit mode=create (new file, no overwrite). Markers substituted by each runner: ${FIXTURE_FILE}, ${MISSING_FILE}, ${EDIT_TARGET_FILE}, ${EDIT_TARGET_VERSION}, ${EDIT_CONTENT}, ${BROKEN_CONTENT}, ${L2_TARGET}, ${L3_TARGET}, ${VERIFY_TARGET}.",
+  "description": "Language-neutral OUMV conformance cases (spec \u00a710). Each case declares the conformance Level (1|2|3) it certifies. A runtime attains Level N only when every case with level <= N passes; a failure at a higher level caps the claim but does not fail the lower levels. fixtureVersion 3 added session handshake, getSource and verify-result shape coverage; fixtureVersion 4 requires the observe `format` field the spec envelope mandates; fixtureVersion 5 covers applyEdit mode=create (new file, no overwrite). Markers substituted by each runner: ${FIXTURE_FILE}, ${MISSING_FILE}, ${EDIT_TARGET_FILE}, ${EDIT_TARGET_VERSION}, ${EDIT_CONTENT}, ${BROKEN_CONTENT}, ${L2_TARGET}, ${L3_TARGET}, ${VERIFY_TARGET}. v7 (wire 1.3.0): applyEdit mode=patch (splice, target-missing), getSource window/dedup markers, unknown mode/symbol/level/version, create with expectedVersion, rename/delete validation.",
   "cases": [
     {
       "id": "handshake-negotiates-capabilities",
@@ -284,6 +284,51 @@
       }
     },
     {
+      "id": "apply-edit-patch-target-missing",
+      "level": 2,
+      "method": "oumv/applyEdit",
+      "params": {
+        "path": "${NEW_FILE}",
+        "expectedVersion": "${EDIT_CONTENT_VERSION}",
+        "mode": "patch",
+        "hunks": [
+          {
+            "target": "this-snippet-does-not-exist-anywhere",
+            "replacement": "x"
+          }
+        ]
+      },
+      "expectError": {
+        "code": -32009
+      }
+    },
+    {
+      "id": "apply-edit-patch-splices",
+      "level": 2,
+      "method": "oumv/applyEdit",
+      "params": {
+        "path": "${NEW_FILE}",
+        "expectedVersion": "${EDIT_CONTENT_VERSION}",
+        "mode": "patch",
+        "hunks": [
+          {
+            "target": "${EDIT_CONTENT}",
+            "replacement": "${PATCH_REPLACEMENT}"
+          }
+        ]
+      },
+      "expectResultFields": [
+        "status",
+        "path",
+        "newVersion",
+        "hunksApplied"
+      ],
+      "expectValues": {
+        "hunksApplied": 1
+      },
+      "expectVersionMatchesContent": "${PATCH_REPLACEMENT}"
+    },
+    {
       "id": "verify-multi-step-runs-in-order",
       "level": 2,
       "method": "oumv/verify",
@@ -324,6 +369,20 @@
         "newVersion"
       ],
       "expectVersionMatchesContent": "${SYMBOL_FILE_CONTENT}"
+    },
+    {
+      "id": "apply-edit-delete-forbids-replacement",
+      "level": 2,
+      "method": "oumv/applyEdit",
+      "params": {
+        "path": "${DELETE_FILE}",
+        "expectedVersion": "${DELETE_VERSION}",
+        "replacement": "x",
+        "mode": "delete"
+      },
+      "expectError": {
+        "code": -32011
+      }
     },
     {
       "id": "apply-edit-delete",
@@ -377,9 +436,71 @@
       "expectValues": {
         "level": "L1"
       }
+    },
+    {
+      "id": "apply-edit-unknown-mode-rejected",
+      "level": 2,
+      "method": "oumv/applyEdit",
+      "params": {
+        "path": "${FIXTURE_FILE}",
+        "replacement": "x",
+        "expectedVersion": "${EDIT_TARGET_VERSION}",
+        "mode": "splice"
+      },
+      "expectError": {
+        "code": -32006
+      }
+    },
+    {
+      "id": "apply-edit-create-forbids-version",
+      "level": 2,
+      "method": "oumv/applyEdit",
+      "params": {
+        "path": "created_with_version.go",
+        "replacement": "package x\n",
+        "expectedVersion": "${EDIT_TARGET_VERSION}",
+        "mode": "create"
+      },
+      "expectError": {
+        "code": -32011
+      }
+    },
+    {
+      "id": "get-source-unknown-symbol-rejected",
+      "level": 2,
+      "method": "oumv/getSource",
+      "params": {
+        "path": "${FIXTURE_FILE}",
+        "symbol": "NoSuchSymbol"
+      },
+      "expectError": {
+        "code": -32009
+      }
+    },
+    {
+      "id": "observe-unknown-level-rejected",
+      "level": 1,
+      "method": "oumv/observe",
+      "params": {
+        "level": "L9"
+      },
+      "expectError": {
+        "code": -32006
+      }
+    },
+    {
+      "id": "handshake-rejects-unknown-version",
+      "level": 1,
+      "method": "oumv/handshake",
+      "params": {
+        "protocolVersion": "9.9.9"
+      },
+      "expectError": {
+        "code": -32006
+      }
     }
   ],
-  "fixtureVersion": 6,
+  "fixtureVersion": 7,
   "levelDefinitions": {
     "1": "Handshake, L0-L1 observe, action verification",
     "2": "L2-L3 observe, impact analysis, OCC mutations, surface diffs",

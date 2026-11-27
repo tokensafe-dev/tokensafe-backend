@@ -50,6 +50,8 @@ export function createWorkspace(): Workspace {
       newFile: 'created_new_file.js',
       editVersion: sha(EDIT_SOURCE),
       editContent: EDIT_REPLACEMENT,
+    editContentVersion: sha(EDIT_REPLACEMENT),
+    patchReplacement: `${EDIT_REPLACEMENT}\n// patched by conformance\n`,
       brokenContent: BROKEN_SOURCE,
       l2Target: 'GET /api/orders',
       l3Target: 'edit_target.js',
