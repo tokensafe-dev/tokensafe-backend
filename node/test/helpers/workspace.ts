@@ -45,9 +45,7 @@ export function createWorkspace(): Workspace {
   fs.writeFileSync(path.join(dir, 'symbol_target.js'), SYMBOL_SOURCE);
   fs.writeFileSync(path.join(dir, 'delete_target.js'), DELETE_SOURCE);
   fs.writeFileSync(path.join(dir, 'rename_source.js'), RENAME_SOURCE);
-  return {
-    dir,
-    markers: {
+  const overrides = {
       fixtureFile: 'fixture.js',
       missingFile: 'missing.js',
       editTarget: 'edit_target.js',
@@ -71,7 +69,19 @@ export function createWorkspace(): Workspace {
       renameTarget: 'rename_target.js',
       renameVersion: sha(RENAME_SOURCE),
       sandboxTarget: 'POST /__oumv_sandbox_probe',
-    },
+      // Batch files carry a `.js` name so the syntax pre-flight actually parses
+      // them (the .py defaults would be "skipped" and prove nothing).
+      batchFileA: 'batch_a.js',
+      batchFileB: 'batch_b.js',
+      batchContent: 'export const batch = true;\n',
+  };
+  // A marker the overrides do not name must still resolve: the runner defaults
+  // everything it knows (wire 1.5.0 batch paths included), so an undefined
+  // marker can never reach a request as the literal "undefined".
+  const defaults = hasConformanceRunner ? require(CONFORMANCE_CJS).defaultMarkers() : {};
+  return {
+    dir,
+    markers: { ...defaults, ...overrides } as Record<string, string>,
     cleanup: () => fs.rmSync(dir, { recursive: true, force: true }),
   };
 }
@@ -87,12 +97,12 @@ export async function runFixtures(
   adapterName: string,
   framework: string
 ): Promise<FixtureRun> {
-  const { loadFixtures, runFixtureSuite, httpTransport } = require(CONFORMANCE_CJS);
+  const { loadFixtures, runFixtureSuite, httpTransport, defaultMarkers } = require(CONFORMANCE_CJS);
   const transport = httpTransport({ url });
   // Capability cases run only for claims the runtime actually makes.
   const handshake = await transport.request({ jsonrpc: '2.0', id: 'certify-handshake', method: 'oumv/handshake', params: {} });
   const capabilities = (handshake.result as any)?.capabilities;
-  const report = await runFixtureSuite(transport, loadFixtures(FIXTURES), markers, {
+  const report = await runFixtureSuite(transport, loadFixtures(FIXTURES), { ...defaultMarkers(), ...markers }, {
     adapterName,
     framework,
     environment: { transport: 'http', node: process.version },

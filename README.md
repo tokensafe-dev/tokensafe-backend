@@ -27,16 +27,16 @@
 ## Certification (spec §10)
 
 <!-- certification:start -->
-**8 adapters certified against 33 language-neutral cases** (`fixtureVersion` 9): 6 at Level 3 and 2 source-level adapter(s) at Level 2, each with its single L3 gap named below. A report with 34 cases also ran the sandbox capability case its runtime advertises. Generated from `certification/*.json` by `scripts/render_certification.py`; CI fails when this block no longer matches the reports.
+**8 adapters certified against 33 language-neutral cases** (`fixtureVersion` 10): 6 at Level 3 and 2 source-level adapter(s) at Level 2, each with its single L3 gap named below. A report with 34 cases also ran the sandbox capability case its runtime advertises. Generated from `certification/*.json` by `scripts/render_certification.py`; CI fails when this block no longer matches the reports.
 
 | Adapter | Framework | Transport exercised | Level | Cases | Report |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `go-chi` | chi | HTTP `POST /__oumv/rpc` | **3** | 34/34 | [certification/go-chi.json](certification/go-chi.json) |
-| `go-gin` | Gin | HTTP `POST /__oumv/rpc` | **3** | 34/34 | [certification/go-gin.json](certification/go-gin.json) |
-| `go-stdhttp` | net/http | HTTP `POST /__oumv/rpc` | **3** | 34/34 | [certification/go-stdhttp.json](certification/go-stdhttp.json) |
-| `node-express` | Express | Node `POST /__oumv/rpc` | **3** | 34/34 | [certification/node-express.json](certification/node-express.json) |
-| `node-fastify` | Fastify | Node `POST /__oumv/rpc` | **3** | 34/34 | [certification/node-fastify.json](certification/node-fastify.json) |
-| `python-fastapi` | FastAPI | ASGI `POST /__oumv/rpc` | **3** | 34/34 | [certification/python-fastapi.json](certification/python-fastapi.json) |
+| `go-chi` | chi | HTTP `POST /__oumv/rpc` | **3** | 37/37 | [certification/go-chi.json](certification/go-chi.json) |
+| `go-gin` | Gin | HTTP `POST /__oumv/rpc` | **3** | 37/37 | [certification/go-gin.json](certification/go-gin.json) |
+| `go-stdhttp` | net/http | HTTP `POST /__oumv/rpc` | **3** | 37/37 | [certification/go-stdhttp.json](certification/go-stdhttp.json) |
+| `node-express` | Express | Node `POST /__oumv/rpc` | **3** | 37/37 | [certification/node-express.json](certification/node-express.json) |
+| `node-fastify` | Fastify | Node `POST /__oumv/rpc` | **3** | 37/37 | [certification/node-fastify.json](certification/node-fastify.json) |
+| `python-fastapi` | FastAPI | ASGI `POST /__oumv/rpc` | **3** | 37/37 | [certification/python-fastapi.json](certification/python-fastapi.json) |
 
 Source-level adapters scan the framework's route declarations statically, apply OCC-checked edits and run a real verify command, but they do not boot the application — so they record no live request traces, `observe-l4-returns-recorded-traces` fails, and Level 3 is not claimed:
 
@@ -54,16 +54,16 @@ Transport certificates run the same suite over the optional bindings, plus the f
 
 | Certificate | Adapter | Transport | Cases |
 | :--- | :--- | :--- | :--- |
-| [transports/go-stdhttp-sse.json](certification/transports/go-stdhttp-sse.json) | `go-stdhttp-sse` | sse | 35/35 |
-| [transports/go-stdhttp-ws.json](certification/transports/go-stdhttp-ws.json) | `go-stdhttp-ws` | ws | 35/35 |
-| [transports/node-express-sse.json](certification/transports/node-express-sse.json) | `node-express-sse` | sse | 35/35 |
-| [transports/node-express-ws.json](certification/transports/node-express-ws.json) | `node-express-ws` | ws | 35/35 |
-| [transports/node-fastify-sse.json](certification/transports/node-fastify-sse.json) | `node-fastify-sse` | sse | 35/35 |
-| [transports/node-fastify-ws.json](certification/transports/node-fastify-ws.json) | `node-fastify-ws` | ws | 35/35 |
+| [transports/go-stdhttp-sse.json](certification/transports/go-stdhttp-sse.json) | `go-stdhttp-sse` | sse | 38/38 |
+| [transports/go-stdhttp-ws.json](certification/transports/go-stdhttp-ws.json) | `go-stdhttp-ws` | ws | 38/38 |
+| [transports/node-express-sse.json](certification/transports/node-express-sse.json) | `node-express-sse` | sse | 38/38 |
+| [transports/node-express-ws.json](certification/transports/node-express-ws.json) | `node-express-ws` | ws | 38/38 |
+| [transports/node-fastify-sse.json](certification/transports/node-fastify-sse.json) | `node-fastify-sse` | sse | 38/38 |
+| [transports/node-fastify-ws.json](certification/transports/node-fastify-ws.json) | `node-fastify-ws` | ws | 38/38 |
 | [transports/node-stdio.json](certification/transports/node-stdio.json) | `node-stdio` | stdio | 33/33 |
-| [transports/python-fastapi-sse.json](certification/transports/python-fastapi-sse.json) | `python-fastapi-sse` | sse | 35/35 |
-| [transports/python-fastapi-ws.json](certification/transports/python-fastapi-ws.json) | `python-fastapi-ws` | ws | 35/35 |
-| [transports/python-stdio.json](certification/transports/python-stdio.json) | `python-stdio` | stdio | 33/33 |
+| [transports/python-fastapi-sse.json](certification/transports/python-fastapi-sse.json) | `python-fastapi-sse` | sse | 38/38 |
+| [transports/python-fastapi-ws.json](certification/transports/python-fastapi-ws.json) | `python-fastapi-ws` | ws | 38/38 |
+| [transports/python-stdio.json](certification/transports/python-stdio.json) | `python-stdio` | stdio | 36/36 |
 <!-- certification:end -->
 
 Levels are cumulative and a skipped case never counts as a pass — a missing capability caps the claim instead of inflating it. The transport certificates above cover **stdio** (§2.5) plus the optional **SSE** (§2.3) and **WebSocket** (§2.4) bindings on both Node adapters; those four runs include the fixture v8 push cases and are Level 3, 34/34. Regenerate locally:

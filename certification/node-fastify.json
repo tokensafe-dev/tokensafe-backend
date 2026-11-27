@@ -1,10 +1,10 @@
 {
   "adapterName": "node-fastify",
   "framework": "fastify",
-  "specVersion": "1.4.0",
-  "fixtureVersion": 9,
-  "total": 34,
-  "passed": 34,
+  "specVersion": "1.5.0",
+  "fixtureVersion": 10,
+  "total": 37,
+  "passed": 37,
   "failed": 0,
   "skipped": 0,
   "attainedLevel": 3,
@@ -183,9 +183,24 @@
       "id": "verify-sandbox-rolls-back",
       "level": 2,
       "status": "passed"
+    },
+    {
+      "id": "apply-edit-batch-applies-all",
+      "level": 3,
+      "status": "passed"
+    },
+    {
+      "id": "apply-edit-batch-is-atomic",
+      "level": 3,
+      "status": "passed"
+    },
+    {
+      "id": "expired-session-is-rejected",
+      "level": 3,
+      "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-27T10:29:27.898Z",
+  "generatedAt": "2026-11-27T12:58:48.300Z",
   "environment": {
     "transport": "http",
     "node": "v24.14.0"

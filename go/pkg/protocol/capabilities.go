@@ -32,8 +32,17 @@ type UnderstandCapability struct {
 type MutateCapability struct {
 	OCC         bool `json:"occ"`
 	SyntaxGuard bool `json:"syntaxGuard"`
+	// MultiFile advertises the atomic batch envelope (wire 1.5.0).
+	MultiFile bool `json:"multiFile,omitempty"`
 	// Not implemented: kept off the wire entirely (schema forbids unknown fields).
 	TypeGuard bool `json:"-"`
+}
+
+// SessionCapability defines the session-lifecycle features (wire 1.5.0).
+type SessionCapability struct {
+	// TTLSeconds is true when the handshake honours a client-requested
+	// `sessionTtlSeconds` and echoes the granted lifetime as `ttlSeconds`.
+	TTLSeconds bool `json:"ttlSeconds,omitempty"`
 }
 
 // VerifyCapability defines supported verification features.
@@ -54,6 +63,8 @@ type OumvCapabilities struct {
 	Verify     VerifyCapability     `json:"verify"`
 	// Transports lists the bindings this runtime actually mounted (spec §2.3/§2.4).
 	Transports []string `json:"transports,omitempty"`
+	// Sessions advertises the TTL negotiation the handshake honours (wire 1.5.0).
+	Sessions *SessionCapability `json:"sessions,omitempty"`
 }
 
 // OumvHandshakeParams is sent by the AI Agent during initialization.
@@ -62,6 +73,8 @@ type OumvHandshakeParams struct {
 	ClientInfo            *ClientInfo       `json:"clientInfo,omitempty"`
 	SupportedTransports   []string          `json:"supportedTransports,omitempty"`
 	RequestedCapabilities *OumvCapabilities `json:"requestedCapabilities,omitempty"`
+	// SessionTTLSeconds asks for a session lifetime (1..86400, clamped). Wire 1.5.0.
+	SessionTTLSeconds *int `json:"sessionTtlSeconds,omitempty"`
 }
 
 // OumvHandshakeResult is returned by the runtime adapter acknowledging the session.
@@ -92,6 +105,7 @@ func DefaultBackendCapabilities() OumvCapabilities {
 		Mutate: MutateCapability{
 			OCC:         true,
 			SyntaxGuard: true,
+			MultiFile:   true,
 			TypeGuard:   false,
 		},
 		Verify: VerifyCapability{
@@ -101,5 +115,6 @@ func DefaultBackendCapabilities() OumvCapabilities {
 			DBSandbox:   false,
 			PayloadDiff: false,
 		},
+		Sessions: &SessionCapability{TTLSeconds: true},
 	}
 }

@@ -21,6 +21,9 @@
   "pushFile": "__oumv_conformance_push.py",
   "pushContent": "value = 3\n",
   "sandboxTarget": "POST /__oumv_sandbox_probe",
+  "batchFileA": "conformance_batch_a.py",
+  "batchFileB": "conformance_batch_b.py",
+  "batchContent": "value = 7\n",
   "l2Target": "GET /api/v1/orders",
   "l3Target": "conformance_edit_target.py",
   "verifyTarget": "GET /api/v1/orders"

@@ -28,7 +28,7 @@ declare(strict_types=1);
 ini_set('display_errors', 'stderr');
 error_reporting(E_ALL);
 
-const OUMV_PROTOCOL_VERSION = '1.4.0';
+const OUMV_PROTOCOL_VERSION = '1.5.0';
 const OUMV_ADAPTER_NAME = 'oumv-php';
 const OUMV_ADAPTER_VERSION = '0.1.0';
 const OUMV_SOURCE_ADAPTER = 'php-laravel';
@@ -3036,7 +3036,7 @@ final class Adapter
         $requestedVersion = trim(oumv_str($params, 'protocolVersion'));
         if ($requestedVersion !== '') {
             [$major, $minor, $ok] = oumv_parse_protocol_version($requestedVersion);
-            if (!$ok || $major !== 1 || $minor > 4) {
+            if (!$ok || $major !== 1 || $minor > 5) {
                 throw new OumvError(
                     -32006,
                     'UNSUPPORTED_CAPABILITY: protocol version ' . $requestedVersion . ' (this runtime serves ' . OUMV_PROTOCOL_VERSION . ')',

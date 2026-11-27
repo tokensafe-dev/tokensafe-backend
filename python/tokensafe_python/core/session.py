@@ -13,6 +13,12 @@ import time
 from typing import Dict, Optional
 
 DEFAULT_TTL_SECONDS = 3600
+MAX_TTL_SECONDS = 86400
+
+
+def clamp_ttl(seconds: int) -> int:
+    """Clamps a client-requested lifetime to [1, 86400] (spec §3, wire 1.5.0)."""
+    return max(1, min(int(seconds), MAX_TTL_SECONDS))
 
 
 class SessionRegistry:
@@ -20,10 +26,16 @@ class SessionRegistry:
         self.ttl = max(int(ttl_seconds), 1)
         self._sessions: Dict[str, float] = {}
 
-    def create(self) -> str:
+    def create(self, ttl_seconds: Optional[int] = None) -> str:
+        """Issues a session; a requested lifetime is clamped, not trusted."""
+        ttl = self.ttl if ttl_seconds is None else clamp_ttl(ttl_seconds)
         session_id = "sess-" + secrets.token_hex(8)
-        self._sessions[session_id] = time.time() + self.ttl
+        self._sessions[session_id] = time.time() + ttl
         return session_id
+
+    def granted_ttl(self, requested: Optional[int]) -> int:
+        """The lifetime the runtime answers for a request (spec §3, wire 1.5.0)."""
+        return self.ttl if requested is None else clamp_ttl(requested)
 
     def validate(self, session_id: Optional[str]) -> bool:
         if not session_id:

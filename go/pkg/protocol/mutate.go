@@ -46,6 +46,28 @@ type ApplyEditParams struct {
 	RenameTo string `json:"renameTo,omitempty"`
 	// Hunks carries exact-snippet splices for mode="patch" (wire 1.3.0).
 	Hunks []PatchHunk `json:"hunks,omitempty"`
+	// Edits turns the request into a multi-file atomic batch (wire 1.5.0): the
+	// top-level fields above are ignored and one per-item result is returned.
+	Edits []ApplyEditBatchItem `json:"edits,omitempty"`
+}
+
+// ApplyEditBatchItem is one file of a multi-file atomic request (wire 1.5.0).
+type ApplyEditBatchItem struct {
+	Path string `json:"path"`
+	// Mode is "replace" (default), "create" or "patch"; the single-file modes
+	// symbol/delete/rename are -32006 inside a batch.
+	Mode            string      `json:"mode,omitempty"`
+	ExpectedVersion string      `json:"expectedVersion,omitempty"`
+	Replacement     string      `json:"replacement,omitempty"`
+	Hunks           []PatchHunk `json:"hunks,omitempty"`
+}
+
+// ApplyEditBatchResultItem reports one applied file of a batch, in request order.
+type ApplyEditBatchResultItem struct {
+	Path         string `json:"path"`
+	NewVersion   string `json:"newVersion"`
+	Created      bool   `json:"created,omitempty"`
+	HunksApplied int    `json:"hunksApplied,omitempty"`
 }
 
 // SyntaxCheck reports the pre-flight guard outcome (spec §4.3).
@@ -60,9 +82,9 @@ type SyntaxCheck struct {
 // canonical fields only, and deprecated aliases are accepted but never emitted.
 type ApplyEditResult struct {
 	Status       string       `json:"status"` // "APPLIED" | "CURRENT"
-	Path         string       `json:"path"`
+	Path         string       `json:"path,omitempty"`
 	Symbol       string       `json:"symbol,omitempty"`
-	NewVersion   string       `json:"newVersion"`
+	NewVersion   string       `json:"newVersion,omitempty"`
 	SyntaxCheck  *SyntaxCheck `json:"syntaxCheck,omitempty"`
 	BackupPath   string       `json:"backupPath,omitempty"`
 	RollbackHint string       `json:"rollbackHint,omitempty"`
@@ -71,6 +93,8 @@ type ApplyEditResult struct {
 	Deleted      bool   `json:"deleted,omitempty"`
 	NewPath      string `json:"newPath,omitempty"`
 	HunksApplied int    `json:"hunksApplied,omitempty"`
+	// Edits carries the per-file results of a batch (wire 1.5.0).
+	Edits []ApplyEditBatchResultItem `json:"edits,omitempty"`
 
 	Success      bool   `json:"-"`
 	LinesChanged int    `json:"-"`

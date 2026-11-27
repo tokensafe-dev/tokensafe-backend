@@ -1,10 +1,10 @@
 {
   "adapterName": "python-stdio",
   "framework": "python",
-  "specVersion": "1.4.0",
-  "fixtureVersion": 9,
-  "total": 33,
-  "passed": 33,
+  "specVersion": "1.5.0",
+  "fixtureVersion": 10,
+  "total": 36,
+  "passed": 36,
   "failed": 0,
   "attainedLevel": 3,
   "levels": {
@@ -210,9 +210,27 @@
       "level": 1,
       "status": "passed",
       "error": ""
+    },
+    {
+      "id": "apply-edit-batch-applies-all",
+      "level": 3,
+      "status": "passed",
+      "error": ""
+    },
+    {
+      "id": "apply-edit-batch-is-atomic",
+      "level": 3,
+      "status": "passed",
+      "error": ""
+    },
+    {
+      "id": "expired-session-is-rejected",
+      "level": 3,
+      "status": "passed",
+      "error": ""
     }
   ],
-  "generatedAt": "2026-11-27T10:29:42Z",
+  "generatedAt": "2026-11-27T12:58:32Z",
   "environment": {
     "transport": "stdio",
     "python": "3.13.5"

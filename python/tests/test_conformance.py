@@ -73,6 +73,9 @@ async def test_conformance_certification(tmp_path):
         rename_source="conformance_rename_source.py",
         rename_target="conformance_renamed.py",
         rename_version=conformance.version_of(b"value = 2\n"),
+        batch_file_a="conformance_batch_a.py",
+        batch_file_b="conformance_batch_b.py",
+        batch_content="value = 7\n",
     )
 
     transport = httpx.ASGITransport(app=app)
@@ -97,19 +100,21 @@ async def test_conformance_certification(tmp_path):
     failures = [c for c in report["cases"] if c["status"] != "passed"]
     assert not failures, failures
     assert report["attainedLevel"] == 3, (report["attainedLevel"], report["levels"])
-    assert report["specVersion"] == "1.4.0"
+    assert report["specVersion"] == "1.5.0"
 
 
 def test_fixture_file_has_level_tagged_v6_shape():
     data = json.loads(FIXTURES.read_text(encoding="utf-8"))
-    assert data["fixtureVersion"] == 9
-    assert data["protocolVersion"] == "1.4.0"
+    assert data["fixtureVersion"] == 10
+    assert data["protocolVersion"] == "1.5.0"
     assert sorted(data["levelDefinitions"]) == ["1", "2", "3"]
     # Push cases belong to transport certificates; the native runners assert the
     # request/response suite and leave them to `oumv-certify --sse/--ws`.
     assert {case["transport"] for case in data.get("pushCases", [])} <= {"sse", "ws"}
-    # Capability cases are gated on the handshake claim.
+    # Capability and session cases are gated on the handshake claim.
     assert all(case.get("requiresCapability") for case in data.get("capabilityCases", []))
+    assert all(case.get("requiresCapability") for case in data.get("sessionCases", []))
+    assert data["sessionCases"], "fixtures v10 must prove an expired session"
 
     levels = {case["level"] for case in data["cases"]}
     assert levels == {1, 2, 3}

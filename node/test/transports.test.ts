@@ -115,7 +115,7 @@ describe('Express transport certificates', () => {
         );
         if (report.failed > 0) console.log(report.cases.filter((entry: any) => entry.status !== 'passed'));
         expect(report.failed).toBe(0);
-        expect(report.total).toBe(35);
+        expect(report.total).toBe(38);
         writeReport('transports/node-express-sse.json', report);
       } finally {
         await source.close();
@@ -147,7 +147,7 @@ describe('Express transport certificates', () => {
         });
         if (report.failed > 0) console.log(report.cases.filter((entry: any) => entry.status !== 'passed'));
         expect(report.failed).toBe(0);
-        expect(report.total).toBe(35);
+        expect(report.total).toBe(38);
         writeReport('transports/node-express-ws.json', report);
       } finally {
         await transport.close?.();
@@ -237,7 +237,7 @@ describe('Fastify transport certificates', () => {
         );
         if (report.failed > 0) console.log(report.cases.filter((entry: any) => entry.status !== 'passed'));
         expect(report.failed).toBe(0);
-        expect(report.total).toBe(35);
+        expect(report.total).toBe(38);
         writeReport('transports/node-fastify-sse.json', report);
       } finally {
         await source.close();
@@ -269,7 +269,7 @@ describe('Fastify transport certificates', () => {
         });
         if (report.failed > 0) console.log(report.cases.filter((entry: any) => entry.status !== 'passed'));
         expect(report.failed).toBe(0);
-        expect(report.total).toBe(35);
+        expect(report.total).toBe(38);
         writeReport('transports/node-fastify-ws.json', report);
       } finally {
         await transport.close?.();

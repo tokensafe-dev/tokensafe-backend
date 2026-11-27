@@ -8,6 +8,7 @@ a reproducible passing run is not a certification.
 
 from __future__ import annotations
 
+import asyncio
 import hashlib
 import json
 import time
@@ -15,7 +16,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any, Awaitable, Callable, Dict, List, Optional
 
-SPEC_VERSION = "1.4.0"
+SPEC_VERSION = "1.5.0"
 
 
 @dataclass
@@ -48,6 +49,10 @@ class Markers:
     rename_version: str = ""
     # Fixtures v9: the target a sandbox capability case dispatches against.
     sandbox_target: str = "POST /__oumv_sandbox_probe"
+    # Fixtures v10: the two files an applyEdit batch creates, and their content.
+    batch_file_a: str = "__oumv_conformance_batch_a.py"
+    batch_file_b: str = "__oumv_conformance_batch_b.py"
+    batch_content: str = "value = 7\n"
 
     def substitute(self, params: Dict[str, Any]) -> Dict[str, Any]:
         replacements = {
@@ -74,6 +79,9 @@ class Markers:
             "${RENAME_TARGET}": self.rename_target,
             "${RENAME_VERSION}": self.rename_version,
             "${SANDBOX_TARGET}": self.sandbox_target,
+            "${BATCH_FILE_A}": self.batch_file_a,
+            "${BATCH_FILE_B}": self.batch_file_b,
+            "${BATCH_CONTENT}": self.batch_content,
         }
         def walk(value: Any) -> Any:
             if isinstance(value, str):
@@ -134,6 +142,12 @@ def _check(case: Dict[str, Any], body: Dict[str, Any], markers: Markers) -> str:
             return f"expected error code {expected_error['code']}, got result"
         if error.get("code") != expected_error["code"]:
             return f"expected error code {expected_error['code']}, got {error.get('code')} ({error.get('message')})"
+        for key, want in (expected_error.get("data") or {}).items():
+            if isinstance(want, str):
+                want = markers.substitute_text(want)
+            got = (error.get("data") or {}).get(key)
+            if got != want:
+                return f"error data.{key} must be {want!r}, got {got!r}"
         return ""
 
     if body.get("error"):
@@ -230,6 +244,22 @@ def _capability_enabled(capabilities: Dict[str, Any], path: str) -> bool:
     return current is True
 
 
+async def _cleanup_paths(
+    post: Callable[[str, Dict[str, Any]], Awaitable[Dict[str, Any]]],
+    paths: Optional[List[Any]],
+    markers: Markers,
+) -> None:
+    """Removes leftover files before a case that creates them (wire 1.5.0)."""
+    for raw in paths or []:
+        path = markers.substitute_text(str(raw))
+        if not path:
+            continue
+        probe = await post("oumv/getSource", {"path": path})
+        version = (probe.get("result") or {}).get("version")
+        if not probe.get("error") and isinstance(version, str) and version:
+            await post("oumv/applyEdit", {"path": path, "mode": "delete", "expectedVersion": version})
+
+
 async def run_conformance(
     post: Callable[[str, Dict[str, Any]], Awaitable[Dict[str, Any]]],
     spec_path: str | Path,
@@ -270,21 +300,62 @@ async def run_conformance(
 
     # Capability cases prove an advertised claim; a runtime that does not make the
     # claim is not penalised, the case simply is not part of its report.
-    if spec.get("capabilityCases"):
+    capabilities: Dict[str, Any] = {}
+    if spec.get("capabilityCases") or spec.get("sessionCases"):
         handshake = await post("oumv/handshake", {})
-        capabilities = {}
         if not handshake.get("error"):
             capabilities = (handshake.get("result") or {}).get("capabilities") or {}
+
+    if spec.get("capabilityCases"):
         for case in spec["capabilityCases"]:
             if not _capability_enabled(capabilities, str(case.get("requiresCapability") or "")):
                 continue
             outcome = {"id": case["id"], "level": case["level"], "status": "passed", "error": ""}
+            await _cleanup_paths(post, case.get("cleanup"), markers)
             body = await post(case["method"], markers.substitute(case.get("params", {})))
             message = _check(case, body, markers)
+            follow_up = case.get("followUp")
+            if not message and follow_up:
+                follow_body = await post(follow_up["method"], markers.substitute(follow_up.get("params", {})))
+                follow_message = _check(follow_up, follow_body, markers)
+                if follow_message:
+                    message = f"follow-up: {follow_message}"
             if message:
                 outcome["status"] = "failed"
                 outcome["error"] = message
             results.append(outcome)
+
+    # Session cases prove the advertised TTL: a session issued with a short
+    # lifetime must be dead after it (-32011, data.reason=session_expired).
+    for case in spec.get("sessionCases") or []:
+        if not _capability_enabled(capabilities, str(case.get("requiresCapability") or "")):
+            continue
+        outcome = {"id": case["id"], "level": case["level"], "status": "passed", "error": ""}
+        handshake = await post(
+            "oumv/handshake",
+            {"protocolVersion": spec.get("protocolVersion", SPEC_VERSION), "sessionTtlSeconds": case["ttlSeconds"]},
+        )
+        result = handshake.get("result") or {}
+        granted = result.get("ttlSeconds")
+        session_id = result.get("sessionId")
+        if handshake.get("error"):
+            outcome["status"], outcome["error"] = "failed", f"handshake with sessionTtlSeconds failed: {handshake['error']}"
+        elif not isinstance(granted, int) or granted > case["ttlSeconds"]:
+            outcome["status"], outcome["error"] = (
+                "failed",
+                f"runtime granted ttlSeconds={granted!r}, expected <= {case['ttlSeconds']}",
+            )
+        elif not isinstance(session_id, str) or not session_id:
+            outcome["status"], outcome["error"] = "failed", "handshake returned no sessionId"
+        else:
+            await asyncio.sleep(granted + 0.3)
+            params = markers.substitute(case.get("params", {}))
+            params["sessionId"] = session_id
+            body = await post(case["method"], params)
+            message = _check(case, body, markers)
+            if message:
+                outcome["status"], outcome["error"] = "failed", message
+        results.append(outcome)
 
     passed = sum(1 for r in results if r["status"] == "passed")
     return {

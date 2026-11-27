@@ -1,7 +1,7 @@
 {
-  "protocolVersion": "1.4.0",
+  "protocolVersion": "1.5.0",
   "spec": "https://github.com/tokensafe-dev/oumv/blob/main/spec/SPEC.md",
-  "description": "Language-neutral OUMV conformance cases (spec \u00a710). Each case declares the conformance Level (1|2|3) it certifies. A runtime attains Level N only when every case with level <= N passes; a failure at a higher level caps the claim but does not fail the lower levels. fixtureVersion 3 added session handshake, getSource and verify-result shape coverage; fixtureVersion 4 requires the observe `format` field the spec envelope mandates; fixtureVersion 5 covers applyEdit mode=create (new file, no overwrite). Markers substituted by each runner: ${FIXTURE_FILE}, ${MISSING_FILE}, ${EDIT_TARGET_FILE}, ${EDIT_TARGET_VERSION}, ${EDIT_CONTENT}, ${BROKEN_CONTENT}, ${L2_TARGET}, ${L3_TARGET}, ${VERIFY_TARGET}. v7 (wire 1.3.0): applyEdit mode=patch (splice, target-missing), getSource window/dedup markers, unknown mode/symbol/level/version, create with expectedVersion, rename/delete validation. v8: pushCases for the SSE (§2.3) and WebSocket (§2.4) bindings — a certificate for that transport proves a mutation is pushed as `state`/`notifications/oumv.state` and that `Last-Event-ID` replays it.",
+  "description": "Language-neutral OUMV conformance cases (spec §10). Each case declares the conformance Level (1|2|3) it certifies. A runtime attains Level N only when every case with level <= N passes; a failure at a higher level caps the claim but does not fail the lower levels. fixtureVersion 3 added session handshake, getSource and verify-result shape coverage; fixtureVersion 4 requires the observe `format` field the spec envelope mandates; fixtureVersion 5 covers applyEdit mode=create (new file, no overwrite). Markers substituted by each runner: ${FIXTURE_FILE}, ${MISSING_FILE}, ${EDIT_TARGET_FILE}, ${EDIT_TARGET_VERSION}, ${EDIT_CONTENT}, ${BROKEN_CONTENT}, ${L2_TARGET}, ${L3_TARGET}, ${VERIFY_TARGET}. v7 (wire 1.3.0): applyEdit mode=patch (splice, target-missing), getSource window/dedup markers, unknown mode/symbol/level/version, create with expectedVersion, rename/delete validation. v8: pushCases for the SSE (§2.3) and WebSocket (§2.4) bindings — a certificate for that transport proves a mutation is pushed as `state`/`notifications/oumv.state` and that `Last-Event-ID` replays it. v9: capabilityCases gated on the handshake claim (verify.sandboxRollback), markers are substituted in nested params, and a case a runtime does not claim is absent from its report rather than skipped. v10 (wire 1.5.0): the applyEdit batch envelope (mutate.multiFile) — one atomic call creates two files, and a batch whose second edit fails syntax pre-flight leaves no bytes on disk; sessionCases issue a handshake with `sessionTtlSeconds` and prove an expired id answers -32011 with data.reason=session_expired.",
   "cases": [
     {
       "id": "handshake-negotiates-capabilities",
@@ -579,12 +579,105 @@
         "rollbackStatus": "verified",
         "dbDiff.rollback": true
       }
+    },
+    {
+      "id": "apply-edit-batch-applies-all",
+      "level": 3,
+      "requiresCapability": "mutate.multiFile",
+      "cleanup": [
+        "${BATCH_FILE_A}",
+        "${BATCH_FILE_B}"
+      ],
+      "method": "oumv/applyEdit",
+      "params": {
+        "edits": [
+          {
+            "path": "${BATCH_FILE_A}",
+            "mode": "create",
+            "replacement": "${BATCH_CONTENT}"
+          },
+          {
+            "path": "${BATCH_FILE_B}",
+            "mode": "create",
+            "replacement": "${BATCH_CONTENT}"
+          }
+        ]
+      },
+      "expectResultFields": [
+        "status",
+        "edits.0.path",
+        "edits.1.path",
+        "edits.1.newVersion"
+      ],
+      "expectValues": {
+        "status": "APPLIED",
+        "edits.0.path": "${BATCH_FILE_A}",
+        "edits.1.path": "${BATCH_FILE_B}",
+        "edits.1.created": true
+      }
+    },
+    {
+      "id": "apply-edit-batch-is-atomic",
+      "level": 3,
+      "requiresCapability": "mutate.multiFile",
+      "cleanup": [
+        "${BATCH_FILE_A}",
+        "${BATCH_FILE_B}"
+      ],
+      "method": "oumv/applyEdit",
+      "params": {
+        "edits": [
+          {
+            "path": "${BATCH_FILE_A}",
+            "mode": "create",
+            "replacement": "${BATCH_CONTENT}"
+          },
+          {
+            "path": "${BATCH_FILE_B}",
+            "mode": "create",
+            "replacement": "${BROKEN_CONTENT}"
+          }
+        ]
+      },
+      "expectError": {
+        "code": -32002,
+        "data": {
+          "editIndex": 1
+        }
+      },
+      "followUp": {
+        "method": "oumv/getSource",
+        "params": {
+          "path": "${BATCH_FILE_A}"
+        },
+        "expectError": {
+          "code": -32009
+        }
+      }
     }
   ],
-  "fixtureVersion": 9,
+  "fixtureVersion": 10,
   "levelDefinitions": {
     "1": "Handshake, L0-L1 observe, action verification",
     "2": "L2-L3 observe, impact analysis, OCC mutations, surface diffs",
     "3": "L4 traces, signals graph, runtime causality"
-  }
+  },
+  "sessionCases": [
+    {
+      "id": "expired-session-is-rejected",
+      "level": 3,
+      "requiresCapability": "sessions.ttlSeconds",
+      "ttlSeconds": 1,
+      "method": "oumv/observe",
+      "params": {
+        "level": "L0"
+      },
+      "expectError": {
+        "code": -32011,
+        "data": {
+          "reason": "session_expired"
+        }
+      }
+    }
+  ]
 }

@@ -1,10 +1,10 @@
 {
   "adapterName": "python-fastapi",
   "framework": "fastapi",
-  "specVersion": "1.4.0",
-  "fixtureVersion": 9,
-  "total": 34,
-  "passed": 34,
+  "specVersion": "1.5.0",
+  "fixtureVersion": 10,
+  "total": 37,
+  "passed": 37,
   "failed": 0,
   "attainedLevel": 3,
   "levels": {
@@ -216,7 +216,25 @@
       "level": 2,
       "status": "passed",
       "error": ""
+    },
+    {
+      "id": "apply-edit-batch-applies-all",
+      "level": 3,
+      "status": "passed",
+      "error": ""
+    },
+    {
+      "id": "apply-edit-batch-is-atomic",
+      "level": 3,
+      "status": "passed",
+      "error": ""
+    },
+    {
+      "id": "expired-session-is-rejected",
+      "level": 3,
+      "status": "passed",
+      "error": ""
     }
   ],
-  "generatedAt": "2026-11-27T10:29:41Z"
+  "generatedAt": "2026-11-27T12:58:31Z"
 }

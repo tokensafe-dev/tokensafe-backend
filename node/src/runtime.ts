@@ -18,7 +18,7 @@ import {
 import { resolveWorkspacePath, splitSourceTarget } from './paths.js';
 import { SessionRegistry } from './sessions.js';
 
-export const PROTOCOL_VERSION = '1.4.0';
+export const PROTOCOL_VERSION = '1.5.0';
 export const OBSERVE_LEVELS = ['L0', 'L1', 'L2', 'L3', 'L4'] as const;
 export type ObserveLevel = (typeof OBSERVE_LEVELS)[number];
 
@@ -43,8 +43,10 @@ export interface TraceEntry {
 export interface RuntimeCapabilities {
   observe: { levels: string[]; formats: string[] };
   understand: { causality: boolean; signalsGraph: boolean; impactAnalysis: boolean };
-  mutate: { occ: boolean; syntaxGuard: boolean };
+  mutate: { occ: boolean; syntaxGuard: boolean; multiFile?: boolean };
   verify: { multiMetric: boolean; surfaceDiff: boolean; sandboxRollback?: boolean };
+  /** §3 session lifecycle: true when the handshake honours `sessionTtlSeconds`. */
+  sessions?: { ttlSeconds?: boolean };
   /** Bindings this runtime actually mounted (spec §2.3/§2.4). */
   transports?: string[];
 }
@@ -280,7 +282,7 @@ export class OumvRuntime {
       const [majorRaw, minorRaw] = requestedVersion.split('.');
       const major = Number(majorRaw);
       const minor = Number(minorRaw);
-      if (!Number.isInteger(major) || !Number.isInteger(minor) || major !== 1 || minor > 4) {
+      if (!Number.isInteger(major) || !Number.isInteger(minor) || major !== 1 || minor > 5) {
         throw unsupported(
           `UNSUPPORTED_CAPABILITY: protocol version ${requestedVersion} (this runtime serves ${PROTOCOL_VERSION})`,
         );
@@ -289,14 +291,15 @@ export class OumvRuntime {
     const capabilities: RuntimeCapabilities = {
       observe: { levels: [...OBSERVE_LEVELS], formats: ['json'] },
       understand: { causality: true, signalsGraph: false, impactAnalysis: true },
-      mutate: { occ: true, syntaxGuard: true },
+      mutate: { occ: true, syntaxGuard: true, multiFile: true },
       verify: { multiMetric: true, surfaceDiff: false, sandboxRollback: Boolean(this.sandbox?.db) },
+      sessions: { ttlSeconds: true },
       transports: [...this.transports],
     };
     if (!this.enabled.understand) {
       capabilities.understand = { causality: false, signalsGraph: false, impactAnalysis: false };
     }
-    if (!this.enabled.mutate) capabilities.mutate = { occ: false, syntaxGuard: false };
+    if (!this.enabled.mutate) capabilities.mutate = { occ: false, syntaxGuard: false, multiFile: false };
     if (!this.enabled.verify) {
       capabilities.verify = { multiMetric: false, surfaceDiff: false, sandboxRollback: false };
     }
@@ -309,11 +312,18 @@ export class OumvRuntime {
     }
     if (!this.enabled.observe) capabilities.observe = { levels: [], formats: [] };
 
+    // Wire 1.5.0: honour a client-requested lifetime and echo what was granted.
+    const requestedTtl = Number(params.sessionTtlSeconds);
+    const session =
+      Number.isFinite(requestedTtl) && requestedTtl > 0
+        ? this.sessions.createWithTtl(requestedTtl)
+        : { id: this.sessions.create(), ttlSeconds: this.sessions.ttlSeconds };
+
     return {
       protocolVersion: PROTOCOL_VERSION,
       profile: 'backend',
-      sessionId: this.sessions.create(),
-      ttlSeconds: this.sessions.ttlSeconds,
+      sessionId: session.id,
+      ttlSeconds: session.ttlSeconds,
       runtimeInfo: { name: this.name, version: this.version },
       capabilities,
     };
@@ -554,6 +564,14 @@ export class OumvRuntime {
   }
 
   applyEdit(params: Record<string, any> = {}): Record<string, unknown> {
+    // Wire 1.5.0: a request carrying `edits` is a multi-file atomic batch.
+    if (Array.isArray(params.edits) && params.edits.length > 0) {
+      const result = this.applyEditBatch(params);
+      for (const item of result.edits as Array<Record<string, unknown>>) {
+        this.recordState(String(item.path ?? ''), String(item.newVersion ?? ''), 'batch');
+      }
+      return result;
+    }
     const result = this.applyEditInternal(params);
     if (result && result.status === 'APPLIED') {
       // Publish after the bytes are on disk: a subscriber must never observe a
@@ -565,6 +583,194 @@ export class OumvRuntime {
       );
     }
     return result;
+  }
+
+  /**
+   * Multi-file atomic mutation (wire 1.5.0, spec §4.3): every item is jail-,
+   * version- and syntax-checked before the first write; a write failure restores
+   * the files already written and answers -32603 with data.rolledBack.
+   */
+  private applyEditBatch(params: Record<string, any>): Record<string, unknown> {
+    if (!this.enabled.mutate) throw permissionDenied('PERMISSION_DENIED: mutate capability is disabled');
+    const items = params.edits as Array<Record<string, any>>;
+    if (items.length > 16) {
+      throw validationFailed('VALIDATION_FAILED: edits must hold 1..16 items', {
+        reason: 'batch_size',
+        count: items.length,
+      });
+    }
+
+    interface Staged {
+      resolved: string;
+      rel: string;
+      content: string;
+      previous?: string;
+      created: boolean;
+      hunksApplied?: number;
+    }
+
+    const staged: Staged[] = [];
+    const seen = new Set<string>();
+    items.forEach((item, index) => {
+      const rel = String(item?.path ?? '').trim();
+      const annotate = (err: any): never => {
+        throw new OumvError(err.code, err.message, {
+          ...(err.data ?? {}),
+          editIndex: index,
+          ...(rel ? { path: rel } : {}),
+        });
+      };
+      try {
+        if (!rel) throw invalidParams('INVALID_PARAMS: path is required');
+        const resolved = resolveWorkspacePath(rel, this.workspaceDir);
+        if (seen.has(resolved)) {
+          throw validationFailed('VALIDATION_FAILED: duplicate path in batch', { reason: 'duplicate_path' });
+        }
+        seen.add(resolved);
+        const mode = String(item?.mode ?? 'replace').toLowerCase();
+        if (!['replace', 'create', 'patch'].includes(mode)) {
+          throw unsupported(
+            `UNSUPPORTED_CAPABILITY: applyEdit batch mode ${JSON.stringify(mode)} (only replace/create/patch are atomic)`
+          );
+        }
+        if (mode === 'create') {
+          const replacement = String(item.replacement ?? '');
+          if (!replacement) {
+            throw validationFailed('VALIDATION_FAILED: replacement is required for mode=create', {
+              reason: 'replacement_required',
+            });
+          }
+          if (item.expectedVersion) {
+            throw validationFailed('VALIDATION_FAILED: expectedVersion must be omitted for mode=create', {
+              reason: 'create_forbids_version',
+            });
+          }
+          if (fs.existsSync(resolved)) {
+            throw conflict('CONFLICT_DETECTED: file already exists; use mode=replace with its version', {
+              reason: 'file_exists',
+            });
+          }
+          checkSyntax(resolved, replacement);
+          staged.push({ resolved, rel, content: replacement, created: true });
+          return;
+        }
+        if (!fs.existsSync(resolved) || !fs.statSync(resolved).isFile()) {
+          throw resourceNotFound(`RESOURCE_NOT_FOUND: ${rel}`);
+        }
+        const current = fs.readFileSync(resolved, 'utf-8');
+        const currentVersion = sha256(current);
+        const expectedVersion = String(item.expectedVersion ?? '').trim();
+        if (!expectedVersion) {
+          throw validationFailed('VALIDATION_FAILED: expectedVersion is required to edit an existing file', {
+            reason: 'expected_version_required',
+            current: currentVersion,
+          });
+        }
+        if (expectedVersion !== currentVersion) {
+          throw conflict('CONFLICT_DETECTED: version mismatch in batch', {
+            reason: 'version_mismatch',
+            expected: expectedVersion,
+            current: currentVersion,
+          });
+        }
+        if (mode === 'patch') {
+          const hunks: any[] = Array.isArray(item.hunks) ? item.hunks : [];
+          if (hunks.length === 0) {
+            throw validationFailed('VALIDATION_FAILED: hunks is required for mode=patch', {
+              reason: 'hunks_required',
+            });
+          }
+          const text = this.spliceHunks(current, hunks);
+          checkSyntax(resolved, text);
+          staged.push({ resolved, rel, content: text, previous: current, created: false, hunksApplied: hunks.length });
+          return;
+        }
+        const replacement = String(item.replacement ?? '');
+        if (!replacement) {
+          throw validationFailed('VALIDATION_FAILED: replacement is required for mode=replace', {
+            reason: 'replacement_required',
+          });
+        }
+        checkSyntax(resolved, replacement);
+        staged.push({ resolved, rel, content: replacement, previous: current, created: false });
+      } catch (err) {
+        annotate(err);
+      }
+    });
+
+    const written: Array<{ resolved: string; previous?: string; created: boolean }> = [];
+    for (let index = 0; index < staged.length; index++) {
+      const edit = staged[index];
+      try {
+        if (edit.created) fs.mkdirSync(path.dirname(edit.resolved), { recursive: true });
+        fs.writeFileSync(edit.resolved, edit.content, 'utf-8');
+        written.push({ resolved: edit.resolved, previous: edit.previous, created: edit.created });
+      } catch (err: any) {
+        const failures: string[] = [];
+        for (const wrote of [...written].reverse()) {
+          try {
+            if (wrote.created) fs.rmSync(wrote.resolved, { force: true });
+            else if (wrote.previous !== undefined) fs.writeFileSync(wrote.resolved, wrote.previous, 'utf-8');
+          } catch (restoreErr: any) {
+            failures.push(`${wrote.resolved}: ${restoreErr.message}`);
+          }
+        }
+        throw new OumvError(ERROR_CODES.INTERNAL_ERROR, `failed to persist edit: ${err.message}`, {
+          editIndex: index,
+          path: edit.rel,
+          rolledBack: failures.length === 0 && written.length > 0,
+          ...(failures.length ? { rollbackErrors: failures } : {}),
+        });
+      }
+    }
+
+    return {
+      status: 'APPLIED',
+      edits: staged.map((edit) => ({
+        path: edit.rel,
+        newVersion: sha256(edit.content),
+        ...(edit.created ? { created: true } : {}),
+        ...(edit.hunksApplied ? { hunksApplied: edit.hunksApplied } : {}),
+      })),
+    };
+  }
+
+  /** Applies patch hunks in order to the evolving text (shared by patch and batch). */
+  private spliceHunks(source: string, hunks: any[]): string {
+    let text = source;
+    hunks.forEach((hunk: any, index: number) => {
+      const target = String(hunk?.target ?? '');
+      const replacement = String(hunk?.replacement ?? '');
+      if (!target) {
+        throw validationFailed(`VALIDATION_FAILED: hunk ${index} has an empty target`, {
+          reason: 'target_required',
+          hunk: index,
+        });
+      }
+      const [startOff, endOff] = hunkWindow(text, hunk, index);
+      const region = text.slice(startOff, endOff);
+      const count = region.split(target).length - 1;
+      if (count === 0) {
+        throw resourceNotFound(`RESOURCE_NOT_FOUND: hunk ${index} target does not occur in the file`);
+      }
+      if (count > 1 && !hunk.replaceAll) {
+        const lines: number[] = [];
+        let pos = 0;
+        while (lines.length < 5) {
+          const found = region.indexOf(target, pos);
+          if (found < 0) break;
+          lines.push(1 + (region.slice(0, found).match(/\n/g) || []).length);
+          pos = found + target.length;
+        }
+        throw validationFailed(
+          `VALIDATION_FAILED: hunk ${index} target occurs ${count} times; narrow it with startLine/endLine or set replaceAll`,
+          { reason: 'target_not_unique', hunk: index, count, lines }
+        );
+      }
+      const next = hunk.replaceAll ? region.split(target).join(replacement) : region.replace(target, replacement);
+      text = text.slice(0, startOff) + next + text.slice(endOff);
+    });
+    return text;
   }
 
   private applyEditInternal(params: Record<string, any> = {}): Record<string, unknown> {
@@ -629,39 +835,7 @@ export class OumvRuntime {
           current: currentVersion,
         });
       }
-      let text = current;
-      hunks.forEach((hunk: any, index: number) => {
-        const target = String(hunk?.target ?? '');
-        const replacement = String(hunk?.replacement ?? '');
-        if (!target) {
-          throw validationFailed(`VALIDATION_FAILED: hunk ${index} has an empty target`, {
-            reason: 'target_required',
-            hunk: index,
-          });
-        }
-        const [startOff, endOff] = hunkWindow(text, hunk, index);
-        const region = text.slice(startOff, endOff);
-        const count = region.split(target).length - 1;
-        if (count === 0) {
-          throw resourceNotFound(`RESOURCE_NOT_FOUND: hunk ${index} target does not occur in the file`);
-        }
-        if (count > 1 && !hunk.replaceAll) {
-          const lines: number[] = [];
-          let pos = 0;
-          while (lines.length < 5) {
-            const found = region.indexOf(target, pos);
-            if (found < 0) break;
-            lines.push(1 + (region.slice(0, found).match(/\n/g) || []).length);
-            pos = found + target.length;
-          }
-          throw validationFailed(
-            `VALIDATION_FAILED: hunk ${index} target occurs ${count} times; narrow it with startLine/endLine or set replaceAll`,
-            { reason: 'target_not_unique', hunk: index, count, lines },
-          );
-        }
-        const next = hunk.replaceAll ? region.split(target).join(replacement) : region.replace(target, replacement);
-        text = text.slice(0, startOff) + next + text.slice(endOff);
-      });
+      const text = this.spliceHunks(current, hunks);
       const syntax = checkSyntax(resolved, text);
       let backupPath: string | undefined;
       try {

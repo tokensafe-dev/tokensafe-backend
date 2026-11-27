@@ -10,6 +10,20 @@ import (
 // DefaultSessionTTL is the lifetime of a handshake-issued session (spec §3).
 const DefaultSessionTTL = time.Hour
 
+// MaxSessionTTL bounds a client-requested lifetime (spec §3, wire 1.5.0).
+const MaxSessionTTL = 24 * time.Hour
+
+// ClampSessionTTL clamps a requested lifetime in seconds to [1, 86400].
+func ClampSessionTTL(seconds int) int {
+	if seconds < 1 {
+		return 1
+	}
+	if max := int(MaxSessionTTL.Seconds()); seconds > max {
+		return max
+	}
+	return seconds
+}
+
 type session struct {
 	expiresAt time.Time
 }
@@ -43,8 +57,19 @@ func (r *SessionRegistry) TTLSeconds() int {
 	return int(r.ttl.Seconds())
 }
 
-// Create issues a new session id and records its expiry.
+// Create issues a new session id with the registry's configured lifetime.
 func (r *SessionRegistry) Create() string {
+	return r.create(r.ttl)
+}
+
+// CreateWithTTL issues a session with the requested lifetime (clamped to
+// [1, 86400] seconds) and reports the granted seconds. Wire 1.5.0.
+func (r *SessionRegistry) CreateWithTTL(seconds int) (string, int) {
+	granted := ClampSessionTTL(seconds)
+	return r.create(time.Duration(granted) * time.Second), granted
+}
+
+func (r *SessionRegistry) create(ttl time.Duration) string {
 	buf := make([]byte, 8)
 	if _, err := rand.Read(buf); err != nil {
 		// crypto/rand failure is not a reason to break the handshake; fall back to
@@ -54,7 +79,7 @@ func (r *SessionRegistry) Create() string {
 	id := "sess-" + hex.EncodeToString(buf)
 
 	r.mu.Lock()
-	r.sessions[id] = session{expiresAt: r.now().Add(r.ttl)}
+	r.sessions[id] = session{expiresAt: r.now().Add(ttl)}
 	r.mu.Unlock()
 	return id
 }

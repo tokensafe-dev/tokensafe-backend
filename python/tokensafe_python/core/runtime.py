@@ -26,6 +26,7 @@ from tokensafe_python.protocol.errors import (
     RESOURCE_NOT_FOUND,
     UNSUPPORTED_CAPABILITY,
     VALIDATION_FAILED,
+    INTERNAL_ERROR,
 )
 from tokensafe_python.protocol.rpc import JSONRPCHandler
 from tokensafe_python.protocol.types import (
@@ -308,18 +309,24 @@ class OUMVRuntime:
                 major, minor = int(parts[0]), int(parts[1])
             except (IndexError, ValueError):
                 raise OumvError(UNSUPPORTED_CAPABILITY, f"UNSUPPORTED_CAPABILITY: protocol version {requested_version!r}")
-            if major != 1 or minor > 4:
+            if major != 1 or minor > 5:
                 raise OumvError(
                     UNSUPPORTED_CAPABILITY,
-                    f"UNSUPPORTED_CAPABILITY: protocol version {requested_version} (this runtime serves 1.4.0)",
+                    f"UNSUPPORTED_CAPABILITY: protocol version {requested_version} (this runtime serves 1.5.0)",
                 )
-        session_id = self.sessions.create()
+        requested_ttl = kwargs.get("sessionTtlSeconds")
+        try:
+            requested_ttl = None if requested_ttl is None else int(requested_ttl)
+        except (TypeError, ValueError):
+            requested_ttl = None
+        session_id = self.sessions.create(requested_ttl)
+        granted_ttl = self.sessions.granted_ttl(requested_ttl)
         caps = {
             # JSON only (no YAML emitter), no frontend signals graph: the backend
             # answers causality from its own causality graph, not reactive signals.
             "observe": {"levels": ["L0", "L1", "L2", "L3", "L4"], "formats": ["json"]},
             "understand": {"causality": True, "signalsGraph": False, "impactAnalysis": True},
-            "mutate": {"occ": True, "syntaxGuard": True, "ephemeralDispatch": False},
+            "mutate": {"occ": True, "syntaxGuard": True, "ephemeralDispatch": False, "multiFile": True},
             # No DOM/a11y surface exists on the backend profile.
             "verify": {
                 "multiMetric": True,
@@ -329,6 +336,8 @@ class OUMVRuntime:
             },
             # Bindings this runtime mounts (spec §2.3/§2.4).
             "transports": ["http", "sse", "ws"],
+            # Wire 1.5.0: the handshake honours a client-requested lifetime.
+            "sessions": {"ttlSeconds": True},
         }
         # §3.1: honour the client's request by narrowing the advertised set. Arrays
         # are filters; an empty intersection stays empty ("cannot serve").
@@ -341,10 +350,10 @@ class OUMVRuntime:
         if req_formats:
             caps["observe"]["formats"] = [fmt for fmt in caps["observe"]["formats"] if fmt in req_formats]
         return {
-            "protocolVersion": "1.4.0",
+            "protocolVersion": "1.5.0",
             "profile": "backend",
             "sessionId": session_id,
-            "ttlSeconds": self.sessions.ttl,
+            "ttlSeconds": granted_ttl,
             "runtimeInfo": {
                 "name": "tokensafe-python",
                 "version": "0.8.0",
@@ -547,6 +556,10 @@ class OUMVRuntime:
         expected_version = kwargs.get("expectedVersion") or kwargs.get("expected_version")
         rename_to = kwargs.get("renameTo") or kwargs.get("rename_to")
         hunks = kwargs.get("hunks")
+        edits = kwargs.get("edits")
+        # Wire 1.5.0: a request carrying `edits` is a multi-file atomic batch.
+        if isinstance(edits, list) and edits:
+            return self._apply_edit_batch(edits)
         mode = str(kwargs.get("mode") or "replace").lower()
         if mode not in ("replace", "create", "symbol", "delete", "rename", "patch"):
             raise OumvError(
@@ -613,7 +626,44 @@ class OUMVRuntime:
                 {"reason": "version_mismatch"},
             )
 
-        text = current_bytes.decode("utf-8")
+        text = self._splice_hunks(current_bytes.decode("utf-8"), hunks)
+
+        syntax_check = self._syntax_check(abs_path, text)
+        if syntax_check["status"] == "failed":
+            raise OumvError(
+                SYNTAX_ERROR,
+                f"SYNTAX_ERROR: edit rejected ({syntax_check['tool']}): {syntax_check['error']}",
+                data={"syntaxCheck": syntax_check},
+            )
+
+        backup_path = None
+        try:
+            backup_dir = os.path.join(root_abs, ".tokensafe", "backups")
+            os.makedirs(backup_dir, exist_ok=True)
+            digest = hashlib.sha256(current_bytes).hexdigest()[:8]
+            backup_path = os.path.join(backup_dir, f"{digest}_{os.path.basename(abs_path)}.bak")
+            with open(backup_path, "wb") as f:
+                f.write(current_bytes)
+        except Exception:
+            backup_path = None
+
+        with open(abs_path, "w", encoding="utf-8") as f:
+            f.write(text)
+
+        result = {
+            "status": "APPLIED",
+            "path": path,
+            "newVersion": "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest(),
+            "syntaxCheck": syntax_check,
+            "hunksApplied": len(hunks),
+        }
+        if backup_path:
+            result["backupPath"] = backup_path
+            result["rollbackHint"] = f"Previous content backed up at {backup_path}"
+        return result
+
+    def _splice_hunks(self, text: str, hunks: List[Dict[str, Any]]) -> str:
+        """Applies patch hunks in order to the evolving text (shared by patch and batch)."""
         for index, hunk in enumerate(hunks):
             hunk = hunk or {}
             target = hunk.get("target") or ""
@@ -653,40 +703,210 @@ class OUMVRuntime:
             else:
                 region = region.replace(target, replacement, 1)
             text = text[:start_off] + region + text[end_off:]
+        return text
 
-        syntax_check = self._syntax_check(abs_path, text)
-        if syntax_check["status"] == "failed":
+    def _apply_edit_batch(self, edits: List[Any]) -> Dict[str, Any]:
+        """Multi-file atomic applyEdit (wire 1.5.0, spec §4.3).
+
+        Every item is jail-, version- and syntax-checked before the first write; a
+        write failure restores the files already written and answers -32603 with
+        `data.rolledBack`, so a batch never leaves a half-applied tree behind.
+        """
+        if len(edits) > 16:
             raise OumvError(
-                SYNTAX_ERROR,
-                f"SYNTAX_ERROR: edit rejected ({syntax_check['tool']}): {syntax_check['error']}",
-                data={"syntaxCheck": syntax_check},
+                VALIDATION_FAILED,
+                "VALIDATION_FAILED: edits must hold 1..16 items",
+                {"reason": "batch_size", "count": len(edits)},
+            )
+        root = self._project_root_abs()
+        staged: List[Dict[str, Any]] = []
+        seen: Dict[str, int] = {}
+
+        for index, raw in enumerate(edits):
+            item = raw or {}
+            rel = str(item.get("path") or "").strip()
+
+            def fail(err: OumvError) -> None:
+                data = dict(err.data or {})
+                data["editIndex"] = index
+                if rel:
+                    data["path"] = rel
+                err.data = data
+                raise err
+
+            if not rel:
+                fail(OumvError(VALIDATION_FAILED, "VALIDATION_FAILED: path is required", {"reason": "path_required"}))
+            abs_path = self._resolve_project_file(rel)
+            if abs_path is None:
+                fail(OumvError(SECURITY_VIOLATION, f"SECURITY_VIOLATION: path traversal blocked: {rel}"))
+            key = os.path.realpath(abs_path)
+            if key in seen:
+                fail(
+                    OumvError(
+                        VALIDATION_FAILED,
+                        f"VALIDATION_FAILED: duplicate path in batch (also item {seen[key]})",
+                        {"reason": "duplicate_path"},
+                    )
+                )
+            seen[key] = index
+
+            mode = str(item.get("mode") or "replace").lower()
+            if mode not in ("replace", "create", "patch"):
+                fail(
+                    OumvError(
+                        UNSUPPORTED_CAPABILITY,
+                        f"UNSUPPORTED_CAPABILITY: applyEdit batch mode {mode!r} (only replace/create/patch are atomic)",
+                        {"reason": "unknown_mode"},
+                    )
+                )
+            expected_version = item.get("expectedVersion")
+
+            if mode == "create":
+                replacement = item.get("replacement")
+                if replacement is None:
+                    fail(
+                        OumvError(
+                            VALIDATION_FAILED,
+                            "VALIDATION_FAILED: replacement is required for mode=create",
+                            {"reason": "replacement_required"},
+                        )
+                    )
+                if expected_version:
+                    fail(
+                        OumvError(
+                            VALIDATION_FAILED,
+                            "VALIDATION_FAILED: expectedVersion must be omitted for mode=create",
+                            {"reason": "create_forbids_version"},
+                        )
+                    )
+                if os.path.exists(abs_path):
+                    fail(
+                        OumvError(
+                            CONFLICT_DETECTED,
+                            "CONFLICT_DETECTED: file already exists; use mode=replace with its version",
+                            {"reason": "file_exists"},
+                        )
+                    )
+                content = str(replacement)
+                syntax = self._syntax_check(abs_path, content)
+                if syntax["status"] == "failed":
+                    fail(
+                        OumvError(
+                            SYNTAX_ERROR,
+                            f"SYNTAX_ERROR: edit rejected ({syntax['tool']}): {syntax['error']}",
+                            {"syntaxCheck": syntax},
+                        )
+                    )
+                staged.append(
+                    {"abs_path": abs_path, "rel": os.path.relpath(abs_path, root), "content": content,
+                     "previous": None, "created": True, "hunksApplied": 0}
+                )
+                continue
+
+            if not os.path.isfile(abs_path):
+                fail(OumvError(RESOURCE_NOT_FOUND, f"RESOURCE_NOT_FOUND: {rel}"))
+            with open(abs_path, "rb") as handle:
+                previous = handle.read()
+            current_version = "sha256:" + hashlib.sha256(previous).hexdigest()
+            if not expected_version:
+                fail(
+                    OumvError(
+                        VALIDATION_FAILED,
+                        "VALIDATION_FAILED: expectedVersion is required to edit an existing file",
+                        {"reason": "expected_version_required", "current": current_version},
+                    )
+                )
+            if expected_version != current_version:
+                fail(
+                    OumvError(
+                        CONFLICT_DETECTED,
+                        f"CONFLICT_DETECTED: version mismatch: expected {expected_version}, current is {current_version}",
+                        {"reason": "version_mismatch", "expected": expected_version, "current": current_version},
+                    )
+                )
+
+            hunks_applied = 0
+            if mode == "patch":
+                hunks = item.get("hunks")
+                if not isinstance(hunks, list) or not hunks:
+                    fail(
+                        OumvError(
+                            VALIDATION_FAILED,
+                            "VALIDATION_FAILED: hunks is required for mode=patch",
+                            {"reason": "hunks_required"},
+                        )
+                    )
+                try:
+                    content = self._splice_hunks(previous.decode("utf-8"), hunks)
+                except OumvError as exc:
+                    fail(exc)
+                hunks_applied = len(hunks)
+            else:
+                replacement = item.get("replacement")
+                if replacement is None:
+                    fail(
+                        OumvError(
+                            VALIDATION_FAILED,
+                            "VALIDATION_FAILED: replacement is required for mode=replace",
+                            {"reason": "replacement_required"},
+                        )
+                    )
+                content = str(replacement)
+
+            syntax = self._syntax_check(abs_path, content)
+            if syntax["status"] == "failed":
+                fail(
+                    OumvError(
+                        SYNTAX_ERROR,
+                        f"SYNTAX_ERROR: edit rejected ({syntax['tool']}): {syntax['error']}",
+                        {"syntaxCheck": syntax},
+                    )
+                )
+            staged.append(
+                {"abs_path": abs_path, "rel": os.path.relpath(abs_path, root), "content": content,
+                 "previous": previous, "created": False, "hunksApplied": hunks_applied}
             )
 
-        backup_path = None
-        try:
-            backup_dir = os.path.join(root_abs, ".tokensafe", "backups")
-            os.makedirs(backup_dir, exist_ok=True)
-            digest = hashlib.sha256(current_bytes).hexdigest()[:8]
-            backup_path = os.path.join(backup_dir, f"{digest}_{os.path.basename(abs_path)}.bak")
-            with open(backup_path, "wb") as f:
-                f.write(current_bytes)
-        except Exception:
-            backup_path = None
+        written: List[Dict[str, Any]] = []
+        for index, edit in enumerate(staged):
+            try:
+                if edit["created"]:
+                    os.makedirs(os.path.dirname(edit["abs_path"]) or root, exist_ok=True)
+                with open(edit["abs_path"], "w", encoding="utf-8") as handle:
+                    handle.write(edit["content"])
+                written.append(edit)
+            except OSError as exc:
+                failures: List[str] = []
+                for done in reversed(written):
+                    try:
+                        if done["created"]:
+                            os.remove(done["abs_path"])
+                        elif done["previous"] is not None:
+                            with open(done["abs_path"], "wb") as handle:
+                                handle.write(done["previous"])
+                    except OSError as restore_exc:
+                        failures.append(f"{done['rel']}: {restore_exc}")
+                data: Dict[str, Any] = {
+                    "editIndex": index,
+                    "path": edit["rel"],
+                    "rolledBack": bool(written) and not failures,
+                }
+                if failures:
+                    data["rollbackErrors"] = failures
+                raise OumvError(INTERNAL_ERROR, f"failed to persist edit: {exc}", data) from exc
 
-        with open(abs_path, "w", encoding="utf-8") as f:
-            f.write(text)
-
-        result = {
-            "status": "APPLIED",
-            "path": path,
-            "newVersion": "sha256:" + hashlib.sha256(text.encode("utf-8")).hexdigest(),
-            "syntaxCheck": syntax_check,
-            "hunksApplied": len(hunks),
-        }
-        if backup_path:
-            result["backupPath"] = backup_path
-            result["rollbackHint"] = f"Previous content backed up at {backup_path}"
-        return result
+        results = []
+        for edit in staged:
+            entry: Dict[str, Any] = {
+                "path": edit["rel"],
+                "newVersion": "sha256:" + hashlib.sha256(edit["content"].encode("utf-8")).hexdigest(),
+            }
+            if edit["created"]:
+                entry["created"] = True
+            if edit["hunksApplied"]:
+                entry["hunksApplied"] = edit["hunksApplied"]
+            results.append(entry)
+        return {"status": "APPLIED", "edits": results}
 
     @staticmethod
     def _hunk_window(text: str, hunk: Dict[str, Any], index: int) -> "tuple[int, int]":

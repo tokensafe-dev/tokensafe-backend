@@ -21,7 +21,7 @@ import (
 )
 
 // SpecVersion is the protocol version this runner certifies against.
-const SpecVersion = "1.4.0"
+const SpecVersion = "1.5.0"
 
 // Case is one language-neutral conformance case.
 type Case struct {
@@ -33,7 +33,8 @@ type Case struct {
 	ExpectResultFields []string               `json:"expectResultFields"`
 	ExpectValues       map[string]interface{} `json:"expectValues"`
 	ExpectError        *struct {
-		Code int `json:"code"`
+		Code int                    `json:"code"`
+		Data map[string]interface{} `json:"data"`
 	} `json:"expectError"`
 	ExpectLevelEquals           string `json:"expectLevelEquals"`
 	ExpectSha256Field           string `json:"expectSha256Field"`
@@ -42,6 +43,13 @@ type Case struct {
 	ExpectVersionMatchesContent string `json:"expectVersionMatchesContent"`
 	// RequiresCapability gates a capabilityCase on the handshake claim.
 	RequiresCapability string `json:"requiresCapability,omitempty"`
+	// Cleanup lists paths removed before the case so a leftover from a previous
+	// run cannot turn mode=create into a conflict (wire 1.5.0).
+	Cleanup []string `json:"cleanup,omitempty"`
+	// FollowUp is one extra call whose expectations the case also asserts.
+	FollowUp *Case `json:"followUp,omitempty"`
+	// TTLSeconds is the lifetime a sessionCase requests from the handshake.
+	TTLSeconds int `json:"ttlSeconds,omitempty"`
 }
 
 // Spec is the fixture file: cases plus the version metadata they were written against.
@@ -52,6 +60,8 @@ type Spec struct {
 	Cases            []Case            `json:"cases"`
 	// CapabilityCases run only when the runtime advertises RequiresCapability.
 	CapabilityCases []Case `json:"capabilityCases"`
+	// SessionCases issue a short-lived session, wait it out and expect -32011.
+	SessionCases []Case `json:"sessionCases"`
 }
 
 // Markers carries the concrete values substituted for ${MARKER} placeholders.
@@ -85,6 +95,10 @@ type Markers struct {
 	PatchReplacement   string
 	// Wire 1.4.0: the target a sandbox capability case dispatches against.
 	SandboxTarget string
+	// Wire 1.5.0: the two files an applyEdit batch creates, and their content.
+	BatchFileA   string
+	BatchFileB   string
+	BatchContent string
 }
 
 // CaseResult is the outcome of one case.
@@ -174,19 +188,67 @@ func Run(dispatcher Dispatcher, spec Spec, markers Markers) Report {
 
 	// Capability cases prove an advertised claim; a runtime that does not make the
 	// claim is not penalised, the case simply is not part of its report.
+	capabilities := advertisedCapabilities(dispatcher)
 	if len(spec.CapabilityCases) > 0 {
-		capabilities := advertisedCapabilities(dispatcher)
 		for _, tc := range spec.CapabilityCases {
 			if !capabilityEnabled(capabilities, tc.RequiresCapability) {
 				continue
 			}
 			result := CaseResult{ID: tc.ID, Level: tc.Level, Status: "passed"}
+			cleanupCasePaths(dispatcher, tc.ID, tc.Cleanup, markers)
 			resp := dispatch(dispatcher, tc.ID, tc.Method, markers.substitute(tc.Params))
 			if errMsg := check(tc, resp, markers); errMsg != "" {
 				result.Status, result.Error = "failed", errMsg
 			}
+			if result.Status == "passed" && tc.FollowUp != nil {
+				follow := dispatch(dispatcher, tc.ID+"-follow-up", tc.FollowUp.Method, markers.substitute(tc.FollowUp.Params))
+				if errMsg := check(*tc.FollowUp, follow, markers); errMsg != "" {
+					result.Status, result.Error = "failed", "follow-up: "+errMsg
+				}
+			}
 			report.Cases = append(report.Cases, result)
 		}
+	}
+
+	// Session cases prove the advertised TTL: a session issued with a short
+	// lifetime must be dead after it (-32011, data.reason=session_expired).
+	for _, tc := range spec.SessionCases {
+		if !capabilityEnabled(capabilities, tc.RequiresCapability) {
+			continue
+		}
+		result := CaseResult{ID: tc.ID, Level: tc.Level, Status: "passed"}
+		handshake := dispatch(dispatcher, tc.ID+"-handshake", "oumv/handshake", map[string]interface{}{
+			"protocolVersion":   spec.ProtocolVersion,
+			"sessionTtlSeconds": tc.TTLSeconds,
+		})
+		if handshake == nil || handshake.Error != nil || handshake.Result == nil {
+			result.Status = "failed"
+			result.Error = "handshake with sessionTtlSeconds failed"
+		} else {
+			raw, _ := json.Marshal(handshake.Result)
+			var granted struct {
+				SessionID  string `json:"sessionId"`
+				TTLSeconds int    `json:"ttlSeconds"`
+			}
+			_ = json.Unmarshal(raw, &granted)
+			switch {
+			case granted.TTLSeconds <= 0 || granted.TTLSeconds > tc.TTLSeconds:
+				result.Status = "failed"
+				result.Error = fmt.Sprintf("runtime granted ttlSeconds=%d, expected <= %d", granted.TTLSeconds, tc.TTLSeconds)
+			case granted.SessionID == "":
+				result.Status = "failed"
+				result.Error = "handshake returned no sessionId"
+			default:
+				time.Sleep(time.Duration(granted.TTLSeconds)*time.Second + 300*time.Millisecond)
+				params := markers.substitute(tc.Params)
+				params["sessionId"] = granted.SessionID
+				resp := dispatch(dispatcher, tc.ID, tc.Method, params)
+				if errMsg := check(tc, resp, markers); errMsg != "" {
+					result.Status, result.Error = "failed", errMsg
+				}
+			}
+		}
+		report.Cases = append(report.Cases, result)
 	}
 
 	report.Total = len(report.Cases)
@@ -200,6 +262,34 @@ func Run(dispatcher Dispatcher, spec Spec, markers Markers) Report {
 	report.AttainedLevel = attainedLevel(report.Cases)
 	report.Levels = summarizeLevels(report.Cases)
 	return report
+}
+
+// cleanupCasePaths removes leftover files before a case that creates them, so a
+// previous run cannot turn mode=create into CONFLICT_DETECTED.
+func cleanupCasePaths(d Dispatcher, id string, paths []string, markers Markers) {
+	for _, rawPath := range paths {
+		path := markers.substituteText(rawPath)
+		if path == "" {
+			continue
+		}
+		probe := dispatch(d, id+"-cleanup", "oumv/getSource", map[string]interface{}{"path": path})
+		if probe == nil || probe.Error != nil || probe.Result == nil {
+			continue
+		}
+		raw, err := json.Marshal(probe.Result)
+		if err != nil {
+			continue
+		}
+		var current struct {
+			Version string `json:"version"`
+		}
+		if json.Unmarshal(raw, &current) != nil || current.Version == "" {
+			continue
+		}
+		dispatch(d, id+"-cleanup", "oumv/applyEdit", map[string]interface{}{
+			"path": path, "mode": "delete", "expectedVersion": current.Version,
+		})
+	}
 }
 
 // advertisedCapabilities reads the handshake capability object as a map so case
@@ -281,6 +371,26 @@ func check(tc Case, resp *protocol.OumvResponse, markers Markers) string {
 		}
 		if resp.Error.Code != tc.ExpectError.Code {
 			return fmt.Sprintf("expected error code %d, got %d (%s)", tc.ExpectError.Code, resp.Error.Code, resp.Error.Message)
+		}
+		if len(tc.ExpectError.Data) > 0 {
+			raw, err := json.Marshal(resp.Error.Data)
+			if err != nil {
+				return "failed to marshal error data: " + err.Error()
+			}
+			var got map[string]interface{}
+			if err := json.Unmarshal(raw, &got); err != nil {
+				return "failed to unmarshal error data: " + err.Error()
+			}
+			for key, want := range tc.ExpectError.Data {
+				if expected, ok := want.(string); ok {
+					want = markers.substituteText(expected)
+				}
+				gotJSON, _ := json.Marshal(got[key])
+				wantJSON, _ := json.Marshal(want)
+				if string(gotJSON) != string(wantJSON) {
+					return fmt.Sprintf("error data.%s must be %s, got %s", key, wantJSON, gotJSON)
+				}
+			}
 		}
 		return ""
 	}
@@ -390,6 +500,9 @@ func (m Markers) substitute(params map[string]interface{}) map[string]interface{
 		"${EDIT_CONTENT_VERSION}": m.EditContentVersion,
 		"${PATCH_REPLACEMENT}":    m.PatchReplacement,
 		"${SANDBOX_TARGET}":       m.SandboxTarget,
+		"${BATCH_FILE_A}":         m.BatchFileA,
+		"${BATCH_FILE_B}":         m.BatchFileB,
+		"${BATCH_CONTENT}":        m.BatchContent,
 	}
 	var walk func(value interface{}) interface{}
 	walk = func(value interface{}) interface{} {

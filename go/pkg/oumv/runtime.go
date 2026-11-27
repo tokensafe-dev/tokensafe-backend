@@ -448,7 +448,7 @@ func (r *Runtime) Handshake(ctx context.Context, params *protocol.OumvHandshakeP
 	// echo of a version the runtime cannot honour.
 	if params != nil && strings.TrimSpace(params.ProtocolVersion) != "" {
 		major, minor, ok := parseProtocolVersion(params.ProtocolVersion)
-		if !ok || major != 1 || minor > 3 {
+		if !ok || major != 1 || minor > 5 {
 			return nil, protocol.NewUnsupportedCapabilityError(
 				"protocol version " + params.ProtocolVersion + " (this runtime serves " + protocol.CurrentProtocolVersion + ")",
 			)
@@ -482,8 +482,13 @@ func (r *Runtime) Handshake(ctx context.Context, params *protocol.OumvHandshakeP
 	sessionID := ""
 	ttl := 0
 	if r.sessions != nil {
-		sessionID = r.sessions.Create()
-		ttl = r.sessions.TTLSeconds()
+		// Wire 1.5.0: honour a requested lifetime, clamp it, echo what was granted.
+		if params != nil && params.SessionTTLSeconds != nil {
+			sessionID, ttl = r.sessions.CreateWithTTL(*params.SessionTTLSeconds)
+		} else {
+			sessionID = r.sessions.Create()
+			ttl = r.sessions.TTLSeconds()
+		}
 	}
 	return &protocol.OumvHandshakeResult{
 		ProtocolVersion: protocol.CurrentProtocolVersion,
@@ -1045,6 +1050,16 @@ func (r *Runtime) GetSource(ctx context.Context, params *protocol.GetSourceParam
 // ApplyEdit applies a mutation and, on success, publishes the new resource state
 // to streaming clients (spec §2.3 `event: state`, §2.4 notifications/oumv.state).
 func (r *Runtime) ApplyEdit(ctx context.Context, params *protocol.ApplyEditParams) (*protocol.ApplyEditResult, *protocol.OumvError) {
+	// Wire 1.5.0: a request carrying `edits` is a multi-file atomic batch.
+	if params != nil && len(params.Edits) > 0 {
+		result, err := r.applyEditBatch(ctx, params)
+		if err == nil && result != nil {
+			for _, item := range result.Edits {
+				r.RecordState(item.Path, item.NewVersion, "batch")
+			}
+		}
+		return result, err
+	}
 	result, err := r.applyEdit(ctx, params)
 	if err == nil && result != nil && result.Status == "APPLIED" {
 		operation := strings.ToLower(strings.TrimSpace(params.Mode))
@@ -1054,6 +1069,256 @@ func (r *Runtime) ApplyEdit(ctx context.Context, params *protocol.ApplyEditParam
 		r.RecordState(params.Path, result.NewVersion, operation)
 	}
 	return result, err
+}
+
+// batchEdit is one validated, staged file mutation.
+type batchEdit struct {
+	cleanPath    string
+	relPath      string
+	content      []byte
+	created      bool
+	hunksApplied int
+}
+
+// batchWrite records a file already written so a later failure can restore it.
+type batchWrite struct {
+	path     string
+	previous []byte
+	created  bool
+}
+
+// applyEditBatch executes a multi-file atomic mutation (wire 1.5.0, spec §4.3):
+// every item is jail-checked, version-checked, hunk-resolved and syntax-checked
+// before the first byte is written; a write failure restores what was written.
+func (r *Runtime) applyEditBatch(ctx context.Context, params *protocol.ApplyEditParams) (*protocol.ApplyEditResult, *protocol.OumvError) {
+	if !r.config.Capabilities.Mutate {
+		return nil, protocol.NewPermissionDeniedError("mutate capability is disabled by policy")
+	}
+	items := params.Edits
+	if len(items) == 0 || len(items) > 16 {
+		return nil, protocol.NewValidationFailedError(
+			"VALIDATION_FAILED: edits must hold 1..16 items",
+			map[string]interface{}{"reason": "batch_size", "count": len(items)},
+		)
+	}
+
+	seen := make(map[string]int, len(items))
+	staged := make([]batchEdit, 0, len(items))
+	for index, item := range items {
+		annotate := func(err *protocol.OumvError) *protocol.OumvError {
+			return annotateEditError(err, index, item.Path)
+		}
+		cleanPath, pathErr := validateWorkspacePath(r.workspaceDir, item.Path)
+		if pathErr != nil {
+			return nil, annotate(pathErr)
+		}
+		key := filepath.Clean(cleanPath)
+		if previous, duplicate := seen[key]; duplicate {
+			return nil, annotate(protocol.NewValidationFailedError(
+				"VALIDATION_FAILED: duplicate path in batch (also item "+strconv.Itoa(previous)+")",
+				map[string]interface{}{"reason": "duplicate_path"},
+			))
+		}
+		seen[key] = index
+
+		mode := strings.ToLower(strings.TrimSpace(item.Mode))
+		if mode == "" {
+			mode = "replace"
+		}
+		switch mode {
+		case "replace", "create", "patch":
+		default:
+			return nil, annotate(&protocol.OumvError{
+				Code:    protocol.ErrUnsupportedCapability,
+				Message: "UNSUPPORTED_CAPABILITY: applyEdit batch mode " + item.Mode + " (only replace/create/patch are atomic)",
+				Data:    map[string]interface{}{"reason": "unknown_mode"},
+			})
+		}
+
+		switch mode {
+		case "create":
+			if strings.TrimSpace(item.Replacement) == "" {
+				return nil, annotate(protocol.NewValidationFailedError(
+					"replacement is required for mode=create", map[string]interface{}{"reason": "replacement_required"}))
+			}
+			if item.ExpectedVersion != "" {
+				return nil, annotate(protocol.NewValidationFailedError(
+					"VALIDATION_FAILED: expectedVersion must be omitted for mode=create",
+					map[string]interface{}{"reason": "create_forbids_version"}))
+			}
+			if _, statErr := os.Stat(cleanPath); statErr == nil {
+				return nil, annotate(protocol.NewConflictError(
+					"CONFLICT_DETECTED: file already exists; use mode=replace with its version",
+					map[string]interface{}{"reason": "file_exists"}))
+			}
+			if syntaxErr := checkGoSyntax(cleanPath, item.Replacement); syntaxErr != nil {
+				return nil, annotate(syntaxErr)
+			}
+			staged = append(staged, batchEdit{cleanPath: cleanPath, relPath: item.Path, content: []byte(item.Replacement), created: true})
+
+		case "replace":
+			currentData, readErr := os.ReadFile(cleanPath)
+			if readErr != nil {
+				return nil, annotate(protocol.NewResourceNotFoundError(item.Path))
+			}
+			if strings.TrimSpace(item.Replacement) == "" {
+				return nil, annotate(protocol.NewValidationFailedError(
+					"VALIDATION_FAILED: replacement is required for mode=replace",
+					map[string]interface{}{"reason": "replacement_required"}))
+			}
+			currentVersion := hashVersion(currentData)
+			if strings.TrimSpace(item.ExpectedVersion) == "" {
+				return nil, annotate(protocol.NewValidationFailedError(
+					"VALIDATION_FAILED: expectedVersion is required to edit an existing file",
+					map[string]interface{}{"reason": "expected_version_required", "current": currentVersion}))
+			}
+			if item.ExpectedVersion != currentVersion {
+				return nil, annotate(protocol.NewConflictError(
+					"version mismatch: expected "+item.ExpectedVersion+", current is "+currentVersion,
+					map[string]interface{}{"reason": "version_mismatch", "expected": item.ExpectedVersion, "current": currentVersion}))
+			}
+			if syntaxErr := checkGoSyntax(cleanPath, item.Replacement); syntaxErr != nil {
+				return nil, annotate(syntaxErr)
+			}
+			staged = append(staged, batchEdit{cleanPath: cleanPath, relPath: item.Path, content: []byte(item.Replacement)})
+
+		case "patch":
+			currentData, readErr := os.ReadFile(cleanPath)
+			if readErr != nil {
+				return nil, annotate(protocol.NewResourceNotFoundError(item.Path))
+			}
+			if len(item.Hunks) == 0 {
+				return nil, annotate(protocol.NewValidationFailedError(
+					"VALIDATION_FAILED: hunks is required for mode=patch",
+					map[string]interface{}{"reason": "hunks_required"}))
+			}
+			currentVersion := hashVersion(currentData)
+			if strings.TrimSpace(item.ExpectedVersion) == "" {
+				return nil, annotate(protocol.NewValidationFailedError(
+					"VALIDATION_FAILED: expectedVersion is required to edit an existing file",
+					map[string]interface{}{"reason": "expected_version_required", "current": currentVersion}))
+			}
+			if item.ExpectedVersion != currentVersion {
+				return nil, annotate(protocol.NewConflictError(
+					"version mismatch: expected "+item.ExpectedVersion+", current is "+currentVersion,
+					map[string]interface{}{"reason": "version_mismatch", "expected": item.ExpectedVersion, "current": currentVersion}))
+			}
+			patched, patchErr := applyHunks(string(currentData), item.Hunks)
+			if patchErr != nil {
+				return nil, annotate(patchErr)
+			}
+			if syntaxErr := checkGoSyntax(cleanPath, patched); syntaxErr != nil {
+				return nil, annotate(syntaxErr)
+			}
+			staged = append(staged, batchEdit{
+				cleanPath: cleanPath, relPath: item.Path, content: []byte(patched), hunksApplied: len(item.Hunks),
+			})
+		}
+	}
+
+	// Write phase. Nothing has touched the disk until here, so a failure in
+	// staging above left the workspace exactly as it was.
+	written := make([]batchWrite, 0, len(staged))
+	for index, edit := range staged {
+		var previous []byte
+		if !edit.created {
+			previous, _ = os.ReadFile(edit.cleanPath)
+		}
+		if edit.created {
+			if mkdirErr := os.MkdirAll(filepath.Dir(edit.cleanPath), 0o755); mkdirErr != nil {
+				return nil, batchWriteError(written, index, edit.relPath, mkdirErr)
+			}
+		}
+		if writeErr := os.WriteFile(edit.cleanPath, edit.content, 0o644); writeErr != nil {
+			return nil, batchWriteError(written, index, edit.relPath, writeErr)
+		}
+		written = append(written, batchWrite{path: edit.cleanPath, previous: previous, created: edit.created})
+	}
+
+	results := make([]protocol.ApplyEditBatchResultItem, 0, len(staged))
+	for _, edit := range staged {
+		results = append(results, protocol.ApplyEditBatchResultItem{
+			Path:         edit.relPath,
+			NewVersion:   hashVersion(edit.content),
+			Created:      edit.created,
+			HunksApplied: edit.hunksApplied,
+		})
+	}
+	return &protocol.ApplyEditResult{Status: "APPLIED", Edits: results, Success: true}, nil
+}
+
+// batchWriteError restores what the batch already wrote and reports honestly
+// whether the restore succeeded.
+func batchWriteError(written []batchWrite, index int, relPath string, cause error) *protocol.OumvError {
+	restored, failures := restoreBatchWrites(written)
+	data := map[string]interface{}{
+		"editIndex":  index,
+		"path":       relPath,
+		"rolledBack": restored,
+	}
+	if len(failures) > 0 {
+		data["rollbackErrors"] = failures
+	}
+	return &protocol.OumvError{
+		Code:    protocol.ErrInternalError,
+		Message: "failed to persist edit: " + cause.Error(),
+		Data:    data,
+	}
+}
+
+// restoreBatchWrites rewinds already-written files in reverse order: created
+// files are removed, replaced files get their previous bytes back.
+func restoreBatchWrites(written []batchWrite) (bool, []string) {
+	ok := true
+	var failures []string
+	for i := len(written) - 1; i >= 0; i-- {
+		w := written[i]
+		if w.created {
+			if err := os.Remove(w.path); err != nil && !os.IsNotExist(err) {
+				ok = false
+				failures = append(failures, w.path+": "+err.Error())
+			}
+			continue
+		}
+		if err := os.WriteFile(w.path, w.previous, 0o644); err != nil {
+			ok = false
+			failures = append(failures, w.path+": "+err.Error())
+		}
+	}
+	return ok, failures
+}
+
+// annotateEditError adds the failing item index (and path) to an item-scoped error.
+func annotateEditError(err *protocol.OumvError, index int, path string) *protocol.OumvError {
+	if err == nil {
+		return nil
+	}
+	data := map[string]interface{}{}
+	switch existing := err.Data.(type) {
+	case map[string]string:
+		for key, value := range existing {
+			data[key] = value
+		}
+	case map[string]interface{}:
+		for key, value := range existing {
+			data[key] = value
+		}
+	}
+	data["editIndex"] = index
+	if path != "" {
+		data["path"] = path
+	}
+	err.Data = data
+	return err
+}
+
+// checkGoSyntax runs the pre-flight parser over staged content.
+func checkGoSyntax(path, content string) *protocol.OumvError {
+	fset := token.NewFileSet()
+	if _, parseErr := parser.ParseFile(fset, path, []byte(content), parser.AllErrors); parseErr != nil {
+		return protocol.NewSyntaxError(fmt.Sprintf("pre-flight syntax check failed: %v", parseErr), parseErr.Error())
+	}
+	return nil
 }
 
 func (r *Runtime) applyEdit(ctx context.Context, params *protocol.ApplyEditParams) (*protocol.ApplyEditResult, *protocol.OumvError) {

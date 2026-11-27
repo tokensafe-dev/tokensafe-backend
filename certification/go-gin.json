@@ -1,10 +1,10 @@
 {
   "adapterName": "go-gin",
   "framework": "gin",
-  "specVersion": "1.4.0",
-  "fixtureVersion": 9,
-  "total": 34,
-  "passed": 34,
+  "specVersion": "1.5.0",
+  "fixtureVersion": 10,
+  "total": 37,
+  "passed": 37,
   "failed": 0,
   "attainedLevel": 3,
   "levels": {
@@ -182,7 +182,22 @@
       "id": "verify-sandbox-rolls-back",
       "level": 2,
       "status": "passed"
+    },
+    {
+      "id": "apply-edit-batch-applies-all",
+      "level": 3,
+      "status": "passed"
+    },
+    {
+      "id": "apply-edit-batch-is-atomic",
+      "level": 3,
+      "status": "passed"
+    },
+    {
+      "id": "expired-session-is-rejected",
+      "level": 3,
+      "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-27T10:27:12Z"
+  "generatedAt": "2026-11-27T12:58:39Z"
 }

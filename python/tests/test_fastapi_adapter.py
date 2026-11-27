@@ -163,7 +163,7 @@ async def test_fastapi_oumv_standard_protocol(test_app):
         )
         assert hs_resp.status_code == 200
         hs_data = hs_resp.json()["result"]
-        assert hs_data["protocolVersion"] == "1.4.0"
+        assert hs_data["protocolVersion"] == "1.5.0"
         assert hs_data["runtimeInfo"]["name"] == "tokensafe-python"
         assert "L0" in hs_data["capabilities"]["observe"]["levels"]
 

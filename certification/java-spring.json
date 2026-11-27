@@ -1,8 +1,8 @@
 {
   "adapterName": "java-spring",
   "framework": "spring",
-  "specVersion": "1.4.0",
-  "fixtureVersion": 9,
+  "specVersion": "1.5.0",
+  "fixtureVersion": 10,
   "total": 33,
   "passed": 32,
   "failed": 1,
@@ -181,7 +181,7 @@
       "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-27T10:39:50.111Z",
+  "generatedAt": "2026-11-27T12:53:03.698Z",
   "environment": {
     "transport": "stdio",
     "profile": "backend",

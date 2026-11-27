@@ -22,6 +22,9 @@
   "l3Target": "cert_edit_target.go",
   "verifyTarget": "GET /api/v1/orders",
   "sandboxTarget": "POST /__oumv_sandbox_probe",
+  "batchFileA": "cert_batch_a.go",
+  "batchFileB": "cert_batch_b.go",
+  "batchContent": "package cert\n\nvar Batch = true\n",
   "pushFile": "__oumv_conformance_push.go",
   "pushContent": "package cert\n\nfunc Pushed() int {\n\treturn 3\n}\n"
 }

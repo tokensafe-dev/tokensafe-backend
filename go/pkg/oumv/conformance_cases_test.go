@@ -89,6 +89,9 @@ func TestConformanceCases(t *testing.T) {
 		L2Target:           "GET /conformance",
 		L3Target:           editTarget,
 		VerifyTarget:       "GET /conformance",
+		BatchFileA:         "conformance_batch_a.go",
+		BatchFileB:         "conformance_batch_b.go",
+		BatchContent:       "package conformance\n\nvar Batch = true\n",
 	})
 	report.AdapterName = rt.Name()
 

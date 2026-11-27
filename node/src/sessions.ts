@@ -15,6 +15,17 @@ export class SessionRegistry {
     return id;
   }
 
+  /**
+   * Issues a session with a client-requested lifetime (wire 1.5.0), clamped to
+   * [1, 86400] seconds, and reports the granted value.
+   */
+  createWithTtl(ttlSeconds: number): { id: string; ttlSeconds: number } {
+    const granted = Math.min(Math.max(Math.floor(ttlSeconds), 1), 86400);
+    const id = `sess-${crypto.randomBytes(8).toString('hex')}`;
+    this.sessions.set(id, Date.now() + granted * 1000);
+    return { id, ttlSeconds: granted };
+  }
+
   /** Unknown or expired ids are invalid; expiry is enforced on read. */
   validate(id?: string | null): boolean {
     if (!id) return true;

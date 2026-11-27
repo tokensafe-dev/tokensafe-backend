@@ -119,6 +119,9 @@ func workspace(t *testing.T, tmpDir, l2Target string) conformance.Markers {
 		L3Target:           editTarget,
 		VerifyTarget:       l2Target,
 		SandboxTarget:      "POST /__oumv_sandbox_probe",
+		BatchFileA:         "cert_batch_a.go",
+		BatchFileB:         "cert_batch_b.go",
+		BatchContent:       "package cert\n\nvar Batch = true\n",
 	}
 }
 
