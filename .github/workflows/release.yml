@@ -94,8 +94,9 @@ jobs:
       - name: Publish TokenSafe.Oumv.AspNetCore to NuGet
         if: startsWith(github.ref, 'refs/tags/v') && steps.nuget-login.outputs.NUGET_API_KEY != ''
         working-directory: dotnet
-        run: dotnet nuget push "dist/*.nupkg" --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" \
-          --source https://api.nuget.org/v3/index.json --skip-duplicate
+        # One line on purpose: a backslash continuation in a YAML plain scalar is
+        # literal, and bash then swallows `--source` ("Source parameter was not specified").
+        run: dotnet nuget push "dist/*.nupkg" --source https://api.nuget.org/v3/index.json --api-key "${{ steps.nuget-login.outputs.NUGET_API_KEY }}" --skip-duplicate
 
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
