@@ -44,8 +44,16 @@ stop_server() {
 
 cleanup() {
   stop_server
-  [ -n "$WORKSPACE" ] && [ "${CERT_DEBUG:-0}" = "1" ] && { echo "debug: workspace kept at $WORKSPACE"; return; }
-  [ -n "$WORKSPACE" ] && rm -rf "$WORKSPACE"
+  # An EXIT trap's last failing test would become the script's exit status under
+  # `set -e`, so the success path must end in an explicit `return 0`.
+  if [ -n "$WORKSPACE" ]; then
+    if [ "${CERT_DEBUG:-0}" = "1" ]; then
+      echo "debug: workspace kept at $WORKSPACE"
+    else
+      rm -rf "$WORKSPACE"
+    fi
+  fi
+  return 0
 }
 trap cleanup EXIT
 
