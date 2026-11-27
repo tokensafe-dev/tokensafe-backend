@@ -5,6 +5,9 @@
 *.so
 *.dylib
 bin/
+# The PHP adapter is source (no build step) and lives in bin/: keep it tracked.
+!php/bin/
+!php/bin/oumv-php
 dist/
 
 # Test binary, built with `go test -c`

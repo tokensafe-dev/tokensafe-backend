@@ -1,0 +1,3513 @@
+#!/usr/bin/env php
+<?php
+
+/**
+ * oumv-php — a dependency-free OUMV protocol sidecar for PHP projects.
+ *
+ * It implements the backend profile of the OUMV specification (wire 1.3.0) for
+ * Laravel and Symfony projects without Composer, without booting the framework
+ * and without any third-party code: routes are read statically from
+ * `Route::…` registrations and `#[Route]` attributes, controller handlers are
+ * resolved with `token_get_all()`, and every mutation is guarded by the
+ * workspace jail, a `php -l` syntax pre-flight, mandatory OCC and a backup.
+ *
+ * Transports:
+ *   stdio  — newline-delimited JSON-RPC on stdin/stdout (spec §2.5)
+ *            php bin/oumv-php --root /path/to/app --stdio
+ *   HTTP   — POST /__oumv/rpc with batch arrays, OPTIONS, 405/415/413 and an
+ *            optional bearer/session token (spec §2.2)
+ *            php -S 127.0.0.1:8787 bin/oumv-php --root /path/to/app
+ *
+ * Honest level claim: Level 2 (see README.md). L4 request traces and runtime
+ * causality need a live, instrumented PHP application; this sidecar never
+ * fabricates traces, so it answers L4 with an empty collection plus a note.
+ */
+
+declare(strict_types=1);
+
+ini_set('display_errors', 'stderr');
+error_reporting(E_ALL);
+
+const OUMV_PROTOCOL_VERSION = '1.3.0';
+const OUMV_ADAPTER_NAME = 'oumv-php';
+const OUMV_ADAPTER_VERSION = '0.1.0';
+const OUMV_SOURCE_ADAPTER = 'php-laravel';
+const OUMV_SESSION_TTL = 3600;
+const OUMV_MAX_BODY_BYTES = 8388608;
+const OUMV_MAX_SCAN_FILE_BYTES = 2097152;
+const OUMV_HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
+
+// ---------------------------------------------------------------------------
+// Errors
+// ---------------------------------------------------------------------------
+
+/**
+ * A protocol error carrying the JSON-RPC code and the spec §5.3 `error.data`.
+ */
+final class OumvError extends RuntimeException
+{
+    /** @var array<string,mixed> */
+    public array $errorData;
+
+    /** @param array<string,mixed> $data */
+    public function __construct(int $code, string $message, array $data = [])
+    {
+        parent::__construct($message, $code);
+        $this->errorData = $data;
+    }
+
+    /** @return array{code:int,message:string,data?:array<string,mixed>} */
+    public function toArray(): array
+    {
+        $payload = ['code' => $this->getCode(), 'message' => $this->getMessage()];
+        if ($this->errorData !== []) {
+            $payload['data'] = $this->errorData;
+        }
+        return $payload;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Generic helpers
+// ---------------------------------------------------------------------------
+
+function oumv_json(mixed $value): string
+{
+    $json = json_encode($value, JSON_UNESCAPED_SLASHES | JSON_UNESCAPED_UNICODE);
+    return $json === false ? '{"jsonrpc":"2.0","id":null,"error":{"code":-32603,"message":"failed to encode the response"}}' : $json;
+}
+
+/** @return array<string,mixed> */
+function oumv_error_envelope(mixed $id, OumvError $error): array
+{
+    return ['jsonrpc' => '2.0', 'id' => $id, 'error' => $error->toArray()];
+}
+
+/** @return array<string,mixed> */
+function oumv_success_envelope(mixed $id, mixed $result): array
+{
+    return ['jsonrpc' => '2.0', 'id' => $id, 'result' => $result];
+}
+
+function oumv_version(string $bytes): string
+{
+    return 'sha256:' . hash('sha256', $bytes);
+}
+
+function oumv_str(array $params, string $key, string $default = ''): string
+{
+    $value = $params[$key] ?? null;
+    if (is_string($value)) {
+        return $value;
+    }
+    if (is_int($value) || is_float($value)) {
+        return (string) $value;
+    }
+    return $default;
+}
+
+function oumv_int(array $params, string $key, int $default = 0): int
+{
+    $value = $params[$key] ?? null;
+    if (is_int($value)) {
+        return $value;
+    }
+    if (is_string($value) && preg_match('/^-?\d+$/', trim($value))) {
+        return (int) trim($value);
+    }
+    if (is_float($value)) {
+        return (int) $value;
+    }
+    return $default;
+}
+
+/** Accepts the deprecated `filePath` alias (spec §4.6) for `path`. */
+function oumv_param_path(array $params): string
+{
+    $path = oumv_str($params, 'path');
+    if ($path === '') {
+        $path = oumv_str($params, 'filePath');
+    }
+    return trim($path);
+}
+
+/** Accepts the deprecated `source` alias (spec §4.6) for `replacement`. */
+function oumv_param_replacement(array $params): string
+{
+    if (array_key_exists('replacement', $params) && is_string($params['replacement'])) {
+        return $params['replacement'];
+    }
+    if (array_key_exists('source', $params) && is_string($params['source'])) {
+        return $params['source'];
+    }
+    return '';
+}
+
+function oumv_short_class(string $name): string
+{
+    $name = ltrim(trim($name), '\\');
+    $pos = strrpos($name, '\\');
+    return $pos === false ? $name : substr($name, $pos + 1);
+}
+
+/** @return array{0:string,1:string,2:string,3:string} */
+function oumv_token_ids(): array
+{
+    static $ids = null;
+    if ($ids === null) {
+        $ids = [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT];
+    }
+    return $ids;
+}
+
+function oumv_is_ignorable(mixed $token): bool
+{
+    return is_array($token) && in_array($token[0], [T_WHITESPACE, T_COMMENT, T_DOC_COMMENT], true);
+}
+
+/** @return list<int> */
+function oumv_name_ids(): array
+{
+    static $ids = null;
+    if ($ids === null) {
+        $ids = [T_STRING];
+        foreach (['T_NAME_QUALIFIED', 'T_NAME_FULLY_QUALIFIED', 'T_NAME_RELATIVE'] as $constant) {
+            if (defined($constant)) {
+                $ids[] = constant($constant);
+            }
+        }
+    }
+    return $ids;
+}
+
+function oumv_is_name_token(mixed $token): bool
+{
+    return is_array($token) && in_array($token[0], oumv_name_ids(), true);
+}
+
+function oumv_next_significant(array $tokens, int $index): ?int
+{
+    $count = count($tokens);
+    for ($i = $index + 1; $i < $count; $i++) {
+        if (oumv_is_ignorable($tokens[$i])) {
+            continue;
+        }
+        return $i;
+    }
+    return null;
+}
+
+function oumv_prev_significant(array $tokens, int $index): ?int
+{
+    for ($i = $index - 1; $i >= 0; $i--) {
+        if (oumv_is_ignorable($tokens[$i])) {
+            continue;
+        }
+        return $i;
+    }
+    return null;
+}
+
+function oumv_token_text(array $tokens, int $from, int $to): string
+{
+    $out = '';
+    for ($i = $from; $i <= $to; $i++) {
+        $out .= is_array($tokens[$i]) ? $tokens[$i][1] : $tokens[$i];
+    }
+    return $out;
+}
+
+/** Line number of every token, including the plain-string tokens PHP does not annotate. */
+function oumv_token_lines(array $tokens): array
+{
+    $lines = [];
+    $line = 1;
+    foreach ($tokens as $index => $token) {
+        $lines[$index] = $line;
+        $line += substr_count(is_array($token) ? $token[1] : $token, "\n");
+    }
+    return $lines;
+}
+
+function oumv_match_token(array $tokens, int $openIndex, string $open, string $close): ?int
+{
+    $depth = 0;
+    $count = count($tokens);
+    for ($i = $openIndex; $i < $count; $i++) {
+        $token = $tokens[$i];
+        if (is_array($token)) {
+            continue;
+        }
+        if ($token === $open) {
+            $depth++;
+            continue;
+        }
+        if ($token === $close) {
+            $depth--;
+            if ($depth === 0) {
+                return $i;
+            }
+        }
+    }
+    return null;
+}
+
+/**
+ * Splits a call's arguments into token ranges, respecting nested brackets and
+ * string literals. Returns positional args only (trailing empties dropped).
+ *
+ * @return list<array{start:int,end:int,text:string}>
+ */
+function oumv_split_args(array $tokens, int $openIndex, int $closeIndex): array
+{
+    $args = [];
+    $start = $openIndex + 1;
+    $round = 0;
+    $square = 0;
+    $curly = 0;
+    for ($i = $openIndex + 1; $i <= $closeIndex; $i++) {
+        $token = $tokens[$i];
+        if (is_array($token)) {
+            continue;
+        }
+        switch ($token) {
+            case '(':
+                $round++;
+                continue 2;
+            case ')':
+                $round--;
+                continue 2;
+            case '[':
+                $square++;
+                continue 2;
+            case ']':
+                $square--;
+                continue 2;
+            case '{':
+                $curly++;
+                continue 2;
+            case '}':
+                $curly--;
+                continue 2;
+            case ',':
+                if ($round === 0 && $square === 0 && $curly === 0) {
+                    $args[] = ['start' => $start, 'end' => $i - 1, 'text' => oumv_token_text($tokens, $start, $i - 1)];
+                    $start = $i + 1;
+                }
+                continue 2;
+        }
+    }
+    if ($start <= $closeIndex - 1) {
+        $args[] = ['start' => $start, 'end' => $closeIndex - 1, 'text' => oumv_token_text($tokens, $start, $closeIndex - 1)];
+    }
+    $out = [];
+    foreach ($args as $arg) {
+        if (trim($arg['text']) === '') {
+            continue;
+        }
+        $out[] = $arg;
+    }
+    return $out;
+}
+
+/** Decodes a PHP string literal from source text; null when it is not one. */
+function oumv_string_literal(string $text): ?string
+{
+    $text = trim($text);
+    if ($text === '' || strlen($text) < 2) {
+        return null;
+    }
+    $quote = $text[0];
+    if (($quote !== "'" && $quote !== '"') || substr($text, -1) !== $quote) {
+        return null;
+    }
+    $inner = substr($text, 1, -1);
+    if ($quote === "'") {
+        return str_replace(['\\\\', "\\'"], ['\\', "'"], $inner);
+    }
+    return str_replace(['\\\\', '\\"'], ['\\', '"'], $inner);
+}
+
+/** Normalizes a route path: template parameters, duplicate and trailing slashes. */
+function oumv_normalize_route_path(string $path): string
+{
+    $path = preg_replace('#\{([A-Za-z_][A-Za-z0-9_]*)[^}]*\}#', '{$1}', $path);
+    $path = $path === null ? '' : $path;
+    if ($path === '') {
+        return '/';
+    }
+    if ($path[0] !== '/') {
+        $path = '/' . $path;
+    }
+    $path = preg_replace('#/+#', '/', $path);
+    $path = $path === null ? '/' : $path;
+    if ($path !== '/') {
+        $path = rtrim($path, '/');
+    }
+    return $path === '' ? '/' : $path;
+}
+
+function oumv_join_path(string ...$parts): string
+{
+    $segments = [];
+    foreach ($parts as $part) {
+        $part = trim($part);
+        if ($part === '' || $part === '/') {
+            continue;
+        }
+        foreach (explode('/', $part) as $segment) {
+            if ($segment !== '') {
+                $segments[] = $segment;
+            }
+        }
+    }
+    return oumv_normalize_route_path('/' . implode('/', $segments));
+}
+
+function oumv_last_segment(string $path): string
+{
+    $path = trim($path, '/');
+    if ($path === '') {
+        return '';
+    }
+    $segments = explode('/', $path);
+    return (string) end($segments);
+}
+
+function oumv_singularize(string $segment): string
+{
+    if ($segment === '') {
+        return 'id';
+    }
+    if (preg_match('/ies$/', $segment)) {
+        return substr($segment, 0, -3) . 'y';
+    }
+    if (preg_match('/ses$/', $segment)) {
+        return substr($segment, 0, -2);
+    }
+    if (preg_match('/s$/', $segment) && strlen($segment) > 2) {
+        return substr($segment, 0, -1);
+    }
+    return $segment;
+}
+
+/** @return list<string> */
+function oumv_quoted_list(string $text): array
+{
+    preg_match_all('/([\'"])(.*?)\1/s', $text, $matches);
+    $out = [];
+    foreach ($matches[2] ?? [] as $value) {
+        $value = strtoupper(trim($value));
+        if ($value !== '' && !in_array($value, $out, true)) {
+            $out[] = $value;
+        }
+    }
+    return $out;
+}
+
+/** Extracts the text between a `(` and its matching `)` inside a small string. */
+function oumv_paren_content(string $text, int $openPos): string
+{
+    $depth = 0;
+    $length = strlen($text);
+    $quote = null;
+    for ($i = $openPos; $i < $length; $i++) {
+        $char = $text[$i];
+        if ($quote !== null) {
+            if ($char === '\\') {
+                $i++;
+                continue;
+            }
+            if ($char === $quote) {
+                $quote = null;
+            }
+            continue;
+        }
+        if ($char === "'" || $char === '"') {
+            $quote = $char;
+            continue;
+        }
+        if ($char === '(') {
+            $depth++;
+            continue;
+        }
+        if ($char === ')') {
+            $depth--;
+            if ($depth === 0) {
+                return substr($text, $openPos + 1, $i - $openPos - 1);
+            }
+        }
+    }
+    return '';
+}
+
+// ---------------------------------------------------------------------------
+// PHP source analysis
+// ---------------------------------------------------------------------------
+
+final class PhpFileInfo
+{
+    public string $abs;
+    public string $rel;
+    public string $src;
+
+    /** @var list<array{name:string,fqcn:string,startLine:int,endLine:int,attrs:list<string>,methods:array<string,array>,tokenIndex:int}> */
+    public array $classes = [];
+
+    /** @var list<array{name:string,startLine:int,endLine:int,attrs:list<string>,symbol:string}> */
+    public array $functions = [];
+
+    /** @var array<string,array{symbol:string,kind:string,startLine:int,endLine:int,class?:string}> */
+    public array $symbols = [];
+
+    public function __construct(string $abs, string $rel, string $src)
+    {
+        $this->abs = $abs;
+        $this->rel = $rel;
+        $this->src = $src;
+    }
+
+    public function addFunction(?string $name, int $startLine, int $endLine, array $attrs, ?int $classIndex): void
+    {
+        if ($name === null || $name === '') {
+            return;
+        }
+        $entry = ['name' => $name, 'startLine' => $startLine, 'endLine' => $endLine, 'attrs' => $attrs];
+        if ($classIndex !== null && isset($this->classes[$classIndex])) {
+            $class = $this->classes[$classIndex];
+            $this->classes[$classIndex]['methods'][strtolower($name)] = $entry;
+            $symbol = $class['name'] . '#' . $name;
+            $this->symbols[strtolower($symbol)] = [
+                'symbol' => $symbol,
+                'kind' => 'method',
+                'startLine' => $startLine,
+                'endLine' => $endLine,
+                'class' => $class['name'],
+            ];
+            $shortKey = strtolower($name);
+            if (!isset($this->symbols[$shortKey])) {
+                $this->symbols[$shortKey] = $this->symbols[strtolower($symbol)];
+            }
+            return;
+        }
+        $this->functions[] = ['name' => $name, 'startLine' => $startLine, 'endLine' => $endLine, 'attrs' => $attrs, 'symbol' => $name];
+        $this->symbols[strtolower($name)] = [
+            'symbol' => $name,
+            'kind' => 'function',
+            'startLine' => $startLine,
+            'endLine' => $endLine,
+        ];
+    }
+
+    /** @return array{startLine:int,endLine:int}|null */
+    public function symbolRange(string $symbol): ?array
+    {
+        $key = strtolower(ltrim(trim($symbol), '\\'));
+        if ($key === '') {
+            return null;
+        }
+        if (isset($this->symbols[$key])) {
+            return ['startLine' => $this->symbols[$key]['startLine'], 'endLine' => $this->symbols[$key]['endLine']];
+        }
+        foreach ($this->classes as $class) {
+            if (strtolower($class['name']) === $key || strtolower($class['fqcn']) === $key) {
+                return ['startLine' => $class['startLine'], 'endLine' => $class['endLine']];
+            }
+        }
+        return null;
+    }
+}
+
+/** Collects the attribute groups (`#[…]`) directly preceding a token. @return list<string> */
+function oumv_attributes_before(array $tokens, int $index): array
+{
+    $attrs = [];
+    $j = $index - 1;
+    while ($j >= 0) {
+        $token = $tokens[$j];
+        if (oumv_is_ignorable($token)) {
+            $j--;
+            continue;
+        }
+        if (is_array($token) && in_array($token[0], [T_PUBLIC, T_PROTECTED, T_PRIVATE, T_STATIC, T_FINAL, T_ABSTRACT, T_VAR], true)) {
+            $j--;
+            continue;
+        }
+        if (defined('T_READONLY') && is_array($token) && $token[0] === T_READONLY) {
+            $j--;
+            continue;
+        }
+        if ($token === ']') {
+            $depth = 1;
+            $start = null;
+            for ($k = $j - 1; $k >= 0; $k--) {
+                $inner = $tokens[$k];
+                if ($inner === ']') {
+                    $depth++;
+                    continue;
+                }
+                if ($inner === '[') {
+                    $depth--;
+                    if ($depth === 0) {
+                        break;
+                    }
+                    continue;
+                }
+                if (is_array($inner) && defined('T_ATTRIBUTE') && $inner[0] === T_ATTRIBUTE) {
+                    $depth--;
+                    if ($depth === 0) {
+                        $start = $k;
+                        break;
+                    }
+                }
+            }
+            if ($start === null) {
+                break;
+            }
+            array_unshift($attrs, oumv_token_text($tokens, $start, $j));
+            $j = $start - 1;
+            continue;
+        }
+        break;
+    }
+    return $attrs;
+}
+
+function oumv_function_name(array $tokens, int $index): ?string
+{
+    $count = count($tokens);
+    for ($i = $index + 1; $i < $count; $i++) {
+        $token = $tokens[$i];
+        if (oumv_is_ignorable($token)) {
+            continue;
+        }
+        if (is_array($token) && $token[0] === T_STRING) {
+            return $token[1];
+        }
+        if (is_array($token) && $token[1] === '&') {
+            continue;
+        }
+        return null;
+    }
+    return null;
+}
+
+/**
+ * Walks a file once and records classes, methods/functions with their exact
+ * 1-based line ranges, plus the attributes that decorate them.
+ */
+function oumv_analyze_file(string $abs, string $rel, string $src): PhpFileInfo
+{
+    $info = new PhpFileInfo($abs, $rel, $src);
+    $tokens = token_get_all($src);
+    $lines = oumv_token_lines($tokens);
+    $count = count($tokens);
+    $namespace = '';
+    $depth = 0;
+    /** @var list<array{idx:int,depth:int}> $openClasses */
+    $openClasses = [];
+    /** @var list<array{name:?string,classIdx:?int,line:int,attrs:list<string>,depth:int}> $fnStack */
+    $fnStack = [];
+    $pendingClass = null;
+    $pendingFn = null;
+
+    $classTokens = [T_CLASS, T_INTERFACE, T_TRAIT];
+    if (defined('T_ENUM')) {
+        $classTokens[] = T_ENUM;
+    }
+
+    for ($i = 0; $i < $count; $i++) {
+        $token = $tokens[$i];
+        if (is_array($token)) {
+            if ($token[0] === T_NAMESPACE) {
+                $namespace = '';
+                for ($j = $i + 1; $j < $count; $j++) {
+                    $inner = $tokens[$j];
+                    if ($inner === ';' || $inner === '{') {
+                        break;
+                    }
+                    if (oumv_is_name_token($inner) || (is_array($inner) && $inner[0] === T_NS_SEPARATOR)) {
+                        $namespace .= $inner[1];
+                    }
+                }
+                continue;
+            }
+            if (in_array($token[0], $classTokens, true)) {
+                $prev = oumv_prev_significant($tokens, $i);
+                if ($prev !== null && is_array($tokens[$prev]) && in_array($tokens[$prev][0], [T_DOUBLE_COLON, T_NEW], true)) {
+                    continue;
+                }
+                $next = oumv_next_significant($tokens, $i);
+                if ($next === null || !is_array($tokens[$next]) || $tokens[$next][0] !== T_STRING) {
+                    continue;
+                }
+                $name = $tokens[$next][1];
+                $attrs = oumv_attributes_before($tokens, $i);
+                $info->classes[] = [
+                    'name' => $name,
+                    'fqcn' => ($namespace !== '' ? $namespace . '\\' : '') . $name,
+                    'startLine' => $lines[$i],
+                    'endLine' => $lines[$i],
+                    'attrs' => $attrs,
+                    'methods' => [],
+                    'tokenIndex' => $i,
+                ];
+                $pendingClass = count($info->classes) - 1;
+                continue;
+            }
+            if ($token[0] === T_FUNCTION) {
+                $name = oumv_function_name($tokens, $i);
+                $classIndex = $openClasses === [] ? null : $openClasses[count($openClasses) - 1]['idx'];
+                $pendingFn = [
+                    'name' => $name,
+                    'classIdx' => $classIndex,
+                    'line' => $lines[$i],
+                    'attrs' => oumv_attributes_before($tokens, $i),
+                ];
+                continue;
+            }
+            continue;
+        }
+
+        if ($token === '{') {
+            $depth++;
+            if ($pendingClass !== null) {
+                $openClasses[] = ['idx' => $pendingClass, 'depth' => $depth];
+                $pendingClass = null;
+            }
+            if ($pendingFn !== null) {
+                $pendingFn['depth'] = $depth;
+                $fnStack[] = $pendingFn;
+                $pendingFn = null;
+            }
+            continue;
+        }
+
+        if ($token === '}') {
+            while ($fnStack !== [] && $fnStack[count($fnStack) - 1]['depth'] === $depth) {
+                $fn = array_pop($fnStack);
+                $info->addFunction($fn['name'], $fn['line'], $lines[$i], $fn['attrs'], $fn['classIdx']);
+            }
+            while ($openClasses !== [] && $openClasses[count($openClasses) - 1]['depth'] === $depth) {
+                $open = array_pop($openClasses);
+                $info->classes[$open['idx']]['endLine'] = $lines[$i];
+            }
+            $depth--;
+            continue;
+        }
+
+        if ($token === ';' && $pendingFn !== null) {
+            $info->addFunction($pendingFn['name'], $pendingFn['line'], $pendingFn['line'], $pendingFn['attrs'], $pendingFn['classIdx']);
+            $pendingFn = null;
+            continue;
+        }
+    }
+
+    // A file that ends without a closing brace still yields usable ranges.
+    while ($fnStack !== []) {
+        $fn = array_pop($fnStack);
+        $info->addFunction($fn['name'], $fn['line'], $fn['line'], $fn['attrs'], $fn['classIdx']);
+    }
+
+    return $info;
+}
+
+/** Range of a closure/callable whose first token index is known. */
+function oumv_callable_range(array $tokens, array $lines, int $start, int $end): ?array
+{
+    $fnIndex = null;
+    for ($i = $start; $i <= $end; $i++) {
+        $token = $tokens[$i];
+        if (is_array($token) && ($token[0] === T_FUNCTION || $token[0] === T_FN)) {
+            $fnIndex = $i;
+            break;
+        }
+    }
+    if ($fnIndex === null) {
+        return null;
+    }
+    if (is_array($tokens[$fnIndex]) && $tokens[$fnIndex][0] === T_FN) {
+        // Arrow function: the range is the single statement it lives on.
+        return ['startLine' => $lines[$fnIndex], 'endLine' => $lines[$end]];
+    }
+    for ($i = $fnIndex + 1; $i <= $end; $i++) {
+        if ($tokens[$i] === '{') {
+            $close = oumv_match_token($tokens, $i, '{', '}');
+            if ($close !== null) {
+                return ['startLine' => $lines[$fnIndex], 'endLine' => $lines[$close]];
+            }
+            break;
+        }
+        if ($tokens[$i] === ';') {
+            break;
+        }
+    }
+    return ['startLine' => $lines[$fnIndex], 'endLine' => $lines[$end]];
+}
+
+// ---------------------------------------------------------------------------
+// Laravel route scanning
+// ---------------------------------------------------------------------------
+
+/** @return list<array<string,mixed>> */
+function oumv_laravel_routes(PhpFileInfo $info): array
+{
+    $tokens = token_get_all($info->src);
+    $lines = oumv_token_lines($tokens);
+    $count = count($tokens);
+    $groups = [];
+
+    for ($i = 0; $i < $count; $i++) {
+        $token = $tokens[$i];
+        if (!is_array($token) || $token[0] !== T_STRING || strtolower($token[1]) !== 'group') {
+            continue;
+        }
+        $prev = oumv_prev_significant($tokens, $i);
+        if ($prev === null || !is_array($tokens[$prev]) || !in_array($tokens[$prev][0], [T_OBJECT_OPERATOR, T_DOUBLE_COLON], true)) {
+            continue;
+        }
+        $open = oumv_next_significant($tokens, $i);
+        if ($open === null || $tokens[$open] !== '(') {
+            continue;
+        }
+        $chainStart = oumv_chain_start($tokens, $i);
+        $chainText = $chainStart === null ? '' : oumv_token_text($tokens, $chainStart, $i);
+        // `Route::group(['prefix' => 'admin'], …)` carries its attributes in the
+        // call's own arguments, not in the chain that precedes it.
+        $groupClose = oumv_match_token($tokens, $open, '(', ')');
+        $argsText = $groupClose === null ? '' : oumv_token_text($tokens, $open, $groupClose);
+        $prefix = '';
+        if (preg_match('/prefix\s*\(\s*([\'"])(.*?)\1/s', $chainText, $m)) {
+            $prefix = $m[2];
+        } elseif (preg_match('/[\'"]prefix[\'"]\s*=>\s*([\'"])(.*?)\1/s', $chainText . $argsText, $m)) {
+            $prefix = $m[2];
+        }
+        $controller = null;
+        if (preg_match('/controller\s*\(\s*\\\\?([A-Za-z_][A-Za-z0-9_\\\\]*)\s*::\s*class/s', $chainText, $m)) {
+            $controller = oumv_short_class($m[1]);
+        } elseif (preg_match('/[\'"]controller[\'"]\s*=>\s*([\'"])([A-Za-z_][A-Za-z0-9_\\\\]*)\1/s', $chainText . $argsText, $m)) {
+            $controller = oumv_short_class($m[2]);
+        }
+        $bodyOpen = null;
+        for ($j = $open + 1; $j < $count; $j++) {
+            if ($tokens[$j] === '{') {
+                $bodyOpen = $j;
+                break;
+            }
+            if ($tokens[$j] === ';') {
+                break;
+            }
+        }
+        if ($bodyOpen === null) {
+            continue;
+        }
+        $bodyClose = oumv_match_token($tokens, $bodyOpen, '{', '}');
+        if ($bodyClose === null) {
+            continue;
+        }
+        $groups[] = [
+            'startLine' => $lines[$i],
+            'endLine' => $lines[$bodyClose],
+            'prefix' => $prefix,
+            'controller' => $controller,
+        ];
+    }
+
+    $verbs = ['get', 'post', 'put', 'patch', 'delete', 'options', 'any', 'match', 'resource', 'apiresource', 'apiresources'];
+    $routes = [];
+
+    for ($i = 0; $i < $count; $i++) {
+        $token = $tokens[$i];
+        if (!oumv_is_name_token($token) || !preg_match('/(?:^|\\\\)Route$/i', $token[1])) {
+            continue;
+        }
+        $double = oumv_next_significant($tokens, $i);
+        if ($double === null || !is_array($tokens[$double]) || $tokens[$double][0] !== T_DOUBLE_COLON) {
+            continue;
+        }
+        $methodIndex = oumv_next_significant($tokens, $double);
+        // `match` is a PHP keyword (T_MATCH), so the verb check is textual: the
+        // route facade accepts every listed verb regardless of token id.
+        if ($methodIndex === null || !is_array($tokens[$methodIndex])) {
+            continue;
+        }
+        $verb = strtolower(ltrim($tokens[$methodIndex][1], '\\'));
+        if (!in_array($verb, $verbs, true)) {
+            continue;
+        }
+        $open = oumv_next_significant($tokens, $methodIndex);
+        if ($open === null || $tokens[$open] !== '(') {
+            continue;
+        }
+        $close = oumv_match_token($tokens, $open, '(', ')');
+        if ($close === null) {
+            continue;
+        }
+        $args = oumv_split_args($tokens, $open, $close);
+        $line = $lines[$i];
+        $prefix = '';
+        $controller = null;
+        foreach ($groups as $group) {
+            if ($group['startLine'] < $line && $line < $group['endLine']) {
+                $prefix .= $group['prefix'];
+                if ($group['controller'] !== null) {
+                    $controller = $group['controller'];
+                }
+            }
+        }
+        $chain = oumv_chain_after($tokens, $close);
+        $routeName = preg_match('/->\s*name\s*\(\s*([\'"])(.*?)\1/s', $chain, $m) ? $m[2] : null;
+
+        if ($verb === 'resource' || $verb === 'apiresource') {
+            if (count($args) < 2) {
+                continue;
+            }
+            $basePath = oumv_string_literal($args[0]['text']);
+            $controllerName = oumv_controller_reference($args[1]['text']);
+            if ($basePath === null || $controllerName === null) {
+                continue;
+            }
+            $spec = $verb === 'resource' ? oumv_resource_actions() : oumv_api_resource_actions();
+            $only = null;
+            $except = null;
+            if (preg_match('/->\s*only\s*\(\s*\[(.*?)\]/s', $chain, $m)) {
+                $only = oumv_quoted_list($m[1]);
+            }
+            if (preg_match('/->\s*except\s*\(\s*\[(.*?)\]/s', $chain, $m)) {
+                $except = oumv_quoted_list($m[1]);
+            }
+            $singular = oumv_singularize(oumv_last_segment($basePath));
+            foreach ($spec as $action => $definition) {
+                $actionKey = strtoupper($action);
+                if ($only !== null && !in_array($actionKey, $only, true)) {
+                    continue;
+                }
+                if ($except !== null && in_array($actionKey, $except, true)) {
+                    continue;
+                }
+                $suffix = str_replace('{param}', '{' . $singular . '}', $definition['suffix']);
+                foreach ($definition['methods'] as $method) {
+                    $routes[] = [
+                        'method' => $method,
+                        'path' => oumv_join_path($prefix, $basePath, $suffix),
+                        'handlerName' => $controllerName . '#' . $action,
+                        'middlewares' => [],
+                        'framework' => 'laravel',
+                        'file' => $info->rel,
+                        'line' => $line,
+                        'routeName' => $routeName,
+                        'handlerAbs' => null,
+                        'handlerStart' => null,
+                        'handlerEnd' => null,
+                        'closure' => false,
+                    ];
+                }
+            }
+            continue;
+        }
+
+        if ($verb === 'any') {
+            $methods = ['ANY'];
+            $pathArg = 0;
+            $handlerArg = 1;
+        } elseif ($verb === 'match') {
+            if (count($args) < 3) {
+                continue;
+            }
+            $methods = oumv_quoted_list($args[0]['text']);
+            if ($methods === []) {
+                $methods = ['ANY'];
+            }
+            $pathArg = 1;
+            $handlerArg = 2;
+        } else {
+            $methods = [strtoupper($verb)];
+            $pathArg = 0;
+            $handlerArg = 1;
+        }
+
+        $path = oumv_string_literal($args[$pathArg]['text'] ?? '');
+        if ($path === null) {
+            continue;
+        }
+        $handler = oumv_handler_reference($args[$handlerArg] ?? null, $controller, $tokens, $lines, $info);
+        if ($handler === null) {
+            continue;
+        }
+        foreach ($methods as $method) {
+            $routes[] = [
+                'method' => $method,
+                'path' => oumv_join_path($prefix, $path),
+                'handlerName' => $handler['name'],
+                'middlewares' => [],
+                'framework' => 'laravel',
+                'file' => $info->rel,
+                'line' => $line,
+                'routeName' => $routeName,
+                'handlerAbs' => $handler['closure'] ? $info->abs : null,
+                'handlerStart' => $handler['closure'] ? $handler['startLine'] : null,
+                'handlerEnd' => $handler['closure'] ? $handler['endLine'] : null,
+                'closure' => $handler['closure'],
+            ];
+        }
+    }
+
+    return $routes;
+}
+
+function oumv_chain_start(array $tokens, int $index): ?int
+{
+    for ($i = $index - 1; $i >= 0; $i--) {
+        $token = $tokens[$i];
+        if (!is_array($token) && in_array($token, [';', '{', '}'], true)) {
+            return null;
+        }
+        if (is_array($token) && in_array($token[0], [T_OPEN_TAG, T_CLOSE_TAG, T_INLINE_HTML], true)) {
+            return null;
+        }
+        if (oumv_is_name_token($token) && preg_match('/(?:^|\\\\)Route$/i', $token[1])) {
+            return $i;
+        }
+        if ($index - $i > 400) {
+            return null;
+        }
+    }
+    return null;
+}
+
+function oumv_chain_after(array $tokens, int $closeIndex): string
+{
+    $count = count($tokens);
+    $out = '';
+    for ($i = $closeIndex + 1, $guard = 0; $i < $count && $guard < 240; $i++, $guard++) {
+        $token = $tokens[$i];
+        if (!is_array($token) && $token === ';') {
+            break;
+        }
+        if (is_array($token) && in_array($token[0], [T_OPEN_TAG, T_CLOSE_TAG], true)) {
+            break;
+        }
+        $out .= is_array($token) ? $token[1] : $token;
+    }
+    return $out;
+}
+
+function oumv_controller_reference(string $text): ?string
+{
+    $text = trim($text);
+    if ($text === '') {
+        return null;
+    }
+    if (preg_match('/^\\\\?([A-Za-z_][A-Za-z0-9_\\\\]*)\s*::\s*class$/s', $text, $m)) {
+        return oumv_short_class($m[1]);
+    }
+    $literal = oumv_string_literal($text);
+    if ($literal !== null && $literal !== '') {
+        return oumv_short_class($literal);
+    }
+    return null;
+}
+
+/**
+ * Resolves the handler argument of a Laravel route call.
+ *
+ * @return array{name:string,closure:bool,startLine:int,endLine:int}|null
+ */
+function oumv_handler_reference(?array $arg, ?string $controller, array $tokens, array $lines, PhpFileInfo $info): ?array
+{
+    if ($arg === null) {
+        return null;
+    }
+    $text = trim($arg['text']);
+    if ($text === '') {
+        return null;
+    }
+    if (preg_match('/^(?:static\s+)?(?:function|fn)\s*\(/i', $text)) {
+        $range = oumv_callable_range($tokens, $lines, $arg['start'], $arg['end']);
+        return [
+            'name' => '{closure}',
+            'closure' => true,
+            'startLine' => $range['startLine'] ?? $lines[$arg['start']],
+            'endLine' => $range['endLine'] ?? $lines[$arg['start']],
+        ];
+    }
+    if (preg_match('/^\[\s*\\\\?([A-Za-z_][A-Za-z0-9_\\\\]*)\s*::\s*class\s*,\s*([\'"])([A-Za-z_][A-Za-z0-9_]*)\2\s*\]$/s', $text, $m)) {
+        return [
+            'name' => oumv_short_class($m[1]) . '#' . $m[3],
+            'closure' => false,
+            'startLine' => $lines[$arg['start']],
+            'endLine' => $lines[$arg['start']],
+        ];
+    }
+    if (preg_match('/^\\\\?([A-Za-z_][A-Za-z0-9_\\\\]*)\s*::\s*class$/s', $text, $m)) {
+        return [
+            'name' => oumv_short_class($m[1]) . '#__invoke',
+            'closure' => false,
+            'startLine' => $lines[$arg['start']],
+            'endLine' => $lines[$arg['start']],
+        ];
+    }
+    $literal = oumv_string_literal($text);
+    if ($literal !== null) {
+        if (str_contains($literal, '@')) {
+            [$class, $method] = explode('@', $literal, 2);
+            return [
+                'name' => oumv_short_class($class) . '#' . $method,
+                'closure' => false,
+                'startLine' => $lines[$arg['start']],
+                'endLine' => $lines[$arg['start']],
+            ];
+        }
+        if ($controller !== null) {
+            return [
+                'name' => $controller . '#' . $literal,
+                'closure' => false,
+                'startLine' => $lines[$arg['start']],
+                'endLine' => $lines[$arg['start']],
+            ];
+        }
+        $className = preg_match('/Controller$/i', $literal) ? oumv_short_class($literal) . '#__invoke' : $literal;
+        return [
+            'name' => $className,
+            'closure' => false,
+            'startLine' => $lines[$arg['start']],
+            'endLine' => $lines[$arg['start']],
+        ];
+    }
+    return null;
+}
+
+/** @return array<string,array{methods:list<string>,suffix:string}> */
+function oumv_resource_actions(): array
+{
+    return [
+        'index' => ['methods' => ['GET'], 'suffix' => ''],
+        'create' => ['methods' => ['GET'], 'suffix' => '/create'],
+        'store' => ['methods' => ['POST'], 'suffix' => ''],
+        'show' => ['methods' => ['GET'], 'suffix' => '/{param}'],
+        'edit' => ['methods' => ['GET'], 'suffix' => '/{param}/edit'],
+        'update' => ['methods' => ['PUT', 'PATCH'], 'suffix' => '/{param}'],
+        'destroy' => ['methods' => ['DELETE'], 'suffix' => '/{param}'],
+    ];
+}
+
+/** @return array<string,array{methods:list<string>,suffix:string}> */
+function oumv_api_resource_actions(): array
+{
+    return [
+        'index' => ['methods' => ['GET'], 'suffix' => ''],
+        'store' => ['methods' => ['POST'], 'suffix' => ''],
+        'show' => ['methods' => ['GET'], 'suffix' => '/{param}'],
+        'update' => ['methods' => ['PUT', 'PATCH'], 'suffix' => '/{param}'],
+        'destroy' => ['methods' => ['DELETE'], 'suffix' => '/{param}'],
+    ];
+}
+
+// ---------------------------------------------------------------------------
+// Symfony attribute route scanning
+// ---------------------------------------------------------------------------
+
+/**
+ * Parses one `#[Route(...)]`/`#[Get(...)]` group into its path, methods and name.
+ *
+ * @return array{path:?string,methods:list<string>,name:?string}|null
+ */
+function oumv_parse_route_attribute(string $attribute): ?array
+{
+    if (!preg_match('/^#\[\s*\\\\?([A-Za-z_][A-Za-z0-9_\\\\]*)/', $attribute, $m)) {
+        return null;
+    }
+    $short = oumv_short_class($m[1]);
+    $known = ['Route', 'Get', 'Post', 'Put', 'Patch', 'Delete', 'Options', 'Head'];
+    if (!in_array($short, $known, true)) {
+        return null;
+    }
+    $path = null;
+    $methods = [];
+    $name = null;
+    $openPos = strpos($attribute, '(');
+    if ($openPos !== false) {
+        $args = oumv_paren_content($attribute, $openPos);
+        if (preg_match('/^\s*([\'"])(.*?)\1/s', $args, $m2)) {
+            $path = $m2[2];
+        } elseif (preg_match('/(?:^|,)\s*(?:path|value)\s*:\s*([\'"])(.*?)\1/s', $args, $m2)) {
+            $path = $m2[2];
+        }
+        if (preg_match('/methods\s*:\s*\[(.*?)\]/s', $args, $m3)) {
+            $methods = oumv_quoted_list($m3[1]);
+        } elseif (preg_match('/methods\s*:\s*([\'"])([^\'"]+)\1/s', $args, $m3)) {
+            $methods = oumv_quoted_list($m3[2]);
+        }
+        if (preg_match('/name\s*:\s*([\'"])(.*?)\1/s', $args, $m4)) {
+            $name = $m4[2];
+        }
+    }
+    if ($short !== 'Route') {
+        $methods = [strtoupper($short)];
+    }
+    return ['path' => $path, 'methods' => array_values(array_unique($methods)), 'name' => $name];
+}
+
+/** @return list<array<string,mixed>> */
+function oumv_symfony_routes(PhpFileInfo $info): array
+{
+    $routes = [];
+    $seen = [];
+    foreach ($info->classes as $class) {
+        $classPrefix = '';
+        $classMethods = [];
+        foreach ($class['attrs'] as $attribute) {
+            $parsed = oumv_parse_route_attribute($attribute);
+            if ($parsed === null) {
+                continue;
+            }
+            if ($parsed['path'] !== null) {
+                $classPrefix = $parsed['path'];
+            }
+            if ($parsed['methods'] !== []) {
+                $classMethods = $parsed['methods'];
+            }
+        }
+        foreach ($class['methods'] as $method) {
+            foreach ($method['attrs'] as $attribute) {
+                $parsed = oumv_parse_route_attribute($attribute);
+                if ($parsed === null) {
+                    continue;
+                }
+                $methods = $parsed['methods'] !== [] ? $parsed['methods'] : ($classMethods !== [] ? $classMethods : ['ANY']);
+                $path = oumv_join_path($classPrefix, $parsed['path'] ?? '');
+                $handler = $class['name'] . '#' . $method['name'];
+                foreach ($methods as $httpMethod) {
+                    $key = $httpMethod . ' ' . $path . ' ' . $handler;
+                    if (isset($seen[$key])) {
+                        continue;
+                    }
+                    $seen[$key] = true;
+                    $routes[] = [
+                        'method' => $httpMethod,
+                        'path' => $path,
+                        'handlerName' => $handler,
+                        'middlewares' => [],
+                        'framework' => 'symfony',
+                        'file' => $info->rel,
+                        'line' => $method['startLine'],
+                        'routeName' => $parsed['name'],
+                        'handlerAbs' => null,
+                        'handlerStart' => null,
+                        'handlerEnd' => null,
+                        'closure' => false,
+                    ];
+                }
+            }
+        }
+    }
+    return $routes;
+}
+
+// ---------------------------------------------------------------------------
+// Workspace jail and file primitives
+// ---------------------------------------------------------------------------
+
+final class Workspace
+{
+    public string $root;
+    public float $startedAt;
+    private ?Catalog $catalog = null;
+
+    public function __construct(string $root)
+    {
+        $real = realpath($root);
+        if ($real === false || !is_dir($real)) {
+            throw new OumvError(-32008, 'RUNTIME_UNAVAILABLE: workspace root "' . $root . '" is not a directory', ['reason' => 'workspace_unavailable']);
+        }
+        $this->root = rtrim(str_replace('\\', '/', $real), '/');
+        if ($this->root === '') {
+            $this->root = '/';
+        }
+        $this->startedAt = microtime(true);
+    }
+
+    public function catalog(bool $refresh = false): Catalog
+    {
+        if ($this->catalog === null || $refresh) {
+            $this->catalog = oumv_scan_workspace($this->root);
+        }
+        return $this->catalog;
+    }
+
+    public function invalidate(): void
+    {
+        $this->catalog = null;
+    }
+}
+
+final class SourcePath
+{
+    public string $absolute;
+    public string $relative;
+
+    public function __construct(string $absolute, string $relative)
+    {
+        $this->absolute = $absolute;
+        $this->relative = $relative;
+    }
+}
+
+function oumv_lexical_absolute(string $path, string $root): string
+{
+    $path = str_replace('\\', '/', $path);
+    if ($path === '') {
+        $path = '.';
+    }
+    if ($path[0] !== '/') {
+        $path = rtrim($root, '/') . '/' . $path;
+    }
+    $segments = [];
+    foreach (explode('/', $path) as $segment) {
+        if ($segment === '' || $segment === '.') {
+            continue;
+        }
+        if ($segment === '..') {
+            array_pop($segments);
+            continue;
+        }
+        $segments[] = $segment;
+    }
+    return '/' . implode('/', $segments);
+}
+
+function oumv_is_sensitive_path(string $relative, string $absolute): bool
+{
+    $relative = ltrim(str_replace('\\', '/', $relative), '/');
+    $parts = $relative === '' ? [] : explode('/', $relative);
+    foreach ($parts as $part) {
+        if ($part === '.git' || $part === '.tokensafe') {
+            return true;
+        }
+    }
+    $base = strtolower((string) basename($absolute));
+    if (str_starts_with($base, '.env') || $base === '.git') {
+        return true;
+    }
+    if (str_starts_with($base, 'id_rsa') || str_starts_with($base, 'id_ed25519')) {
+        return true;
+    }
+    if (str_ends_with($base, '.pem') || str_ends_with($base, '.key') || $base === 'credentials.json') {
+        return true;
+    }
+    return str_contains('/' . $relative, '/.git/') || str_contains('/' . $relative, '/.tokensafe/keys');
+}
+
+function oumv_jail(Workspace $workspace, string $path): SourcePath
+{
+    if (trim($path) === '') {
+        throw new OumvError(-32602, 'path is required', ['reason' => 'path_required']);
+    }
+    $root = $workspace->root;
+    $absolute = oumv_lexical_absolute($path, $root);
+    if (!($absolute === $root || str_starts_with($absolute, $root === '/' ? '/' : $root . '/'))) {
+        throw new OumvError(
+            -32003,
+            'SECURITY_VIOLATION: path traversal blocked: "' . $path . '" escapes the workspace boundary',
+            ['reason' => 'path_traversal', 'path' => $path]
+        );
+    }
+    $relative = ltrim(substr($absolute, strlen($root)), '/');
+    if (oumv_is_sensitive_path($relative, $absolute)) {
+        throw new OumvError(
+            -32003,
+            'SECURITY_VIOLATION: access to a sensitive credential or environment file blocked: "' . $path . '"',
+            ['reason' => 'sensitive_path', 'path' => $path]
+        );
+    }
+    // Symlink escape: resolve the deepest existing ancestor and re-check the jail.
+    $probe = $absolute;
+    while (!file_exists($probe) && dirname($probe) !== $probe) {
+        $probe = dirname($probe);
+    }
+    if (file_exists($probe)) {
+        $real = realpath($probe);
+        if ($real !== false) {
+            $real = str_replace('\\', '/', $real);
+            if (!($real === $root || str_starts_with($real, $root === '/' ? '/' : $root . '/'))) {
+                throw new OumvError(
+                    -32003,
+                    'SECURITY_VIOLATION: symlink resolves outside the workspace boundary: "' . $path . '"',
+                    ['reason' => 'path_traversal', 'path' => $path]
+                );
+            }
+        }
+    }
+    return new SourcePath($absolute, $relative);
+}
+
+function oumv_atomic_write(string $absolute, string $content): void
+{
+    $dir = dirname($absolute);
+    if (!is_dir($dir) && !@mkdir($dir, 0755, true) && !is_dir($dir)) {
+        throw new OumvError(-32603, 'INTERNAL_ERROR: cannot create directory ' . $dir);
+    }
+    $temp = $dir . '/.' . basename($absolute) . '.oumv-' . bin2hex(random_bytes(6)) . '.tmp';
+    if (@file_put_contents($temp, $content) === false) {
+        @unlink($temp);
+        throw new OumvError(-32603, 'INTERNAL_ERROR: cannot write the temporary file ' . $temp);
+    }
+    @chmod($temp, 0644);
+    if (!@rename($temp, $absolute)) {
+        @unlink($temp);
+        throw new OumvError(-32603, 'INTERNAL_ERROR: cannot persist ' . $absolute);
+    }
+}
+
+/**
+ * Keeps the previous bytes outside the source tree proper: `<root>/.tokensafe/backups/`.
+ * A backup is never written next to the file it protects.
+ */
+function oumv_backup(Workspace $workspace, SourcePath $source): string
+{
+    $dir = $workspace->root . '/.tokensafe/backups';
+    if (!is_dir($dir) && !@mkdir($dir, 0700, true) && !is_dir($dir)) {
+        throw new OumvError(-32603, 'INTERNAL_ERROR: cannot create the backup directory ' . $dir);
+    }
+    $relative = $source->relative === '' ? basename($source->absolute) : $source->relative;
+    $name = gmdate('Ymd\THis\Z') . '-' . substr(sha1($relative), 0, 8) . '-' . str_replace('/', '__', $relative);
+    $destination = $dir . '/' . $name;
+    if (!@copy($source->absolute, $destination)) {
+        throw new OumvError(-32603, 'INTERNAL_ERROR: cannot back up ' . $relative);
+    }
+    @chmod($destination, 0600);
+    return $destination;
+}
+
+/** @return array{exitCode:int,output:string,durationMs:float} */
+function oumv_proc_run(array|string $command, ?string $cwd = null): array
+{
+    $started = microtime(true);
+    $descriptors = [0 => ['pipe', 'r'], 1 => ['pipe', 'w'], 2 => ['pipe', 'w']];
+    $process = @proc_open($command, $descriptors, $pipes, $cwd);
+    if (!is_resource($process)) {
+        return ['exitCode' => -1, 'output' => 'failed to start the process', 'durationMs' => 0.0];
+    }
+    fclose($pipes[0]);
+    stream_set_blocking($pipes[1], false);
+    stream_set_blocking($pipes[2], false);
+    $open = [1 => $pipes[1], 2 => $pipes[2]];
+    $output = '';
+    $deadline = $started + 30.0;
+    while ($open !== [] && microtime(true) < $deadline) {
+        $read = array_values($open);
+        $write = null;
+        $except = null;
+        $ready = @stream_select($read, $write, $except, 0, 200000);
+        if ($ready === false) {
+            break;
+        }
+        if ($ready === 0) {
+            continue;
+        }
+        foreach ($read as $stream) {
+            $chunk = fread($stream, 65536);
+            if ($chunk === false) {
+                continue;
+            }
+            if ($chunk === '') {
+                if (feof($stream)) {
+                    $key = array_search($stream, $open, true);
+                    if ($key !== false) {
+                        fclose($stream);
+                        unset($open[$key]);
+                    }
+                }
+                continue;
+            }
+            $output .= $chunk;
+        }
+    }
+    foreach ($open as $stream) {
+        $chunk = stream_get_contents($stream);
+        if (is_string($chunk) && $chunk !== '') {
+            $output .= $chunk;
+        }
+        fclose($stream);
+    }
+    $exitCode = proc_close($process);
+    return [
+        'exitCode' => $exitCode,
+        'output' => $output,
+        'durationMs' => round((microtime(true) - $started) * 1000, 3),
+    ];
+}
+
+/** `php -l` pre-flight on a temp copy outside the workspace. @return array{status:string,tool?:string,error?:string} */
+function oumv_php_lint(string $content): array
+{
+    $temp = @tempnam(sys_get_temp_dir(), 'oumv-lint-');
+    if ($temp === false) {
+        return ['status' => 'skipped', 'error' => 'cannot create a temporary file for the syntax pre-flight'];
+    }
+    if (@file_put_contents($temp, $content) === false) {
+        @unlink($temp);
+        return ['status' => 'skipped', 'error' => 'cannot write the temporary file for the syntax pre-flight'];
+    }
+    $result = oumv_proc_run([PHP_BINARY, '-l', $temp]);
+    @unlink($temp);
+    if ($result['exitCode'] === 0) {
+        return ['status' => 'passed', 'tool' => 'php -l'];
+    }
+    return ['status' => 'failed', 'tool' => 'php -l', 'error' => trim($result['output'])];
+}
+
+// ---------------------------------------------------------------------------
+// Patch hunks (spec §4.3 mode=patch)
+// ---------------------------------------------------------------------------
+
+/**
+ * Applies hunks in order to the evolving text; the first failure aborts with no
+ * bytes written (the caller only persists a fully applied result).
+ *
+ * @param list<array<string,mixed>> $hunks
+ * @return array{text:string,applied:int}
+ */
+function oumv_apply_hunks(string $text, array $hunks): array
+{
+    $applied = 0;
+    foreach ($hunks as $index => $hunk) {
+        if (!is_array($hunk)) {
+            throw new OumvError(-32011, 'VALIDATION_FAILED: hunk ' . $index . ' is not an object', ['reason' => 'hunk_invalid', 'hunk' => $index]);
+        }
+        $target = is_string($hunk['target'] ?? null) ? $hunk['target'] : '';
+        if ($target === '') {
+            throw new OumvError(-32011, 'VALIDATION_FAILED: hunk ' . $index . ' has an empty target', ['reason' => 'target_required', 'hunk' => $index]);
+        }
+        $replacement = is_string($hunk['replacement'] ?? null) ? $hunk['replacement'] : '';
+        $replaceAll = (bool) ($hunk['replaceAll'] ?? false);
+        $startLine = (int) ($hunk['startLine'] ?? 0);
+        $endLine = (int) ($hunk['endLine'] ?? 0);
+
+        [$startOffset, $endOffset] = oumv_hunk_window($text, $startLine, $endLine);
+        $region = substr($text, $startOffset, $endOffset - $startOffset);
+        $count = substr_count($region, $target);
+        if ($count === 0) {
+            throw new OumvError(
+                -32009,
+                'RESOURCE_NOT_FOUND: hunk ' . $index . ' target does not occur in the file',
+                ['reason' => 'target_not_found', 'hunk' => $index]
+            );
+        }
+        if ($count > 1 && !$replaceAll) {
+            throw new OumvError(
+                -32011,
+                'VALIDATION_FAILED: hunk ' . $index . ' target occurs ' . $count . ' times; narrow it with startLine/endLine or set replaceAll',
+                [
+                    'reason' => 'target_not_unique',
+                    'hunk' => $index,
+                    'count' => $count,
+                    'lines' => oumv_occurrence_lines($region, $target),
+                ]
+            );
+        }
+        $patched = $replaceAll
+            ? str_replace($target, $replacement, $region)
+            : oumv_replace_first($region, $target, $replacement);
+        $text = substr($text, 0, $startOffset) . $patched . substr($text, $endOffset);
+        $applied++;
+    }
+    return ['text' => $text, 'applied' => $applied];
+}
+
+function oumv_replace_first(string $text, string $target, string $replacement): string
+{
+    $position = strpos($text, $target);
+    if ($position === false) {
+        return $text;
+    }
+    return substr($text, 0, $position) . $replacement . substr($text, $position + strlen($target));
+}
+
+/** @return array{0:int,1:int} byte range a hunk searches (1-based inclusive lines) */
+function oumv_hunk_window(string $text, int $startLine, int $endLine): array
+{
+    if ($startLine <= 0 && $endLine <= 0) {
+        return [0, strlen($text)];
+    }
+    if ($startLine <= 0) {
+        $startLine = 1;
+    }
+    $lineCount = substr_count($text, "\n") + 1;
+    if ($endLine <= 0 || $endLine > $lineCount) {
+        $endLine = $lineCount;
+    }
+    if ($startLine > $lineCount) {
+        $startLine = $lineCount;
+    }
+    if ($endLine < $startLine) {
+        throw new OumvError(-32011, 'VALIDATION_FAILED: endLine precedes startLine', ['reason' => 'inverted_line_range']);
+    }
+    $startOffset = 0;
+    for ($line = 1; $line < $startLine; $line++) {
+        $index = strpos($text, "\n", $startOffset);
+        if ($index === false) {
+            return [strlen($text), strlen($text)];
+        }
+        $startOffset = $index + 1;
+    }
+    $endOffset = $startOffset;
+    for ($line = $startLine; $line <= $endLine; $line++) {
+        $index = strpos($text, "\n", $endOffset);
+        if ($index === false) {
+            $endOffset = strlen($text);
+            break;
+        }
+        $endOffset = $index + 1;
+    }
+    if ($endOffset > $startOffset && $text[$endOffset - 1] === "\n") {
+        $endOffset--;
+    }
+    return [$startOffset, $endOffset];
+}
+
+/** @return list<int> 1-based line numbers of up to five matches inside the region */
+function oumv_occurrence_lines(string $region, string $target): array
+{
+    $lines = [];
+    $offset = 0;
+    while (count($lines) < 5) {
+        $index = strpos($region, $target, $offset);
+        if ($index === false) {
+            break;
+        }
+        $lines[] = 1 + substr_count(substr($region, 0, $index), "\n");
+        $offset = $index + strlen($target);
+    }
+    return $lines;
+}
+
+function oumv_splice_lines(string $text, int $startLine, int $endLine, string $replacement): string
+{
+    $lines = explode("\n", $text);
+    $count = count($lines);
+    $startLine = max(1, min($startLine, $count));
+    $endLine = max($startLine, min($endLine, $count));
+    $before = array_slice($lines, 0, $startLine - 1);
+    $after = array_slice($lines, $endLine);
+    $middle = $replacement === '' ? [] : explode("\n", $replacement);
+    return implode("\n", array_merge($before, $middle, $after));
+}
+
+// ---------------------------------------------------------------------------
+// Workspace scan → route catalog
+// ---------------------------------------------------------------------------
+
+final class Catalog
+{
+    /** @var list<array<string,mixed>> */
+    public array $routes = [];
+    /** @var array<string,array{rel:string,abs:string,class:array<string,mixed>}> */
+    public array $classes = [];
+    /** @var array<string,PhpFileInfo> */
+    public array $files = [];
+    public string $framework = 'plain';
+    public int $scannedFiles = 0;
+    public int $skippedFiles = 0;
+
+    public function addRoute(array $route): void
+    {
+        $this->routes[] = array_merge([
+            'method' => 'GET',
+            'path' => '/',
+            'handlerName' => '',
+            'middlewares' => [],
+            'framework' => $this->framework,
+            'file' => '',
+            'line' => 1,
+            'routeName' => null,
+            'handlerAbs' => null,
+            'handlerStart' => null,
+            'handlerEnd' => null,
+            'closure' => false,
+        ], $route);
+    }
+
+    /** @return list<array<string,mixed>> deterministic order (path, method, handler) */
+    public function ordered(): array
+    {
+        $routes = $this->routes;
+        usort($routes, static function (array $a, array $b): int {
+            return [$a['path'], $a['method'], $a['handlerName'], $a['file'], $a['line']]
+                <=> [$b['path'], $b['method'], $b['handlerName'], $b['file'], $b['line']];
+        });
+        return $routes;
+    }
+
+    /** @return array{rel:string,abs:string,class:array<string,mixed>}|null */
+    public function findClass(string $name): ?array
+    {
+        $key = strtolower(ltrim(trim($name), '\\'));
+        if ($key === '') {
+            return null;
+        }
+        if (isset($this->classes[$key])) {
+            return $this->classes[$key];
+        }
+        $short = strtolower(oumv_short_class($key));
+        return $this->classes[$short] ?? null;
+    }
+}
+
+function oumv_detect_framework(string $root): string
+{
+    $composerPath = $root . '/composer.json';
+    if (is_file($composerPath)) {
+        $raw = @file_get_contents($composerPath);
+        $composer = is_string($raw) ? json_decode($raw, true) : null;
+        if (is_array($composer)) {
+            $requirements = array_merge(
+                is_array($composer['require'] ?? null) ? $composer['require'] : [],
+                is_array($composer['require-dev'] ?? null) ? $composer['require-dev'] : []
+            );
+            if (isset($requirements['laravel/framework'])) {
+                return 'laravel';
+            }
+            if (isset($requirements['symfony/framework-bundle']) || isset($requirements['symfony/routing'])) {
+                return 'symfony';
+            }
+        }
+    }
+    if (is_file($root . '/routes/api.php') || is_dir($root . '/app/Http/Controllers')) {
+        return 'laravel';
+    }
+    if (is_dir($root . '/src/Controller') || is_file($root . '/config/routes.yaml')) {
+        return 'symfony';
+    }
+    return 'plain';
+}
+
+/** @return list<string> absolute paths of PHP sources inside the workspace */
+function oumv_collect_php_files(string $root): array
+{
+    $skipDirs = ['vendor', 'node_modules', 'storage', '.git', '.tokensafe', '.idea', '.vscode', 'bower_components'];
+    $files = [];
+    $walk = static function (string $dir) use (&$walk, &$files, $skipDirs, $root): void {
+        $entries = @scandir($dir);
+        if ($entries === false) {
+            return;
+        }
+        sort($entries);
+        foreach ($entries as $entry) {
+            if ($entry === '.' || $entry === '..') {
+                continue;
+            }
+            $absolute = $dir . '/' . $entry;
+            if (is_link($absolute) && is_dir($absolute)) {
+                continue;
+            }
+            if (is_dir($absolute)) {
+                $base = strtolower($entry);
+                if (in_array($base, $skipDirs, true)) {
+                    continue;
+                }
+                $relative = ltrim(substr($absolute, strlen($root)), '/');
+                if ($relative === 'var/cache' || str_starts_with($relative, 'var/cache/')) {
+                    continue;
+                }
+                $walk($absolute);
+                continue;
+            }
+            if (!preg_match('/\.php$/i', $entry)) {
+                continue;
+            }
+            $size = @filesize($absolute);
+            if ($size === false || $size > OUMV_MAX_SCAN_FILE_BYTES) {
+                continue;
+            }
+            $files[] = $absolute;
+        }
+    };
+    $walk($root);
+    sort($files);
+    return $files;
+}
+
+function oumv_scan_workspace(string $root): Catalog
+{
+    $catalog = new Catalog();
+    $catalog->framework = oumv_detect_framework($root);
+    $paths = oumv_collect_php_files($root);
+    $infos = [];
+    foreach ($paths as $absolute) {
+        $source = @file_get_contents($absolute);
+        if (!is_string($source)) {
+            $catalog->skippedFiles++;
+            continue;
+        }
+        $relative = ltrim(substr($absolute, strlen($root)), '/');
+        $info = oumv_analyze_file($absolute, $relative, $source);
+        $infos[] = $info;
+        $catalog->files[$relative] = $info;
+        $catalog->scannedFiles++;
+        foreach ($info->classes as $class) {
+            $entry = ['rel' => $relative, 'abs' => $absolute, 'class' => $class];
+            $fqcnKey = strtolower($class['fqcn']);
+            $shortKey = strtolower($class['name']);
+            if (!isset($catalog->classes[$fqcnKey])) {
+                $catalog->classes[$fqcnKey] = $entry;
+            }
+            if (!isset($catalog->classes[$shortKey])) {
+                $catalog->classes[$shortKey] = $entry;
+            }
+        }
+    }
+
+    // Laravel: only when a Route:: facade exists somewhere in the tree, so a
+    // Symfony project never inherits a stray static call from a test helper.
+    $hasRouteFacade = false;
+    foreach ($infos as $info) {
+        if (preg_match('/\bRoute\s*::/', $info->src)) {
+            $hasRouteFacade = true;
+            break;
+        }
+    }
+    foreach ($infos as $info) {
+        if ($hasRouteFacade) {
+            foreach (oumv_laravel_routes($info) as $route) {
+                $catalog->addRoute($route);
+            }
+        }
+        foreach (oumv_symfony_routes($info) as $route) {
+            $catalog->addRoute($route);
+        }
+    }
+    return $catalog;
+}
+
+// ---------------------------------------------------------------------------
+// Target resolution
+// ---------------------------------------------------------------------------
+
+/** @return array{method:string,path:string}|null */
+function oumv_parse_endpoint_target(string $target): ?array
+{
+    $target = trim($target);
+    if ($target === '') {
+        return null;
+    }
+    if ($target[0] === '/') {
+        return ['method' => '', 'path' => $target];
+    }
+    $parts = preg_split('/\s+/', $target, 2) ?: [];
+    if (count($parts) === 2 && $parts[1] !== '' && $parts[1][0] === '/') {
+        $method = strtoupper($parts[0]);
+        if (in_array($method, OUMV_HTTP_METHODS, true)) {
+            return ['method' => $method, 'path' => $parts[1]];
+        }
+    }
+    return null;
+}
+
+/** @return list<array<string,mixed>> */
+function oumv_matching_routes(Catalog $catalog, string $target, bool $exact = false): array
+{
+    $target = trim($target);
+    $endpoint = oumv_parse_endpoint_target($target);
+    $matches = [];
+    if ($endpoint !== null) {
+        $wantedPath = oumv_normalize_route_path($endpoint['path']);
+        foreach ($catalog->ordered() as $route) {
+            if ($route['path'] !== $wantedPath) {
+                continue;
+            }
+            if ($endpoint['method'] !== '' && $route['method'] !== $endpoint['method'] && $route['method'] !== 'ANY') {
+                continue;
+            }
+            $matches[] = $route;
+        }
+        return $matches;
+    }
+    foreach ($catalog->ordered() as $route) {
+        if ($target !== '' && $route['handlerName'] === $target) {
+            $matches[] = $route;
+            continue;
+        }
+        if (!$exact && $target !== '' && $route['handlerName'] !== '' && str_ends_with($route['handlerName'], '#' . $target)) {
+            $matches[] = $route;
+        }
+    }
+    return $matches;
+}
+
+function oumv_find_route(Catalog $catalog, string $target, bool $exact = false): ?array
+{
+    $matches = oumv_matching_routes($catalog, $target, $exact);
+    return $matches === [] ? null : $matches[0];
+}
+
+/**
+ * Resolves a route's handler to file + line range.
+ *
+ * @return array{abs:string,rel:string,startLine:int,endLine:int,symbol:string}
+ */
+function oumv_resolve_handler(Catalog $catalog, array $route): array
+{
+    if ($route['closure']) {
+        if (is_string($route['handlerAbs']) && $route['handlerStart'] !== null) {
+            return [
+                'abs' => $route['handlerAbs'],
+                'rel' => $route['file'],
+                'startLine' => (int) $route['handlerStart'],
+                'endLine' => (int) $route['handlerEnd'],
+                'symbol' => '{closure}',
+            ];
+        }
+        throw new OumvError(
+            -32009,
+            'RESOURCE_NOT_FOUND: the closure handler of ' . $route['method'] . ' ' . $route['path'] . ' has no resolvable range',
+            ['reason' => 'target_not_found', 'path' => $route['path']]
+        );
+    }
+    $handler = (string) $route['handlerName'];
+    $parts = explode('#', $handler, 2);
+    $method = $parts[1] ?? '__invoke';
+    $entry = $catalog->findClass($parts[0]);
+    if ($entry === null) {
+        throw new OumvError(
+            -32009,
+            'RESOURCE_NOT_FOUND: controller ' . $parts[0] . ' of ' . $route['method'] . ' ' . $route['path'] . ' was not found in the workspace',
+            ['reason' => 'target_not_found', 'controller' => $parts[0]]
+        );
+    }
+    $methods = $entry['class']['methods'];
+    $key = strtolower($method);
+    if (!isset($methods[$key])) {
+        throw new OumvError(
+            -32009,
+            'RESOURCE_NOT_FOUND: method ' . $parts[0] . '#' . $method . ' was not found in ' . $entry['rel'],
+            ['reason' => 'target_not_found', 'handler' => $handler]
+        );
+    }
+    return [
+        'abs' => $entry['abs'],
+        'rel' => $entry['rel'],
+        'startLine' => (int) $methods[$key]['startLine'],
+        'endLine' => (int) $methods[$key]['endLine'],
+        'symbol' => $entry['class']['name'] . '#' . $method,
+    ];
+}
+
+/** @return array{0:string,1:string} */
+function oumv_split_source_target(string $target): array
+{
+    $target = trim($target);
+    foreach (['#', ':'] as $separator) {
+        $position = strrpos($target, $separator);
+        if ($position !== false && $position > 0 && $position < strlen($target) - 1 && !str_contains(substr($target, $position + 1), '/')) {
+            return [substr($target, 0, $position), substr($target, $position + 1)];
+        }
+    }
+    return [$target, ''];
+}
+
+// ---------------------------------------------------------------------------
+// Observe / getSource / applyEdit / verify / understand
+// ---------------------------------------------------------------------------
+
+/** @return array{0:int,1:int,2:bool,3:string} */
+function oumv_page_bounds(int $total, int $limit, string $cursor): array
+{
+    $start = 0;
+    if ($cursor !== '' && preg_match('/^\d+$/', $cursor)) {
+        $start = (int) $cursor;
+    }
+    if ($start > $total) {
+        $start = $total;
+    }
+    $end = $total;
+    $hasMore = false;
+    $next = '';
+    if ($limit > 0 && $start + $limit < $total) {
+        $end = $start + $limit;
+        $hasMore = true;
+        $next = (string) $end;
+    }
+    return [$start, $end, $hasMore, $next];
+}
+
+/** @return array<string,mixed> */
+function oumv_observe(Workspace $workspace, array $params): array
+{
+    $level = strtoupper(trim(oumv_str($params, 'level')));
+    if ($level === '') {
+        $level = 'L0';
+    }
+    $catalog = $workspace->catalog();
+
+    switch ($level) {
+        case 'L0':
+            return [
+                'level' => 'L0',
+                'format' => 'json',
+                'data' => [
+                    'status' => 'HEALTHY',
+                    'uptimeSeconds' => (int) round(microtime(true) - $workspace->startedAt),
+                    'activeRoutes' => count($catalog->routes),
+                    'errorCount1m' => 0,
+                    'framework' => $catalog->framework,
+                    'scannedFiles' => $catalog->scannedFiles,
+                    'note' => 'static sidecar: errorCount1m counts 5xx responses this runtime observed, and it dispatches none',
+                ],
+                'tokenEstimate' => 40,
+                'evidence' => [
+                    'provenance' => 'static',
+                    'sourceAdapter' => OUMV_SOURCE_ADAPTER,
+                    'confidence' => 'confirmed',
+                ],
+            ];
+
+        case 'L1':
+            $routes = $catalog->ordered();
+            $limit = oumv_int($params, 'limit');
+            $cursor = oumv_str($params, 'cursor');
+            [$start, $end, $hasMore, $next] = oumv_page_bounds(count($routes), $limit, $cursor);
+            $page = array_slice($routes, $start, $end - $start);
+            $entries = [];
+            foreach ($page as $route) {
+                $entries[] = [
+                    'method' => $route['method'],
+                    'path' => $route['path'],
+                    'handlerName' => $route['handlerName'],
+                    'middlewares' => [],
+                    'routeName' => $route['routeName'],
+                    'file' => $route['file'],
+                    'line' => $route['line'],
+                ];
+            }
+            $data = [
+                // `routes` is this adapter's name for the collection; `endpoints`
+                // is the spec §4.1 field name. Both carry the same entries.
+                'routes' => $entries,
+                'endpoints' => $entries,
+                'total' => count($routes),
+                'framework' => $catalog->framework,
+            ];
+            if ($limit > 0) {
+                $data['hasMore'] = $hasMore;
+                if ($next !== '') {
+                    $data['nextCursor'] = $next;
+                }
+            }
+            return [
+                'level' => 'L1',
+                'format' => 'json',
+                'data' => $data,
+                'tokenEstimate' => 40 + count($entries) * 15,
+            ];
+
+        case 'L2':
+            $target = trim(oumv_str($params, 'target'));
+            if ($target === '') {
+                throw new OumvError(-32602, 'target endpoint or handler is required for the L2 contract', ['reason' => 'target_required']);
+            }
+            $route = oumv_find_route($catalog, $target);
+            if ($route === null) {
+                throw new OumvError(
+                    -32009,
+                    'RESOURCE_NOT_FOUND: no route matches "' . $target . '" in ' . $catalog->framework . ' route registration',
+                    ['reason' => 'target_not_found', 'target' => $target]
+                );
+            }
+            $data = [
+                'target' => $target,
+                'method' => $route['method'],
+                'path' => $route['path'],
+                'handlerName' => $route['handlerName'],
+                'middlewares' => [],
+                'note' => 'contract read from static ' . $route['framework'] . ' route registration; request/response DTOs are not reflectable without booting the framework — observe L3 with this target for the handler source',
+                'evidence' => [
+                    'provenance' => 'static',
+                    'sourceAdapter' => OUMV_SOURCE_ADAPTER,
+                    'confidence' => 'confirmed',
+                ],
+            ];
+            if ($route['routeName'] !== null) {
+                $data['routeName'] = $route['routeName'];
+            }
+            $data['registration'] = ['file' => $route['file'], 'line' => $route['line']];
+            try {
+                $reference = oumv_resolve_handler($catalog, $route);
+                $data['sourceLocation'] = [
+                    'filePath' => $reference['rel'],
+                    'lineStart' => $reference['startLine'],
+                    'lineEnd' => $reference['endLine'],
+                ];
+                $data['handlerSymbol'] = $reference['symbol'];
+            } catch (OumvError $error) {
+                $data['note'] .= '; handler source unresolved: ' . $error->getMessage();
+            }
+            return [
+                'level' => 'L2',
+                'format' => 'json',
+                'data' => $data,
+                'tokenEstimate' => 90,
+            ];
+
+        case 'L3':
+            $target = trim(oumv_str($params, 'target'));
+            if ($target === '') {
+                throw new OumvError(-32602, 'target of the form "METHOD /path" (or "path#symbol") is required for L3 source', ['reason' => 'target_required']);
+            }
+            $slice = oumv_l3_source($workspace, $catalog, $target);
+            return [
+                'level' => 'L3',
+                'format' => 'json',
+                'data' => [
+                    'symbol' => $slice['symbol'],
+                    'path' => $slice['path'],
+                    'source' => $slice['source'],
+                    'version' => $slice['version'],
+                    'startLine' => $slice['startLine'],
+                    'endLine' => $slice['endLine'],
+                ],
+                'tokenEstimate' => 300,
+                'evidence' => [
+                    'provenance' => 'static',
+                    'sourceAdapter' => OUMV_SOURCE_ADAPTER,
+                    'confidence' => 'confirmed',
+                ],
+            ];
+
+        case 'L4':
+            $target = trim(oumv_str($params, 'target'));
+            $data = [
+                'traces' => [],
+                'traceCount' => 0,
+                'note' => 'no request traces recorded: this sidecar has no live PHP application to instrument (verify runs a static php -l check, not dispatch). L4 requires a traced dev server and is not claimed by this adapter.',
+                'evidence' => [
+                    'provenance' => 'runtime',
+                    'sourceAdapter' => OUMV_SOURCE_ADAPTER,
+                    'confidence' => 'unknown',
+                ],
+            ];
+            if ($target !== '') {
+                $data['target'] = $target;
+            }
+            return [
+                'level' => 'L4',
+                'format' => 'json',
+                'data' => $data,
+                'tokenEstimate' => 60,
+            ];
+    }
+
+    throw new OumvError(-32006, 'UNSUPPORTED_CAPABILITY: observe level "' . $level . '"', ['reason' => 'unsupported_level', 'level' => $level]);
+}
+
+/** @return array<string,mixed> */
+function oumv_l3_source(Workspace $workspace, Catalog $catalog, string $target): array
+{
+    if (oumv_parse_endpoint_target($target) !== null) {
+        $route = oumv_find_route($catalog, $target, true);
+        if ($route === null) {
+            throw new OumvError(
+                -32009,
+                'RESOURCE_NOT_FOUND: no route matches the endpoint target "' . $target . '"',
+                ['reason' => 'target_not_found', 'target' => $target]
+            );
+        }
+        $reference = oumv_resolve_handler($catalog, $route);
+        $source = @file_get_contents($reference['abs']);
+        if (!is_string($source)) {
+            throw new OumvError(-32009, 'RESOURCE_NOT_FOUND: handler file ' . $reference['rel'] . ' is not readable', ['reason' => 'resource_not_found']);
+        }
+        $lines = explode("\n", $source);
+        $start = max(1, min($reference['startLine'], count($lines)));
+        $end = max($start, min($reference['endLine'], count($lines)));
+        return [
+            'symbol' => $reference['symbol'],
+            'path' => $reference['rel'],
+            'source' => implode("\n", array_slice($lines, $start - 1, $end - $start + 1)),
+            'version' => oumv_version($source),
+            'startLine' => $start,
+            'endLine' => $end,
+        ];
+    }
+
+    [$path, $symbol] = oumv_split_source_target($target);
+    $result = oumv_get_source($workspace, ['path' => $path, 'symbol' => $symbol]);
+    return [
+        'symbol' => $result['symbol'] ?? '',
+        'path' => $result['path'],
+        'source' => $result['source'] ?? '',
+        'version' => $result['version'],
+        'startLine' => $result['startLine'] ?? 1,
+        'endLine' => $result['endLine'] ?? 1,
+    ];
+}
+
+/** @return array<string,mixed> */
+function oumv_get_source(Workspace $workspace, array $params): array
+{
+    $source = oumv_jail($workspace, oumv_param_path($params));
+    if (!is_file($source->absolute)) {
+        throw new OumvError(
+            -32009,
+            'RESOURCE_NOT_FOUND: "' . oumv_param_path($params) . '" does not exist in the workspace',
+            ['reason' => 'resource_not_found', 'path' => oumv_param_path($params)]
+        );
+    }
+    $bytes = @file_get_contents($source->absolute);
+    if (!is_string($bytes)) {
+        throw new OumvError(-32009, 'RESOURCE_NOT_FOUND: cannot read "' . oumv_param_path($params) . '"', ['reason' => 'resource_not_found']);
+    }
+    $version = oumv_version($bytes);
+    $symbol = trim(oumv_str($params, 'symbol'));
+    $ifVersion = trim(oumv_str($params, 'ifVersion'));
+
+    if ($ifVersion !== '' && $ifVersion === $version) {
+        $result = ['path' => $source->relative, 'version' => $version, 'unchanged' => true];
+        if ($symbol !== '') {
+            $result['symbol'] = $symbol;
+        }
+        return $result;
+    }
+
+    $lines = explode("\n", $bytes);
+    $startLine = 1;
+    $endLine = count($lines);
+    $result = ['path' => $source->relative];
+
+    if ($symbol !== '') {
+        $info = oumv_analyze_file($source->absolute, $source->relative, $bytes);
+        $range = $info->symbolRange($symbol);
+        if ($range === null) {
+            throw new OumvError(
+                -32009,
+                'RESOURCE_NOT_FOUND: symbol "' . $symbol . '" does not exist in ' . $source->relative,
+                ['reason' => 'symbol_not_found', 'symbol' => $symbol, 'path' => $source->relative]
+            );
+        }
+        $startLine = $range['startLine'];
+        $endLine = $range['endLine'];
+        $result['symbol'] = $symbol;
+    }
+
+    $requestedStart = oumv_int($params, 'startLine');
+    $requestedEnd = oumv_int($params, 'endLine');
+    if ($requestedStart > 0) {
+        $startLine = $requestedStart;
+    }
+    if ($requestedEnd > 0) {
+        $endLine = $requestedEnd;
+    }
+    $lineCount = count($lines);
+    if ($startLine < 1) {
+        $startLine = 1;
+    }
+    if ($startLine > $lineCount) {
+        $startLine = $lineCount;
+    }
+    if ($endLine > $lineCount) {
+        $endLine = $lineCount;
+    }
+    if ($endLine < $startLine) {
+        $endLine = $startLine;
+    }
+
+    $result['source'] = implode("\n", array_slice($lines, $startLine - 1, $endLine - $startLine + 1));
+    $result['version'] = $version;
+    $result['startLine'] = $startLine;
+    $result['endLine'] = $endLine;
+    return $result;
+}
+
+/** @return array<string,mixed> */
+function oumv_apply_edit(Workspace $workspace, array $params): array
+{
+    $rawPath = oumv_param_path($params);
+    $mode = strtolower(trim(oumv_str($params, 'mode')));
+    if ($mode === '') {
+        $mode = 'replace';
+    }
+    $modes = ['replace', 'create', 'symbol', 'delete', 'rename', 'patch'];
+    if (!in_array($mode, $modes, true)) {
+        throw new OumvError(
+            -32006,
+            'UNSUPPORTED_CAPABILITY: unknown applyEdit mode "' . oumv_str($params, 'mode') . '"',
+            ['reason' => 'unknown_mode', 'mode' => oumv_str($params, 'mode')]
+        );
+    }
+
+    // Guard 1 — workspace boundary / sensitive path (source and renameTo).
+    $source = oumv_jail($workspace, $rawPath);
+    $renameTo = trim(oumv_str($params, 'renameTo'));
+    $renameTarget = null;
+    if ($mode === 'rename' && $renameTo !== '') {
+        $renameTarget = oumv_jail($workspace, $renameTo);
+    }
+
+    // Guard 2 — resource existence.
+    $exists = is_file($source->absolute);
+    if ($mode === 'create') {
+        if ($exists) {
+            throw new OumvError(
+                -32001,
+                'CONFLICT_DETECTED: file already exists; use mode=replace with its version',
+                ['reason' => 'file_exists', 'path' => $rawPath]
+            );
+        }
+    } elseif (!$exists) {
+        throw new OumvError(
+            -32009,
+            'RESOURCE_NOT_FOUND: "' . $rawPath . '" does not exist in the workspace',
+            ['reason' => 'resource_not_found', 'path' => $rawPath]
+        );
+    }
+    $current = $exists ? @file_get_contents($source->absolute) : null;
+    $current = is_string($current) ? $current : '';
+    $currentVersion = $exists ? oumv_version($current) : '';
+
+    $replacement = oumv_param_replacement($params);
+    $expectedVersion = trim(oumv_str($params, 'expectedVersion'));
+    $symbol = trim(oumv_str($params, 'symbol'));
+    $hunks = $params['hunks'] ?? null;
+    $candidate = null;
+    $hunksApplied = 0;
+
+    // Guard 3 (structural validation) and candidate construction.
+    switch ($mode) {
+        case 'create':
+            if ($replacement === '') {
+                throw new OumvError(-32011, 'VALIDATION_FAILED: replacement is required for mode=create', ['reason' => 'replacement_required']);
+            }
+            if ($expectedVersion !== '') {
+                throw new OumvError(
+                    -32011,
+                    'VALIDATION_FAILED: expectedVersion must be omitted for mode=create',
+                    ['reason' => 'create_forbids_version']
+                );
+            }
+            $candidate = $replacement;
+            break;
+
+        case 'replace':
+            if ($replacement === '') {
+                throw new OumvError(-32011, 'VALIDATION_FAILED: replacement is required for mode=replace', ['reason' => 'replacement_required']);
+            }
+            if ($expectedVersion === '') {
+                throw new OumvError(
+                    -32011,
+                    'VALIDATION_FAILED: expectedVersion is required to edit an existing file — call oumv/getSource (or observe L3) and pass its version',
+                    ['reason' => 'expected_version_required', 'path' => $rawPath, 'current' => $currentVersion]
+                );
+            }
+            $candidate = $replacement;
+            break;
+
+        case 'symbol':
+            if ($symbol === '') {
+                throw new OumvError(-32011, 'VALIDATION_FAILED: symbol is required for mode=symbol', ['reason' => 'symbol_required']);
+            }
+            if ($expectedVersion === '') {
+                throw new OumvError(
+                    -32011,
+                    'VALIDATION_FAILED: expectedVersion is required to edit a symbol',
+                    ['reason' => 'expected_version_required', 'path' => $rawPath, 'current' => $currentVersion]
+                );
+            }
+            $info = oumv_analyze_file($source->absolute, $source->relative, $current);
+            $range = $info->symbolRange($symbol);
+            if ($range === null) {
+                throw new OumvError(
+                    -32009,
+                    'RESOURCE_NOT_FOUND: symbol "' . $symbol . '" does not exist in ' . $rawPath,
+                    ['reason' => 'symbol_not_found', 'symbol' => $symbol]
+                );
+            }
+            $candidate = oumv_splice_lines($current, $range['startLine'], $range['endLine'], $replacement);
+            break;
+
+        case 'patch':
+            if (!is_array($hunks) || $hunks === []) {
+                throw new OumvError(-32011, 'VALIDATION_FAILED: hunks is required for mode=patch', ['reason' => 'hunks_required']);
+            }
+            if ($expectedVersion === '') {
+                throw new OumvError(
+                    -32011,
+                    'VALIDATION_FAILED: expectedVersion is required to edit an existing file — call oumv/getSource (or observe L3) and pass its version',
+                    ['reason' => 'expected_version_required', 'path' => $rawPath, 'current' => $currentVersion]
+                );
+            }
+            $patched = oumv_apply_hunks($current, $hunks);
+            $candidate = $patched['text'];
+            $hunksApplied = $patched['applied'];
+            break;
+
+        case 'delete':
+            if ($replacement !== '') {
+                throw new OumvError(
+                    -32011,
+                    'VALIDATION_FAILED: replacement must be omitted for mode=delete',
+                    ['reason' => 'replacement_forbidden']
+                );
+            }
+            if ($expectedVersion === '') {
+                throw new OumvError(
+                    -32011,
+                    'VALIDATION_FAILED: expectedVersion is required to delete a file',
+                    ['reason' => 'expected_version_required', 'path' => $rawPath]
+                );
+            }
+            break;
+
+        case 'rename':
+            if ($renameTo === '') {
+                throw new OumvError(-32011, 'VALIDATION_FAILED: renameTo is required for mode=rename', ['reason' => 'rename_to_required']);
+            }
+            if ($replacement !== '') {
+                throw new OumvError(
+                    -32011,
+                    'VALIDATION_FAILED: replacement must be omitted for mode=rename',
+                    ['reason' => 'replacement_forbidden']
+                );
+            }
+            if ($renameTarget !== null && file_exists($renameTarget->absolute)) {
+                throw new OumvError(
+                    -32001,
+                    'CONFLICT_DETECTED: rename target already exists',
+                    ['reason' => 'target_exists', 'renameTo' => $renameTo]
+                );
+            }
+            if ($expectedVersion === '') {
+                throw new OumvError(
+                    -32011,
+                    'VALIDATION_FAILED: expectedVersion is required to rename a file',
+                    ['reason' => 'expected_version_required', 'path' => $rawPath]
+                );
+            }
+            break;
+    }
+
+    // Guard 4 — syntax pre-flight on the resulting file (not on a fragment alone).
+    $syntaxCheck = ['status' => 'skipped'];
+    if ($candidate !== null) {
+        $syntaxCheck = oumv_php_lint($candidate);
+        if (($syntaxCheck['status'] ?? 'skipped') === 'failed') {
+            throw new OumvError(
+                -32002,
+                'SYNTAX_ERROR: pre-flight syntax check failed: ' . ($syntaxCheck['error'] ?? 'unknown error'),
+                ['reason' => 'syntax_error', 'tool' => 'php -l', 'error' => $syntaxCheck['error'] ?? '']
+            );
+        }
+    }
+
+    // Guard 5 — optimistic concurrency control on the current bytes.
+    if ($mode !== 'create' && $expectedVersion !== $currentVersion) {
+        throw new OumvError(
+            -32001,
+            'CONFLICT_DETECTED: version mismatch: expected ' . $expectedVersion . ', current is ' . $currentVersion,
+            ['reason' => 'version_mismatch', 'expected' => $expectedVersion, 'current' => $currentVersion]
+        );
+    }
+
+    // Guard 6 — policy is enabled-by-default for this local sidecar; mutation
+    // can be disabled with --read-only (handled by the caller before dispatch).
+
+    $result = ['status' => 'APPLIED', 'path' => $rawPath];
+
+    switch ($mode) {
+        case 'create':
+            oumv_atomic_write($source->absolute, (string) $candidate);
+            $result['newVersion'] = oumv_version((string) $candidate);
+            $result['created'] = true;
+            $result['syntaxCheck'] = $syntaxCheck;
+            break;
+
+        case 'replace':
+            $result['backupPath'] = oumv_backup($workspace, $source);
+            oumv_atomic_write($source->absolute, (string) $candidate);
+            $result['newVersion'] = oumv_version((string) $candidate);
+            $result['syntaxCheck'] = $syntaxCheck;
+            break;
+
+        case 'symbol':
+            $result['symbol'] = $symbol;
+            $result['backupPath'] = oumv_backup($workspace, $source);
+            oumv_atomic_write($source->absolute, (string) $candidate);
+            $result['newVersion'] = oumv_version((string) $candidate);
+            $result['syntaxCheck'] = $syntaxCheck;
+            break;
+
+        case 'patch':
+            $result['backupPath'] = oumv_backup($workspace, $source);
+            oumv_atomic_write($source->absolute, (string) $candidate);
+            $result['newVersion'] = oumv_version((string) $candidate);
+            $result['hunksApplied'] = $hunksApplied;
+            $result['syntaxCheck'] = $syntaxCheck;
+            break;
+
+        case 'delete':
+            $result['backupPath'] = oumv_backup($workspace, $source);
+            if (!@unlink($source->absolute)) {
+                throw new OumvError(-32603, 'INTERNAL_ERROR: cannot delete ' . $rawPath);
+            }
+            $result['deleted'] = true;
+            $result['syntaxCheck'] = ['status' => 'skipped'];
+            break;
+
+        case 'rename':
+            $destination = $renameTarget;
+            if ($destination === null) {
+                throw new OumvError(-32011, 'VALIDATION_FAILED: renameTo is required for mode=rename', ['reason' => 'rename_to_required']);
+            }
+            $dir = dirname($destination->absolute);
+            if (!is_dir($dir) && !@mkdir($dir, 0755, true) && !is_dir($dir)) {
+                throw new OumvError(-32603, 'INTERNAL_ERROR: cannot create the rename target directory');
+            }
+            if (!@rename($source->absolute, $destination->absolute)) {
+                throw new OumvError(-32603, 'INTERNAL_ERROR: cannot rename ' . $rawPath . ' to ' . $renameTo);
+            }
+            $result['newPath'] = $renameTo;
+            $result['syntaxCheck'] = ['status' => 'skipped'];
+            break;
+    }
+
+    $workspace->invalidate();
+    return $result;
+}
+
+/** @return list<string> */
+function oumv_verify_scope_checked(): array
+{
+    return ['static syntax pre-flight of the resolved handler file (php -l)'];
+}
+
+/** @return list<string> */
+function oumv_verify_scope_not_executed(): array
+{
+    return [
+        'runtime dispatch of the request (no live PHP application attached)',
+        'real network calls',
+        'persistent database state',
+    ];
+}
+
+/** @return list<string> */
+function oumv_verify_scope_not_supported(): array
+{
+    return ['HTTP status-code assertions (no dispatch)', 'browser/DOM assertions'];
+}
+
+/**
+ * Resolves a verify target to a file: an endpoint/handler target resolves through
+ * the route catalog, and a workspace-relative .php path is used directly.
+ *
+ * @return array{abs:string,rel:string}
+ */
+function oumv_verify_target_file(Workspace $workspace, string $target): array
+{
+    $catalog = $workspace->catalog();
+    $route = oumv_find_route($catalog, $target);
+    if ($route !== null) {
+        $reference = oumv_resolve_handler($catalog, $route);
+        return ['abs' => $reference['abs'], 'rel' => $reference['rel']];
+    }
+    $endpoint = oumv_parse_endpoint_target($target);
+    if ($endpoint === null && (str_contains($target, '.php') || str_contains($target, '/'))) {
+        $source = oumv_jail($workspace, $target);
+        if (is_file($source->absolute)) {
+            return ['abs' => $source->absolute, 'rel' => $source->relative];
+        }
+    }
+    throw new OumvError(
+        -32009,
+        'RESOURCE_NOT_FOUND: verify target "' . $target . '" matches no route and no workspace file',
+        ['reason' => 'target_not_found', 'target' => $target]
+    );
+}
+
+/** @param array{abs:string,rel:string} $file */
+function oumv_verify_command(string $template, array $file, Workspace $workspace, string $target): string
+{
+    return strtr($template, [
+        '{file}' => escapeshellarg($file['abs']),
+        '{path}' => escapeshellarg($file['abs']),
+        '{rel}' => escapeshellarg($file['rel']),
+        '{root}' => escapeshellarg($workspace->root),
+        '{target}' => escapeshellarg($target),
+    ]);
+}
+
+/**
+ * Runs the configured static verification command for one target.
+ *
+ * @return array{status:string,step:array<string,mixed>,diff:array<string,mixed>,durationMs:float}
+ */
+function oumv_verify_one(Workspace $workspace, string $target, string $command): array
+{
+    $started = microtime(true);
+    if ($target === '') {
+        return [
+            'status' => 'failed',
+            'step' => ['target' => '', 'status' => 'failed', 'responseBody' => 'target is required'],
+            'diff' => ['error' => 'target is required'],
+            'durationMs' => 0.0,
+        ];
+    }
+    try {
+        $file = oumv_verify_target_file($workspace, $target);
+    } catch (OumvError $error) {
+        return [
+            'status' => 'failed',
+            'step' => ['target' => $target, 'status' => 'failed', 'responseBody' => $error->getMessage()],
+            'diff' => ['error' => $error->getMessage(), 'reason' => $error->errorData['reason'] ?? ''],
+            'durationMs' => round((microtime(true) - $started) * 1000, 3),
+        ];
+    }
+    $resolved = oumv_verify_command($command, $file, $workspace, $target);
+    $run = oumv_proc_run($resolved, $workspace->root);
+    $duration = round((microtime(true) - $started) * 1000, 3);
+    $status = $run['exitCode'] === 0 ? 'passed' : 'failed';
+    return [
+        'status' => $status,
+        'step' => [
+            'target' => $target,
+            'status' => $status,
+            'responseBody' => trim($run['output']),
+        ],
+        'diff' => [
+            'checkedFile' => $file['rel'],
+            'command' => $resolved,
+            'exitCode' => $run['exitCode'],
+            'output' => trim($run['output']),
+        ],
+        'durationMs' => $duration,
+    ];
+}
+
+/** @return array<string,mixed> */
+function oumv_verify(Workspace $workspace, array $params, string $command): array
+{
+    $target = trim(oumv_str($params, 'target'));
+    $steps = $params['steps'] ?? null;
+
+    if (is_array($steps) && $steps !== []) {
+        $results = [];
+        $total = 0.0;
+        $allPassed = true;
+        foreach ($steps as $step) {
+            if (!is_array($step)) {
+                $results[] = ['target' => '', 'status' => 'failed', 'responseBody' => 'step is not an object'];
+                $allPassed = false;
+                continue;
+            }
+            $stepTarget = trim(oumv_str($step, 'target'));
+            $outcome = oumv_verify_one($workspace, $stepTarget, $command);
+            $results[] = $outcome['step'];
+            $total += $outcome['durationMs'];
+            if ($outcome['status'] !== 'passed') {
+                $allPassed = false;
+            }
+        }
+        $last = $results[count($results) - 1];
+        return [
+            'status' => $allPassed ? 'passed' : 'failed',
+            'target' => $target,
+            'steps' => $results,
+            'diff' => ['stepCount' => count($results), 'status' => $last['status']],
+            'timings' => [
+                't_action_ms' => round($total, 3),
+                't_schema_ms' => 0,
+                't_propagation_ms' => 0,
+                't_dom_ms' => 0,
+                't_total_ms' => round($total, 3),
+            ],
+            'durationMs' => round($total, 3),
+            'scope' => [
+                'checked' => oumv_verify_scope_checked(),
+                'notExecuted' => oumv_verify_scope_not_executed(),
+                'notSupported' => oumv_verify_scope_not_supported(),
+            ],
+            'note' => 'multi-step scenario: each step runs the configured static check on its resolved handler; steps never share application state because no PHP application is dispatched',
+        ];
+    }
+
+    if ($target === '') {
+        throw new OumvError(-32602, 'target is required', ['reason' => 'target_required']);
+    }
+    $outcome = oumv_verify_one($workspace, $target, $command);
+    return [
+        'status' => $outcome['status'],
+        'target' => $target,
+        'diff' => $outcome['diff'],
+        'timings' => [
+            't_action_ms' => $outcome['durationMs'],
+            't_schema_ms' => 0,
+            't_propagation_ms' => 0,
+            't_dom_ms' => 0,
+            't_total_ms' => $outcome['durationMs'],
+        ],
+        'durationMs' => $outcome['durationMs'],
+        'scope' => [
+            'checked' => oumv_verify_scope_checked(),
+            'notExecuted' => oumv_verify_scope_not_executed(),
+            'notSupported' => oumv_verify_scope_not_supported(),
+        ],
+        'note' => 'verification ran the configured static check against the resolved handler; no request was dispatched, so no HTTP status is asserted (see scope.notExecuted)',
+    ];
+}
+
+/** @return array<string,mixed> */
+function oumv_understand(Workspace $workspace, array $params): array
+{
+    $query = strtolower(trim(oumv_str($params, 'query')));
+    $target = trim(oumv_str($params, 'target'));
+    if ($query === '') {
+        throw new OumvError(-32602, 'query is required', ['reason' => 'query_required']);
+    }
+    if (!in_array($query, ['impact', 'causality', 'why_state', 'dependencies', 'signals'], true)) {
+        throw new OumvError(-32006, 'UNSUPPORTED_CAPABILITY: understand query "' . $query . '"', ['reason' => 'unsupported_query', 'query' => $query]);
+    }
+    if ($query === 'dependencies' || $query === 'signals') {
+        throw new OumvError(
+            -32006,
+            'UNSUPPORTED_CAPABILITY: understand query "' . $query . '" is not implemented by the static PHP sidecar',
+            ['reason' => 'unsupported_query', 'query' => $query]
+        );
+    }
+
+    if ($query === 'impact') {
+        $catalog = $workspace->catalog();
+        $matches = oumv_matching_routes($catalog, $target);
+        $affected = [];
+        $routes = [];
+        foreach ($matches as $route) {
+            if ($route['handlerName'] !== '') {
+                $affected[] = $route['handlerName'];
+            }
+            foreach ($route['middlewares'] as $middleware) {
+                $affected[] = $middleware;
+            }
+            $routes[] = [
+                'method' => $route['method'],
+                'path' => $route['path'],
+                'handlerName' => $route['handlerName'],
+                'file' => $route['file'],
+                'line' => $route['line'],
+            ];
+        }
+        $affected = array_values(array_unique($affected));
+        $observed = $matches !== [];
+        $impact = [
+            'target' => $target,
+            'affectedSymbols' => $affected,
+            'breakingRisk' => 'UNKNOWN',
+            'summary' => 'Impact derived from the statically scanned ' . $catalog->framework . ' route catalog for "' . $target . '": '
+                . count($matches) . ' matching route(s); runtime execution evidence: none observed',
+            'observed' => $observed,
+            'routes' => $routes,
+            'evidence' => [
+                'provenance' => 'static',
+                'sourceAdapter' => OUMV_SOURCE_ADAPTER,
+                'confidence' => $observed ? 'probable' : 'unknown',
+            ],
+        ];
+        if (count($matches) === 1) {
+            try {
+                $reference = oumv_resolve_handler($catalog, $matches[0]);
+                $bytes = @file_get_contents($reference['abs']);
+                $impact['sourceLocation'] = [
+                    'filePath' => $reference['rel'],
+                    'lineStart' => $reference['startLine'],
+                    'lineEnd' => $reference['endLine'],
+                    'versionToken' => is_string($bytes) ? oumv_version($bytes) : null,
+                ];
+            } catch (OumvError $error) {
+                // A route without resolvable source is still an honest impact target.
+            }
+        }
+        return ['query' => 'impact', 'target' => $target, 'impact' => $impact];
+    }
+
+    // causality / why_state: never fabricated. This adapter has no live traces.
+    return [
+        'query' => 'causality',
+        'target' => $target,
+        'causality' => [
+            'target' => $target,
+            'statusCode' => 0,
+            'rootCause' => 'unknown',
+            'traceChain' => [],
+            'observed' => false,
+            'traceCount' => 0,
+            'latencyMs' => 0,
+            'note' => 'No runtime trace observed for this target. This sidecar performs static route/controller analysis and a php -l verification only: it has no live PHP application to instrument, so runtime causality is not claimed.',
+            'evidence' => [
+                'provenance' => 'runtime',
+                'sourceAdapter' => OUMV_SOURCE_ADAPTER,
+                'confidence' => 'unknown',
+            ],
+        ],
+    ];
+}
+
+// ---------------------------------------------------------------------------
+// Sessions and capabilities
+// ---------------------------------------------------------------------------
+
+/**
+ * Stateless session tokens: a session id is issued as `sess-<issued>-<nonce>-<sig>`
+ * and validated by recomputing the signature and checking the TTL. This keeps the
+ * same semantics over stdio (one process) and HTTP (one process per request)
+ * without writing any state file.
+ */
+final class SessionRegistry
+{
+    private string $secret;
+    public int $ttl;
+
+    public function __construct(string $workspaceRoot, int $ttl = OUMV_SESSION_TTL)
+    {
+        $this->secret = 'oumv-php|' . $workspaceRoot;
+        $this->ttl = $ttl;
+    }
+
+    public function create(): string
+    {
+        $issued = time();
+        $nonce = bin2hex(random_bytes(4));
+        $signature = $this->signature($issued, $nonce);
+        return 'sess-' . dechex($issued) . '-' . $nonce . '-' . $signature;
+    }
+
+    public function validate(string $id): bool
+    {
+        if ($id === '') {
+            return true; // stateless callers are allowed by spec §3
+        }
+        if (!preg_match('/^sess-([0-9a-f]+)-([0-9a-f]{8})-([0-9a-f]{16})$/', $id, $matches)) {
+            return false;
+        }
+        $issued = (int) hexdec($matches[1]);
+        if (!hash_equals($this->signature($issued, $matches[2]), $matches[3])) {
+            return false;
+        }
+        return (time() - $issued) <= $this->ttl;
+    }
+
+    private function signature(int $issued, string $nonce): string
+    {
+        return substr(hash_hmac('sha256', $issued . '|' . $nonce, $this->secret), 0, 16);
+    }
+}
+
+/** @return array<string,mixed> */
+function oumv_capabilities(): array
+{
+    return [
+        'observe' => ['levels' => ['L0', 'L1', 'L2', 'L3'], 'formats' => ['json']],
+        'understand' => ['causality' => false, 'impactAnalysis' => true],
+        'mutate' => ['occ' => true, 'syntaxGuard' => true],
+        'verify' => ['multiMetric' => false],
+    ];
+}
+
+/** @return array<string,mixed> */
+function oumv_narrow_capabilities(array $implemented, array $requested): array
+{
+    if (isset($requested['observe']) && is_array($requested['observe'])) {
+        if (isset($requested['observe']['levels']) && is_array($requested['observe']['levels'])) {
+            $implemented['observe']['levels'] = array_values(array_intersect($implemented['observe']['levels'], $requested['observe']['levels']));
+        }
+        if (isset($requested['observe']['formats']) && is_array($requested['observe']['formats'])) {
+            $implemented['observe']['formats'] = array_values(array_intersect($implemented['observe']['formats'], $requested['observe']['formats']));
+        }
+    }
+    return $implemented;
+}
+
+/** @return array{0:int,1:int,2:bool} */
+function oumv_parse_protocol_version(string $version): array
+{
+    $parts = explode('.', trim($version), 3);
+    if (count($parts) < 2 || !preg_match('/^\d+$/', $parts[0]) || !preg_match('/^\d+$/', $parts[1])) {
+        return [0, 0, false];
+    }
+    return [(int) $parts[0], (int) $parts[1], true];
+}
+
+// ---------------------------------------------------------------------------
+// Discovery descriptor (spec §9.2)
+// ---------------------------------------------------------------------------
+
+function oumv_descriptor_path(string $root): string
+{
+    $home = getenv('TOKENSAFE_HOME');
+    if (!is_string($home) || $home === '') {
+        $userHome = getenv('HOME');
+        $home = is_string($userHome) && $userHome !== '' ? $userHome . '/.tokensafe' : '.tokensafe';
+    }
+    $real = realpath($root);
+    $key = hash('sha256', $real === false ? $root : $real);
+    return rtrim($home, '/') . '/runtimes/' . substr($key, 0, 16) . '.json';
+}
+
+/** @return array<string,mixed> */
+function oumv_descriptor_payload(Workspace $workspace, array $options): array
+{
+    $transports = $options['transports'] ?? ['stdio'];
+    $payload = [
+        'type' => 'backend',
+        'name' => OUMV_ADAPTER_NAME,
+        'version' => OUMV_ADAPTER_VERSION,
+        'workspace' => $workspace->root,
+        'capabilities' => [
+            'observeLevels' => ['L0', 'L1', 'L2', 'L3'],
+            'transports' => $transports,
+            'framework' => $workspace->catalog()->framework,
+        ],
+        'startedAt' => gmdate('Y-m-d\TH:i:s\Z'),
+    ];
+    $url = $options['url'] ?? null;
+    if (is_string($url) && $url !== '') {
+        $payload['url'] = $url;
+    }
+    return $payload;
+}
+
+/** Registers this runtime in ~/.tokensafe/runtimes (read-modify-write, atomic). */
+function oumv_write_registry(Workspace $workspace, array $options): void
+{
+    $path = oumv_descriptor_path($workspace->root);
+    $dir = dirname($path);
+    if (!is_dir($dir) && !@mkdir($dir, 0755, true) && !is_dir($dir)) {
+        throw new OumvError(-32603, 'INTERNAL_ERROR: cannot create the discovery registry directory');
+    }
+    $registry = [];
+    if (is_file($path)) {
+        $raw = @file_get_contents($path);
+        $decoded = is_string($raw) ? json_decode($raw, true) : null;
+        if (is_array($decoded)) {
+            $registry = $decoded;
+        }
+    }
+    $descriptor = oumv_descriptor_payload($workspace, $options);
+    $descriptor['pid'] = getmypid();
+    $registry['backend'] = $descriptor;
+    $registry['workspaceRoot'] = $workspace->root;
+    $registry['pid'] = getmypid();
+    $registry['updatedAt'] = (int) round(microtime(true) * 1000);
+    $temp = $path . '.tmp';
+    $json = json_encode($registry, JSON_PRETTY_PRINT | JSON_UNESCAPED_SLASHES);
+    if ($json === false || @file_put_contents($temp, $json . "\n") === false) {
+        throw new OumvError(-32603, 'INTERNAL_ERROR: cannot write the discovery registry');
+    }
+    @chmod($temp, 0600);
+    if (!@rename($temp, $path)) {
+        @unlink($temp);
+        throw new OumvError(-32603, 'INTERNAL_ERROR: cannot publish the discovery registry');
+    }
+}
+
+// ---------------------------------------------------------------------------
+// JSON-RPC adapter
+// ---------------------------------------------------------------------------
+
+final class Adapter
+{
+    public Workspace $workspace;
+    public SessionRegistry $sessions;
+    public string $verifyCommand;
+    /** @var array<string,mixed> */
+    public array $options;
+    public string $transport;
+    public bool $readOnly;
+
+    /** @param array<string,mixed> $options */
+    public function __construct(Workspace $workspace, array $options, string $transport)
+    {
+        $this->workspace = $workspace;
+        $this->sessions = new SessionRegistry($workspace->root);
+        $this->options = $options;
+        $this->transport = $transport;
+        $this->readOnly = (bool) ($options['readOnly'] ?? false);
+        $this->verifyCommand = (string) ($options['verifyCmd'] ?? (PHP_BINARY . ' -l {file}'));
+    }
+
+    /** @return array<string,mixed>|null null for a notification */
+    public function handle(mixed $request): ?array
+    {
+        if (!is_array($request) || array_is_list($request)) {
+            return oumv_error_envelope(null, new OumvError(-32600, 'INVALID_REQUEST: a JSON-RPC request must be an object'));
+        }
+        $id = $request['id'] ?? null;
+        $isNotification = !array_key_exists('id', $request) || $id === null;
+        $jsonrpc = $request['jsonrpc'] ?? null;
+        $method = $request['method'] ?? null;
+        $params = $request['params'] ?? [];
+
+        try {
+            if ($jsonrpc !== '2.0') {
+                throw new OumvError(-32600, 'INVALID_REQUEST: jsonrpc must be "2.0"');
+            }
+            if (!is_string($method) || trim($method) === '') {
+                throw new OumvError(-32600, 'INVALID_REQUEST: method is required');
+            }
+            if ($params === null) {
+                $params = [];
+            }
+            if (!is_array($params) || (array_is_list($params) && $params !== [])) {
+                throw new OumvError(-32602, 'INVALID_PARAMS: params must be an object');
+            }
+            $method = trim($method);
+
+            if ($method === 'oumv/disconnect') {
+                $result = ['closed' => false, 'sessionId' => oumv_str($params, 'sessionId')];
+                return $isNotification ? null : oumv_success_envelope($id, $result);
+            }
+
+            if ($method !== 'oumv/handshake') {
+                $sessionId = oumv_str($params, 'sessionId');
+                if (!$this->sessions->validate($sessionId)) {
+                    throw new OumvError(
+                        -32011,
+                        'VALIDATION_FAILED: unknown or expired sessionId — re-run oumv/handshake',
+                        ['reason' => 'session_expired', 'sessionId' => $sessionId]
+                    );
+                }
+            }
+
+            $result = $this->dispatch($method, $params);
+            if ($isNotification) {
+                return null;
+            }
+            return oumv_success_envelope($id, $result);
+        } catch (OumvError $error) {
+            return $isNotification ? null : oumv_error_envelope($id, $error);
+        } catch (Throwable $error) {
+            $wrapped = new OumvError(-32603, 'INTERNAL_ERROR: ' . $error->getMessage());
+            return $isNotification ? null : oumv_error_envelope($id, $wrapped);
+        }
+    }
+
+    /** @return array<string,mixed> */
+    private function dispatch(string $method, array $params): array
+    {
+        $wantsMutation = in_array($method, ['oumv/applyEdit'], true);
+        if ($wantsMutation && $this->readOnly) {
+            throw new OumvError(-32007, 'PERMISSION_DENIED: this runtime was started with --read-only', ['reason' => 'read_only']);
+        }
+
+        switch ($method) {
+            case 'oumv/handshake':
+                return $this->handshake($params);
+
+            case 'oumv/observe':
+                return oumv_observe($this->workspace, $params);
+
+            case 'oumv/understand':
+                return oumv_understand($this->workspace, $params);
+
+            case 'oumv/getSource':
+                return oumv_get_source($this->workspace, $params);
+
+            case 'oumv/applyEdit':
+                return oumv_apply_edit($this->workspace, $params);
+
+            case 'oumv/verify':
+                return oumv_verify($this->workspace, $params, $this->verifyCommand);
+
+            case 'oumv/descriptor':
+                return oumv_descriptor_payload($this->workspace, ['transports' => [$this->transport], 'url' => $this->options['url'] ?? null]);
+
+            case 'oumv/sessions':
+                // Read-only introspection: the registry is stateless, so this is
+                // the adapter's session policy rather than a session list.
+                return [
+                    'mode' => 'stateless',
+                    'ttlSeconds' => $this->sessions->ttl,
+                    'note' => 'session ids are signed and self-describing; the runtime stores no session table',
+                ];
+        }
+
+        throw new OumvError(-32601, 'Method "' . $method . '" not found', ['reason' => 'method_not_found', 'method' => $method]);
+    }
+
+    /** @return array<string,mixed> */
+    private function handshake(array $params): array
+    {
+        $requestedVersion = trim(oumv_str($params, 'protocolVersion'));
+        if ($requestedVersion !== '') {
+            [$major, $minor, $ok] = oumv_parse_protocol_version($requestedVersion);
+            if (!$ok || $major !== 1 || $minor > 3) {
+                throw new OumvError(
+                    -32006,
+                    'UNSUPPORTED_CAPABILITY: protocol version ' . $requestedVersion . ' (this runtime serves ' . OUMV_PROTOCOL_VERSION . ')',
+                    ['reason' => 'unsupported_protocol_version', 'requested' => $requestedVersion, 'served' => OUMV_PROTOCOL_VERSION]
+                );
+            }
+        }
+
+        $capabilities = oumv_capabilities();
+        $requestedCapabilities = $params['requestedCapabilities'] ?? null;
+        if (is_array($requestedCapabilities)) {
+            $capabilities = oumv_narrow_capabilities($capabilities, $requestedCapabilities);
+        }
+
+        $sessionId = $this->sessions->create();
+        if (($this->options['register'] ?? false) && $this->transport === 'http') {
+            try {
+                oumv_write_registry($this->workspace, [
+                    'transports' => ['http'],
+                    'url' => $this->options['url'] ?? null,
+                ]);
+            } catch (OumvError $error) {
+                // Discovery is advisory: a broken registry must not fail a handshake.
+                fwrite(STDERR, 'oumv-php: descriptor not written: ' . $error->getMessage() . "\n");
+            }
+        }
+
+        return [
+            'protocolVersion' => OUMV_PROTOCOL_VERSION,
+            'profile' => 'backend',
+            'runtimeInfo' => ['name' => OUMV_ADAPTER_NAME, 'version' => OUMV_ADAPTER_VERSION],
+            'capabilities' => $capabilities,
+            'sessionId' => $sessionId,
+            'ttlSeconds' => $this->sessions->ttl,
+            'workspace' => $this->workspace->root,
+            'framework' => $this->workspace->catalog()->framework,
+        ];
+    }
+}
+
+// ---------------------------------------------------------------------------
+// Transports
+// ---------------------------------------------------------------------------
+
+/** @return array{ok:bool,status:int,error:?OumvError} */
+function oumv_http_authorize(array $options): array
+{
+    $expected = isset($options['token']) && is_string($options['token']) ? $options['token'] : '';
+    $provided = (string) ($_SERVER['HTTP_X_OUMV_SESSION_TOKEN'] ?? '');
+    if ($provided === '') {
+        $authorization = (string) ($_SERVER['HTTP_AUTHORIZATION'] ?? '');
+        if (preg_match('/^Bearer\s+(.+)$/i', $authorization, $matches)) {
+            $provided = trim($matches[1]);
+        }
+    }
+    // cli-server leaves SERVER_ADDR empty, so judge every host hint we have and
+    // fail closed when none of them is a loopback name.
+    $hosts = [];
+    foreach (['SERVER_ADDR', 'SERVER_NAME'] as $key) {
+        $value = (string) ($_SERVER[$key] ?? '');
+        if ($value !== '') {
+            $hosts[] = $value;
+        }
+    }
+    $httpHost = (string) ($_SERVER['HTTP_HOST'] ?? '');
+    if ($httpHost !== '') {
+        $parsedHost = parse_url('http://' . $httpHost, PHP_URL_HOST);
+        if (is_string($parsedHost) && $parsedHost !== '') {
+            $hosts[] = $parsedHost;
+        }
+    }
+    $loopbackNames = ['127.0.0.1', '::1', '::ffff:127.0.0.1', 'localhost', '[::1]'];
+    $loopback = $hosts !== [];
+    foreach ($hosts as $host) {
+        if (!in_array(strtolower($host), $loopbackNames, true)) {
+            $loopback = false;
+        }
+    }
+
+    if ($expected !== '') {
+        if ($provided !== '' && hash_equals($expected, $provided)) {
+            return ['ok' => true, 'status' => 200, 'error' => null];
+        }
+        return [
+            'ok' => false,
+            'status' => 401,
+            'error' => new OumvError(-32007, 'PERMISSION_DENIED: missing or invalid OUMV session token', ['reason' => 'unauthorized']),
+        ];
+    }
+    if (!$loopback) {
+        return [
+            'ok' => false,
+            'status' => 403,
+            'error' => new OumvError(
+                -32007,
+                'PERMISSION_DENIED: a non-loopback bind requires --token',
+                ['reason' => 'token_required_non_loopback']
+            ),
+        ];
+    }
+    return ['ok' => true, 'status' => 200, 'error' => null];
+}
+
+function oumv_http_respond(int $status, mixed $payload): void
+{
+    http_response_code($status);
+    header('Content-Type: application/json; charset=utf-8');
+    echo oumv_json($payload);
+}
+
+function oumv_serve_http(Adapter $adapter, array $options): void
+{
+    header_remove('X-Powered-By');
+    header('Cache-Control: no-store');
+
+    $method = strtoupper((string) ($_SERVER['REQUEST_METHOD'] ?? 'GET'));
+    $uri = (string) ($_SERVER['REQUEST_URI'] ?? '/');
+    $path = (string) (parse_url($uri, PHP_URL_PATH) ?: '/');
+
+    if ($method === 'OPTIONS') {
+        header('Allow: POST, OPTIONS');
+        header('Access-Control-Allow-Origin: *');
+        header('Access-Control-Allow-Methods: POST, OPTIONS');
+        header('Access-Control-Allow-Headers: Content-Type, X-OUMV-Session-Token, Authorization');
+        http_response_code(204);
+        return;
+    }
+
+    if ($path === '/__oumv/health' && $method === 'GET') {
+        oumv_http_respond(200, [
+            'status' => 'ok',
+            'adapter' => OUMV_ADAPTER_NAME,
+            'version' => OUMV_ADAPTER_VERSION,
+            'profile' => 'backend',
+            'workspace' => $adapter->workspace->root,
+            'framework' => $adapter->workspace->catalog()->framework,
+        ]);
+        return;
+    }
+
+    if ($path !== '/__oumv/rpc' && $path !== '/oumv/rpc') {
+        oumv_http_respond(404, oumv_error_envelope(null, new OumvError(-32600, 'INVALID_REQUEST: unknown OUMV endpoint ' . $path)));
+        return;
+    }
+
+    if ($method !== 'POST') {
+        header('Allow: POST, OPTIONS');
+        oumv_http_respond(405, oumv_error_envelope(null, new OumvError(-32600, 'INVALID_REQUEST: the OUMV RPC endpoint requires HTTP POST')));
+        return;
+    }
+
+    $authorization = oumv_http_authorize($options);
+    if (!$authorization['ok']) {
+        oumv_http_respond($authorization['status'], oumv_error_envelope(null, $authorization['error'] ?? new OumvError(-32007, 'PERMISSION_DENIED')));
+        return;
+    }
+
+    $contentType = (string) ($_SERVER['CONTENT_TYPE'] ?? $_SERVER['HTTP_CONTENT_TYPE'] ?? '');
+    if (stripos($contentType, 'application/json') !== 0) {
+        oumv_http_respond(415, oumv_error_envelope(null, new OumvError(-32600, 'INVALID_REQUEST: Content-Type must be application/json')));
+        return;
+    }
+
+    $declaredLength = (int) ($_SERVER['CONTENT_LENGTH'] ?? 0);
+    if ($declaredLength > OUMV_MAX_BODY_BYTES) {
+        oumv_http_respond(413, oumv_error_envelope(null, new OumvError(-32600, 'INVALID_REQUEST: request body exceeds maxBodyBytes')));
+        return;
+    }
+
+    $raw = file_get_contents('php://input');
+    if (!is_string($raw)) {
+        $raw = '';
+    }
+    if (strlen($raw) > OUMV_MAX_BODY_BYTES) {
+        oumv_http_respond(413, oumv_error_envelope(null, new OumvError(-32600, 'INVALID_REQUEST: request body exceeds maxBodyBytes')));
+        return;
+    }
+
+    $shape = json_decode($raw);
+    $decoded = json_decode($raw, true);
+    if ($shape === null && trim($raw) !== 'null') {
+        oumv_http_respond(200, oumv_error_envelope(null, new OumvError(-32700, 'PARSE_ERROR: the request body is not valid JSON')));
+        return;
+    }
+
+    if (is_array($shape)) {
+        if ($shape === []) {
+            oumv_http_respond(200, oumv_error_envelope(null, new OumvError(-32600, 'INVALID_REQUEST: an empty batch is not a request')));
+            return;
+        }
+        $responses = [];
+        foreach ($decoded as $entry) {
+            $response = $adapter->handle($entry);
+            if ($response !== null) {
+                $responses[] = $response;
+            }
+        }
+        oumv_http_respond(200, $responses);
+        return;
+    }
+
+    $response = $adapter->handle($decoded);
+    if ($response === null) {
+        http_response_code(204);
+        return;
+    }
+    oumv_http_respond(200, $response);
+}
+
+function oumv_serve_stdio(Adapter $adapter): int
+{
+    $stdin = fopen('php://stdin', 'r');
+    if ($stdin === false) {
+        fwrite(STDERR, "oumv-php: cannot open stdin\n");
+        return 1;
+    }
+    while (($line = fgets($stdin)) !== false) {
+        $line = trim($line);
+        if ($line === '') {
+            continue;
+        }
+        $shape = json_decode($line);
+        $decoded = json_decode($line, true);
+        if ($shape === null && trim($line) !== 'null') {
+            fwrite(STDOUT, oumv_json(oumv_error_envelope(null, new OumvError(-32700, 'PARSE_ERROR: the request line is not valid JSON'))) . "\n");
+            fflush(STDOUT);
+            continue;
+        }
+        if (is_array($shape)) {
+            $responses = [];
+            foreach ($decoded as $entry) {
+                $response = $adapter->handle($entry);
+                if ($response !== null) {
+                    $responses[] = $response;
+                }
+            }
+            fwrite(STDOUT, oumv_json($responses) . "\n");
+            fflush(STDOUT);
+            continue;
+        }
+        $response = $adapter->handle($decoded);
+        if ($response === null) {
+            continue;
+        }
+        fwrite(STDOUT, oumv_json($response) . "\n");
+        fflush(STDOUT);
+    }
+    return 0;
+}
+
+// ---------------------------------------------------------------------------
+// CLI
+// ---------------------------------------------------------------------------
+
+function oumv_usage(): string
+{
+    return <<<TXT
+oumv-php — dependency-free OUMV backend sidecar for Laravel and Symfony (wire 1.3.0)
+
+Usage:
+  php bin/oumv-php --root <dir> --stdio            newline-delimited JSON-RPC on stdio
+  php -S 127.0.0.1:8787 bin/oumv-php --root <dir>  HTTP POST /__oumv/rpc (PHP built-in server router)
+
+Options:
+  --root <dir>           workspace root to scan (default: the current directory)
+  --stdio                serve newline-delimited JSON-RPC on stdin/stdout
+  --token <token>        require X-OUMV-Session-Token / Authorization: Bearer on HTTP
+  --verify-cmd <cmd>     command oumv/verify runs; {file} {rel} {root} {target} are substituted
+                         (default: "<php binary> -l {file}")
+  --read-only            refuse oumv/applyEdit with PERMISSION_DENIED
+  --register             write the spec §9.2 discovery registry on handshake (HTTP mode)
+  --print-descriptor     print the discovery descriptor for this workspace and exit
+  --verbose              diagnostics on stderr
+  --help                 show this help
+
+Honest level claim: Level 2. L4 traces and runtime causality need a live,
+instrumented PHP application; this sidecar never fabricates request traces.
+TXT;
+}
+
+/**
+ * @param list<string> $argv
+ * @return array<string,mixed>
+ */
+function oumv_parse_cli(array $argv): array
+{
+    $options = [
+        'root' => getcwd() ?: '.',
+        'stdio' => false,
+        'token' => null,
+        'verifyCmd' => null,
+        'readOnly' => false,
+        'register' => false,
+        'printDescriptor' => false,
+        'verbose' => false,
+        'help' => false,
+        'url' => null,
+        'transports' => [],
+    ];
+    $count = count($argv);
+    for ($i = 1; $i < $count; $i++) {
+        $arg = $argv[$i];
+        switch ($arg) {
+            case '--root':
+                $options['root'] = $argv[++$i] ?? $options['root'];
+                break;
+            case '--stdio':
+                $options['stdio'] = true;
+                break;
+            case '--token':
+                $options['token'] = $argv[++$i] ?? null;
+                break;
+            case '--verify-cmd':
+                $options['verifyCmd'] = $argv[++$i] ?? null;
+                break;
+            case '--read-only':
+                $options['readOnly'] = true;
+                break;
+            case '--register':
+                $options['register'] = true;
+                break;
+            case '--print-descriptor':
+                $options['printDescriptor'] = true;
+                break;
+            case '--verbose':
+                $options['verbose'] = true;
+                break;
+            case '--help':
+            case '-h':
+                $options['help'] = true;
+                break;
+            case '--url':
+                $options['url'] = $argv[++$i] ?? null;
+                break;
+            case '-S':
+            case '-t':
+                // PHP built-in server flags: consume the value, ignore it.
+                $i++;
+                break;
+            default:
+                // The router path (`bin/oumv-php`) is repeated in the built-in
+                // server's argv; ignore bare values, reject unknown long flags.
+                if (str_starts_with($arg, '--')) {
+                    throw new OumvError(-32602, 'unknown option ' . $arg);
+                }
+                break;
+        }
+    }
+    if ($options['stdio']) {
+        $options['transports'] = ['stdio'];
+    }
+    return $options;
+}
+
+/**
+ * PHP's built-in server (cli-server SAPI) does not populate $argv for the router
+ * script, so `php -S 127.0.0.1:8787 bin/oumv-php --root <dir>` would lose the
+ * flags. The server process's own command line still carries them: recover the
+ * trailing `--flag value` tail with `ps`. Environment variables (OUMV_ROOT,
+ * OUMV_TOKEN, OUMV_VERIFY_CMD, OUMV_READ_ONLY, OUMV_REGISTER) take precedence
+ * and avoid the extra process entirely.
+ *
+ * @return list<string>
+ */
+function oumv_server_argv(): array
+{
+    $recovered = [];
+    $pid = getmypid();
+    if ($pid !== false) {
+        $result = oumv_proc_run(['ps', '-o', 'command=', '-p', (string) $pid]);
+        $line = trim($result['output']);
+        if ($line !== '') {
+            $tokens = preg_split('/\s+/', $line) ?: [];
+            $start = null;
+            foreach ($tokens as $index => $token) {
+                if (str_starts_with($token, '--')) {
+                    $start = $index;
+                    break;
+                }
+            }
+            if ($start !== null) {
+                $recovered = array_slice($tokens, $start);
+            }
+        }
+    }
+
+    $envRoot = getenv('OUMV_ROOT');
+    if (is_string($envRoot) && $envRoot !== '') {
+        $recovered[] = '--root';
+        $recovered[] = $envRoot;
+    }
+    $envToken = getenv('OUMV_TOKEN');
+    if (is_string($envToken) && $envToken !== '') {
+        $recovered[] = '--token';
+        $recovered[] = $envToken;
+    }
+    $envVerify = getenv('OUMV_VERIFY_CMD');
+    if (is_string($envVerify) && $envVerify !== '') {
+        $recovered[] = '--verify-cmd';
+        $recovered[] = $envVerify;
+    }
+    if (getenv('OUMV_READ_ONLY') === '1') {
+        $recovered[] = '--read-only';
+    }
+    if (getenv('OUMV_REGISTER') === '1') {
+        $recovered[] = '--register';
+    }
+    return $recovered;
+}
+
+function oumv_main(array $argv): int
+{
+    $sapi = PHP_SAPI;
+    if ($sapi === 'cli-server') {
+        // Rebuild the flag list: argv is empty in the router script.
+        $argv = array_merge(['oumv-php'], oumv_server_argv());
+    }
+    try {
+        $options = oumv_parse_cli($argv);
+    } catch (OumvError $error) {
+        fwrite(STDERR, 'oumv-php: ' . $error->getMessage() . "\n\n" . oumv_usage() . "\n");
+        return 2;
+    }
+    if ($options['help']) {
+        fwrite(STDOUT, oumv_usage() . "\n");
+        return 0;
+    }
+
+    try {
+        $workspace = new Workspace((string) $options['root']);
+    } catch (OumvError $error) {
+        fwrite(STDERR, 'oumv-php: ' . $error->getMessage() . "\n");
+        return 2;
+    }
+
+    $transport = $sapi === 'cli-server' ? 'http' : ($options['stdio'] ? 'stdio' : 'cli');
+    $options['transports'] = $transport === 'http' ? ['http'] : ['stdio'];
+    if ($transport === 'http' && ($options['url'] ?? null) === null) {
+        $host = (string) ($_SERVER['HTTP_HOST'] ?? '127.0.0.1');
+        $options['url'] = 'http://' . $host . '/__oumv/rpc';
+    }
+
+    if ($options['printDescriptor']) {
+        fwrite(STDOUT, oumv_json(oumv_descriptor_payload($workspace, $options)) . "\n");
+        return 0;
+    }
+
+    $adapter = new Adapter($workspace, $options, $transport);
+
+    if ($sapi === 'cli-server') {
+        try {
+            oumv_serve_http($adapter, $options);
+        } catch (Throwable $error) {
+            fwrite(STDERR, 'oumv-php: unhandled transport failure: ' . $error->getMessage() . "\n");
+            if (!headers_sent()) {
+                oumv_http_respond(500, oumv_error_envelope(null, new OumvError(-32603, 'INTERNAL_ERROR: ' . $error->getMessage())));
+            }
+        }
+        return 0;
+    }
+
+    if ($options['stdio']) {
+        return oumv_serve_stdio($adapter);
+    }
+
+    fwrite(STDERR, oumv_usage() . "\n");
+    return 2;
+}
+
+$oumvArgv = $GLOBALS['argv'] ?? [];
+if (!is_array($oumvArgv)) {
+    $oumvArgv = [];
+}
+exit(oumv_main($oumvArgv));
