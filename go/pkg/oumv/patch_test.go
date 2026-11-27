@@ -152,6 +152,49 @@ func TestApplyPatchAmbiguousTargetNamesLines(t *testing.T) {
 	}
 }
 
+func TestApplyPatchAmbiguousTargetOffersScopedRetry(t *testing.T) {
+	rt, dir := newWorkspaceRuntime(t)
+	before := "package main\n\nvar A = \"same\"\nvar B = \"same\"\nvar C = \"same\"\n"
+	writeFile(t, dir, "app.go", before)
+
+	_, omErr := rt.ApplyEdit(context.Background(), &protocol.ApplyEditParams{
+		Path:            "app.go",
+		Mode:            "patch",
+		ExpectedVersion: versionOf([]byte(before)),
+		Hunks: []protocol.PatchHunk{{
+			Target:      "\"same\"",
+			Replacement: "\"other\"",
+			StartLine:   3,
+			EndLine:     5,
+		}},
+	})
+	if omErr == nil || omErr.Code != protocol.ErrValidationFailed {
+		t.Fatalf("want -32011 for an ambiguous hunk, got %v", omErr)
+	}
+	data := omErr.Data.(map[string]interface{})
+	occurrences, ok := data["occurrences"].([]oumv.Occurrence)
+	if !ok || len(occurrences) != 3 {
+		t.Fatalf("want three occurrences, got %#v", data["occurrences"])
+	}
+	// Line numbers are absolute even when the hunk searched a window starting at 3.
+	if occurrences[0].Line != 3 || occurrences[1].Line != 4 || occurrences[2].Line != 5 {
+		t.Fatalf("want absolute lines 3,4,5, got %#v", occurrences)
+	}
+	if !strings.Contains(occurrences[0].Text, "var A") {
+		t.Fatalf("occurrence text must quote the line, got %q", occurrences[0].Text)
+	}
+	suggested, ok := data["suggestedHunks"].([]map[string]interface{})
+	if !ok || len(suggested) != 3 {
+		t.Fatalf("want three suggested hunks, got %#v", data["suggestedHunks"])
+	}
+	if suggested[1]["startLine"].(int) != 1 || suggested[1]["endLine"].(int) != 6 {
+		t.Fatalf("suggested scope for line 4 = %#v", suggested[1])
+	}
+	if suggested[1]["target"] != "\"same\"" {
+		t.Fatalf("suggested hunk must keep the target, got %#v", suggested[1])
+	}
+}
+
 func TestApplyPatchRejectsStaleVersion(t *testing.T) {
 	rt, dir := newWorkspaceRuntime(t)
 	before := "package main\n\nvar A = 1\n"

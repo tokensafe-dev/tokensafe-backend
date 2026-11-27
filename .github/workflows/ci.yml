@@ -125,6 +125,18 @@ jobs:
         with:
           python-version: '3.12'
 
+      - name: Setup Java
+        uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: '21'
+
+      - name: Setup PHP
+        uses: shivammathur/setup-php@v2
+        with:
+          php-version: '8.3'
+          coverage: none
+
       - name: Install Python dependencies
         working-directory: python
         run: |
@@ -163,6 +175,20 @@ jobs:
           CERT_OUT_DIR: ${{ github.workspace }}/cert-fresh
           OUMV_REPO: ${{ github.workspace }}/vendor/oumv
         run: pnpm test
+
+      # Source-level adapters: same fixtures, static route scan, no live app — the
+      # L4 trace case fails by design and the report names it.
+      - name: Generate Java (Spring) adapter report
+        env:
+          REPORT: ${{ github.workspace }}/cert-fresh/java-spring.json
+          OUMV_REPO: ${{ github.workspace }}/vendor/oumv
+        run: ./java/certify.sh
+
+      - name: Generate PHP (Laravel/Symfony) adapter report
+        env:
+          REPORT: ${{ github.workspace }}/cert-fresh/php-laravel.json
+          OUMV_REPO: ${{ github.workspace }}/vendor/oumv
+        run: ./php/certify.sh
 
       - name: Compare with committed reports
         run: python3 scripts/check_certification.py cert-fresh certification

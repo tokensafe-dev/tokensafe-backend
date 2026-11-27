@@ -27,7 +27,7 @@
 ## Certification (spec §10)
 
 <!-- certification:start -->
-**6 adapters certified at Level 3** — 33 language-neutral cases (`fixtureVersion` 7) over the transport an agent actually uses. Generated from `certification/*.json` by `scripts/render_certification.py`; CI fails when this block no longer matches the reports.
+**8 adapters certified against 33 language-neutral cases** (`fixtureVersion` 7): 6 at Level 3 and 2 source-level adapter(s) at Level 2, each with its single L3 gap named below. Generated from `certification/*.json` by `scripts/render_certification.py`; CI fails when this block no longer matches the reports.
 
 | Adapter | Framework | Transport exercised | Level | Cases | Report |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -37,9 +37,21 @@
 | `node-express` | Express | Node `POST /__oumv/rpc` | **3** | 33/33 | [certification/node-express.json](certification/node-express.json) |
 | `node-fastify` | Fastify | Node `POST /__oumv/rpc` | **3** | 33/33 | [certification/node-fastify.json](certification/node-fastify.json) |
 | `python-fastapi` | FastAPI | ASGI `POST /__oumv/rpc` | **3** | 33/33 | [certification/python-fastapi.json](certification/python-fastapi.json) |
+
+Source-level adapters scan the framework's route declarations statically, apply OCC-checked edits and run a real verify command, but they do not boot the application — so they record no live request traces, `observe-l4-returns-recorded-traces` fails, and Level 3 is not claimed:
+
+| Adapter | Framework | Transport exercised | Level | Cases | Report |
+| :--- | :--- | :--- | :--- | :--- | :--- |
+| `java-spring` | Spring Boot | JDK `POST /__oumv/rpc` + stdio | **2** | 32/33 | [certification/java-spring.json](certification/java-spring.json) |
+| `php-laravel` | Laravel / Symfony | PHP `POST /__oumv/rpc` + stdio | **2** | 32/33 | [certification/php-laravel.json](certification/php-laravel.json) |
+
+Named gaps:
+
+- `java-spring` → `observe-l4-returns-recorded-traces`: expected success, got error -32006: UNSUPPORTED_CAPABILITY: observe L4 requires live request traces; this JDK-only sidecar does not run the Spring application, so it records none
+- `php-laravel` → `observe-l4-returns-recorded-traces`: field "data.traces" must be a non-empty array
 <!-- certification:end -->
 
-Levels are cumulative and a skipped case never counts as a pass — a missing capability caps the claim instead of inflating it. The same fixtures also run over **stdio** (§2.5) against the Node and Python runtimes: [`certification/transports/node-stdio.json`](certification/transports/node-stdio.json) and [`python-stdio.json`](certification/transports/python-stdio.json), both Level 3, 20/20. Regenerate locally:
+Levels are cumulative and a skipped case never counts as a pass — a missing capability caps the claim instead of inflating it. The same fixtures also run over **stdio** (§2.5) against the Node and Python runtimes: [`certification/transports/node-stdio.json`](certification/transports/node-stdio.json) and [`python-stdio.json`](certification/transports/python-stdio.json), both Level 3, 33/33. Regenerate locally:
 
 ```bash
 # Go adapters (writes certification/*.json)
@@ -50,6 +62,10 @@ cd python && CERT_OUT_DIR=../certification .venv/bin/python -m pytest -q tests/t
 
 # Node adapters — HTTP and stdio
 cd node && CERT_OUT_DIR=../certification OUMV_REPO=../../agent-oumv pnpm test
+
+# Spring (JDK-only sidecar) and Laravel/Symfony (PHP sidecar) — Level 2, stdio
+cd java && ./certify.sh
+cd ../php && ./certify.sh
 ```
 
 ---

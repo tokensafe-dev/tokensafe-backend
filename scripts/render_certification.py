@@ -37,6 +37,8 @@ FRAMEWORK = {
     "fastapi": "FastAPI",
     "express": "Express",
     "fastify": "Fastify",
+    "spring": "Spring Boot",
+    "laravel": "Laravel / Symfony",
 }
 TRANSPORT = {
     "gin": "HTTP `POST /__oumv/rpc`",
@@ -45,6 +47,8 @@ TRANSPORT = {
     "fastapi": "ASGI `POST /__oumv/rpc`",
     "express": "Node `POST /__oumv/rpc`",
     "fastify": "Node `POST /__oumv/rpc`",
+    "spring": "JDK `POST /__oumv/rpc` + stdio",
+    "laravel": "PHP `POST /__oumv/rpc` + stdio",
 }
 
 
@@ -61,44 +65,79 @@ def load_reports() -> list[tuple[str, dict]]:
 def render(reports: list[tuple[str, dict]]) -> str:
     versions = {report.get("fixtureVersion") for _, report in reports}
     totals = {report.get("total") for _, report in reports}
-    levels = {report.get("attainedLevel") for _, report in reports}
 
     problems: list[str] = []
     if len(versions) != 1:
         problems.append(f"mixed fixtureVersion values: {sorted(str(v) for v in versions)}")
     if len(totals) != 1:
         problems.append(f"mixed case counts: {sorted(str(t) for t in totals)}")
-    if len(levels) != 1:
-        problems.append(f"mixed attained levels: {sorted(str(level) for level in levels)}")
-    unclean = [
-        name for name, report in reports
-        if report.get("failed") or report.get("passed") != report.get("total")
-    ]
-    if unclean:
-        problems.append("adapters without a clean run: " + ", ".join(unclean))
+    # A Level 2 claim is legitimate when the gap is a named case (a sidecar that
+    # does not run the framework cannot record live traces). A Level 2 report with
+    # an unnamed failure is not: it must list the failing case ids.
+    for name, report in reports:
+        failing = [c["id"] for c in report.get("cases", []) if c.get("status") == "failed"]
+        if report.get("failed") and not failing:
+            problems.append(f"{name}: {report['failed']} failed case(s) without a case id")
+        if report.get("attainedLevel", 0) < 2:
+            problems.append(f"{name}: attained level {report.get('attainedLevel')} is below 2")
     if problems:
         raise SystemExit("cannot render a truthful block:\n  - " + "\n  - ".join(problems))
 
-    version, total, level = versions.pop(), totals.pop(), levels.pop()
-    lines = [
-        f"**{len(reports)} adapters certified at Level {level}** — {total} language-neutral cases "
-        f"(`fixtureVersion` {version}) over the transport an agent actually uses. Generated from "
-        "`certification/*.json` by `scripts/render_certification.py`; CI fails when this block no "
-        "longer matches the reports.",
-        "",
-        "| Adapter | Framework | Transport exercised | Level | Cases | Report |",
-        "| :--- | :--- | :--- | :--- | :--- | :--- |",
-    ]
-    for name, report in reports:
-        framework = report.get("framework", "?")
-        lines.append(
-            f"| `{report.get('adapterName', Path(name).stem)}` "
-            f"| {FRAMEWORK.get(framework, framework)} "
-            f"| {TRANSPORT.get(framework, '—')} "
-            f"| **{report['attainedLevel']}** "
-            f"| {report['passed']}/{report['total']} "
-            f"| [certification/{name}](certification/{name}) |"
+    version, total = versions.pop(), totals.pop()
+    level3 = [(n, r) for n, r in reports if r.get("attainedLevel", 0) >= 3 and not r.get("failed")]
+    source_level = [(n, r) for n, r in reports if (n, r) not in level3]
+
+    if source_level:
+        lead = (
+            f"**{len(reports)} adapters certified against {total} language-neutral cases** "
+            f"(`fixtureVersion` {version}): {len(level3)} at Level 3 and {len(source_level)} "
+            "source-level adapter(s) at Level 2, each with its single L3 gap named below."
         )
+    else:
+        lead = (
+            f"**{len(reports)} adapters certified at Level 3** — {total} language-neutral cases "
+            f"(`fixtureVersion` {version}) over the transport an agent actually uses."
+        )
+    lines = [
+        lead + " Generated from `certification/*.json` by `scripts/render_certification.py`; "
+        "CI fails when this block no longer matches the reports.",
+        "",
+    ]
+
+    def table(rows: list[tuple[str, dict]]) -> list[str]:
+        out = [
+            "| Adapter | Framework | Transport exercised | Level | Cases | Report |",
+            "| :--- | :--- | :--- | :--- | :--- | :--- |",
+        ]
+        for name, report in rows:
+            framework = report.get("framework", "?")
+            out.append(
+                f"| `{report.get('adapterName', Path(name).stem)}` "
+                f"| {FRAMEWORK.get(framework, framework)} "
+                f"| {TRANSPORT.get(framework, '—')} "
+                f"| **{report['attainedLevel']}** "
+                f"| {report['passed']}/{report['total']} "
+                f"| [certification/{name}](certification/{name}) |"
+            )
+        return out
+
+    lines += table(level3)
+    if source_level:
+        lines += [
+            "",
+            "Source-level adapters scan the framework's route declarations statically, apply OCC-checked "
+            "edits and run a real verify command, but they do not boot the application — so they record no "
+            "live request traces, `observe-l4-returns-recorded-traces` fails, and Level 3 is not claimed:",
+            "",
+        ]
+        lines += table(source_level)
+        gaps = []
+        for name, report in source_level:
+            for case in report.get("cases", []):
+                if case.get("status") == "failed":
+                    gaps.append(f"`{report['adapterName']}` → `{case['id']}`: {case.get('error', '')}")
+        if gaps:
+            lines += ["", "Named gaps:", ""] + [f"- {gap}" for gap in gaps]
     return "\n".join(lines) + "\n"
 
 

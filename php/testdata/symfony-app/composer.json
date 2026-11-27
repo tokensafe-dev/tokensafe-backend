@@ -1,0 +1,21 @@
+{
+  "name": "tokensafe/fixture-symfony-app",
+  "description": "Static OUMV certification fixture for the PHP sidecar: Symfony attribute routing sources only, never installed.",
+  "type": "project",
+  "license": "Apache-2.0",
+  "require": {
+    "php": "^8.1",
+    "symfony/framework-bundle": "^7.1",
+    "symfony/routing": "^7.1"
+  },
+  "autoload": {
+    "psr-4": {
+      "App\\": "src/"
+    }
+  },
+  "config": {
+    "sort-packages": true
+  },
+  "minimum-stability": "stable",
+  "prefer-stable": true
+}

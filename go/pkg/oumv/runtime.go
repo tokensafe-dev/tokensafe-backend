@@ -1466,14 +1466,37 @@ func applyHunks(text string, hunks []protocol.PatchHunk) (string, *protocol.Oumv
 			}
 		}
 		if count > 1 && !hunk.ReplaceAll {
+			lineOffset := 0
+			if hunk.StartLine > 0 {
+				lineOffset = hunk.StartLine - 1
+			}
+			occurrences := occurrenceDetails(region, hunk.Target, lineOffset)
+			lines := make([]int, 0, len(occurrences))
+			suggested := make([]map[string]interface{}, 0, len(occurrences))
+			for _, occurrence := range occurrences {
+				lines = append(lines, occurrence.Line)
+				start := occurrence.Line - 3
+				if start < 1 {
+					start = 1
+				}
+				end := occurrence.Line + strings.Count(hunk.Target, "\n") + 2
+				suggested = append(suggested, map[string]interface{}{
+					"target":      hunk.Target,
+					"replacement": hunk.Replacement,
+					"startLine":   start,
+					"endLine":     end,
+				})
+			}
 			return "", &protocol.OumvError{
 				Code:    protocol.ErrValidationFailed,
 				Message: fmt.Sprintf("VALIDATION_FAILED: hunk %d target occurs %d times; narrow it with startLine/endLine or set replaceAll", i, count),
 				Data: map[string]interface{}{
-					"reason": "target_not_unique",
-					"hunk":   i,
-					"count":  count,
-					"lines":  occurrenceLines(region, hunk.Target),
+					"reason":         "target_not_unique",
+					"hunk":           i,
+					"count":          count,
+					"lines":          lines,
+					"occurrences":    occurrences,
+					"suggestedHunks": suggested,
 				},
 			}
 		}
@@ -1534,19 +1557,47 @@ func hunkWindow(text string, hunk protocol.PatchHunk) (int, int, *protocol.OumvE
 }
 
 // occurrenceLines reports the 1-based line numbers of up to five target matches.
-func occurrenceLines(region, target string) []int {
-	lines := []int{}
+func occurrenceLines(region, target string, lineOffset int) []int {
+	details := occurrenceDetails(region, target, lineOffset)
+	lines := make([]int, 0, len(details))
+	for _, detail := range details {
+		lines = append(lines, detail.Line)
+	}
+	return lines
+}
+
+// occurrence describes one ambiguous hunk match: the absolute 1-based line and the
+// text of that line, so a caller can retry with a scoped hunk without another read.
+type Occurrence struct {
+	Line int    `json:"line"`
+	Text string `json:"text"`
+}
+
+func occurrenceDetails(region, target string, lineOffset int) []Occurrence {
+	out := []Occurrence{}
 	offset := 0
-	for len(lines) < 5 {
+	for len(out) < 5 {
 		idx := strings.Index(region[offset:], target)
 		if idx < 0 {
 			break
 		}
 		pos := offset + idx
-		lines = append(lines, 1+strings.Count(region[:pos], "\n"))
+		line := lineOffset + 1 + strings.Count(region[:pos], "\n")
+		lineStart := strings.LastIndex(region[:pos], "\n") + 1
+		lineEnd := strings.Index(region[pos:], "\n")
+		if lineEnd < 0 {
+			lineEnd = len(region)
+		} else {
+			lineEnd += pos
+		}
+		text := strings.TrimSpace(region[lineStart:lineEnd])
+		if len(text) > 200 {
+			text = text[:200]
+		}
+		out = append(out, Occurrence{Line: line, Text: text})
 		offset = pos + len(target)
 	}
-	return lines
+	return out
 }
 
 func hashVersion(data []byte) string {

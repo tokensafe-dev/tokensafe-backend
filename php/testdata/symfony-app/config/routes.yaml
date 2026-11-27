@@ -1,0 +1,7 @@
+# Static fixture: the OUMV PHP sidecar reads the #[Route] attributes on the
+# controllers directly and does not parse this file (known limit, see README).
+controllers:
+    resource:
+        path: ../src/Controller/
+        namespace: App\Controller
+    type: attribute
