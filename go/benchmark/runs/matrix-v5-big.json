@@ -1,0 +1,4717 @@
+{
+  "target": "go",
+  "sandbox_files": 200,
+  "tasks": [
+    "product-create-status",
+    "order-conflict-status",
+    "product-validation-status"
+  ],
+  "arms": [
+    "baseline",
+    "tokensafe",
+    "oumv"
+  ],
+  "runs": 5,
+  "model": "deepseek-chat",
+  "budget_usd": 5.0,
+  "spent_usd": 0.105236,
+  "aborted": null,
+  "results": [
+    {
+      "arm": "baseline",
+      "task": "product-create-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC02_CREATE_PRODUCT"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 31.6,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 5,
+        "input_tokens": 21307,
+        "cache_hit_tokens": 20352,
+        "cache_miss_tokens": 955,
+        "output_tokens": 1600,
+        "usd": 0.003442
+      },
+      "tool_calls": {
+        "list_files": 2,
+        "search_files": 2,
+        "read_file": 2,
+        "write_file": 1
+      },
+      "tool_result_chars": {
+        "list_files": 2829,
+        "search_files": 4629,
+        "read_file": 8181,
+        "write_file": 77
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "list_files",
+            "search_files"
+          ],
+          "result_chars": [
+            2763,
+            4158
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC02_CREATE_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "list_files",
+            "read_file"
+          ],
+          "result_chars": [
+            66,
+            2923
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC02_CREATE_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 3,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            5258
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC02_CREATE_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 4,
+          "tools": [
+            "search_files"
+          ],
+          "result_chars": [
+            471
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC02_CREATE_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 5,
+          "tools": [
+            "write_file"
+          ],
+          "result_chars": [
+            77
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 1
+    },
+    {
+      "arm": "tokensafe",
+      "task": "product-create-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC02_CREATE_PRODUCT"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 22.5,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 3,
+        "input_tokens": 6898,
+        "cache_hit_tokens": 6272,
+        "cache_miss_tokens": 626,
+        "output_tokens": 412,
+        "usd": 0.001061
+      },
+      "tool_calls": {
+        "ts_smart_read_file": 2,
+        "ts_apply_edits": 1
+      },
+      "tool_result_chars": {
+        "ts_smart_read_file": 1710,
+        "ts_apply_edits": 294
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "ts_smart_read_file"
+          ],
+          "result_chars": [
+            1233
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC02_CREATE_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "ts_smart_read_file"
+          ],
+          "result_chars": [
+            477
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC02_CREATE_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 3,
+          "tools": [
+            "ts_apply_edits"
+          ],
+          "result_chars": [
+            294
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 1
+    },
+    {
+      "arm": "oumv",
+      "task": "product-create-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC02_CREATE_PRODUCT"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 20.1,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 2,
+        "input_tokens": 3744,
+        "cache_hit_tokens": 3328,
+        "cache_miss_tokens": 416,
+        "output_tokens": 276,
+        "usd": 0.000649
+      },
+      "tool_calls": {
+        "oumv_observe": 1,
+        "oumv_applyEdit": 1
+      },
+      "tool_result_chars": {
+        "oumv_observe": 721,
+        "oumv_applyEdit": 237
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "oumv_observe"
+          ],
+          "result_chars": [
+            721
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC02_CREATE_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "oumv_applyEdit"
+          ],
+          "result_chars": [
+            237
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 1
+    },
+    {
+      "arm": "baseline",
+      "task": "order-conflict-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 32.8,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 5,
+        "input_tokens": 20610,
+        "cache_hit_tokens": 18176,
+        "cache_miss_tokens": 2434,
+        "output_tokens": 1595,
+        "usd": 0.003684
+      },
+      "tool_calls": {
+        "list_files": 2,
+        "search_files": 1,
+        "read_file": 3,
+        "write_file": 1
+      },
+      "tool_result_chars": {
+        "list_files": 2829,
+        "search_files": 1260,
+        "read_file": 12824,
+        "write_file": 77
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "list_files",
+            "search_files"
+          ],
+          "result_chars": [
+            2763,
+            1260
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "list_files",
+            "read_file"
+          ],
+          "result_chars": [
+            66,
+            3214
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 3,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            5265
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 4,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            4345
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 5,
+          "tools": [
+            "write_file"
+          ],
+          "result_chars": [
+            77
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 1
+    },
+    {
+      "arm": "tokensafe",
+      "task": "order-conflict-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 31.9,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 3,
+        "input_tokens": 8483,
+        "cache_hit_tokens": 6912,
+        "cache_miss_tokens": 1571,
+        "output_tokens": 389,
+        "usd": 0.001336
+      },
+      "tool_calls": {
+        "ts_smart_read_file": 2,
+        "ts_apply_edits": 1
+      },
+      "tool_result_chars": {
+        "ts_smart_read_file": 5689,
+        "ts_apply_edits": 284
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "ts_smart_read_file"
+          ],
+          "result_chars": [
+            1850
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "ts_smart_read_file"
+          ],
+          "result_chars": [
+            3839
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 3,
+          "tools": [
+            "ts_apply_edits"
+          ],
+          "result_chars": [
+            284
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 1
+    },
+    {
+      "arm": "oumv",
+      "task": "order-conflict-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 20.4,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 2,
+        "input_tokens": 3926,
+        "cache_hit_tokens": 3584,
+        "cache_miss_tokens": 342,
+        "output_tokens": 327,
+        "usd": 0.000703
+      },
+      "tool_calls": {
+        "oumv_observe": 1,
+        "oumv_applyEdit": 1
+      },
+      "tool_result_chars": {
+        "oumv_observe": 1040,
+        "oumv_applyEdit": 237
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "oumv_observe"
+          ],
+          "result_chars": [
+            1040
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "oumv_applyEdit"
+          ],
+          "result_chars": [
+            237
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 1
+    },
+    {
+      "arm": "baseline",
+      "task": "product-validation-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC03_REJECT_INVALID_PRODUCT"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 38.7,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 6,
+        "input_tokens": 29606,
+        "cache_hit_tokens": 22655,
+        "cache_miss_tokens": 6951,
+        "output_tokens": 1663,
+        "usd": 0.005292
+      },
+      "tool_calls": {
+        "list_files": 2,
+        "search_files": 2,
+        "read_file": 3,
+        "write_file": 1
+      },
+      "tool_result_chars": {
+        "list_files": 2868,
+        "search_files": 4326,
+        "read_file": 10138,
+        "write_file": 77
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "list_files",
+            "search_files"
+          ],
+          "result_chars": [
+            2802,
+            4158
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "list_files",
+            "read_file"
+          ],
+          "result_chars": [
+            66,
+            3754
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 3,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            5246
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 4,
+          "tools": [
+            "search_files"
+          ],
+          "result_chars": [
+            168
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 5,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            1138
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 6,
+          "tools": [
+            "write_file"
+          ],
+          "result_chars": [
+            77
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 1
+    },
+    {
+      "arm": "tokensafe",
+      "task": "product-validation-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC03_REJECT_INVALID_PRODUCT"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 23.5,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 3,
+        "input_tokens": 7501,
+        "cache_hit_tokens": 6912,
+        "cache_miss_tokens": 589,
+        "output_tokens": 410,
+        "usd": 0.001094
+      },
+      "tool_calls": {
+        "ts_smart_read_file": 2,
+        "ts_apply_edits": 1
+      },
+      "tool_result_chars": {
+        "ts_smart_read_file": 3757,
+        "ts_apply_edits": 283
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "ts_smart_read_file"
+          ],
+          "result_chars": [
+            1221
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "ts_smart_read_file"
+          ],
+          "result_chars": [
+            2536
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 3,
+          "tools": [
+            "ts_apply_edits"
+          ],
+          "result_chars": [
+            283
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 1
+    },
+    {
+      "arm": "oumv",
+      "task": "product-validation-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC03_REJECT_INVALID_PRODUCT"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 40.1,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 7,
+        "input_tokens": 20452,
+        "cache_hit_tokens": 18944,
+        "cache_miss_tokens": 1508,
+        "output_tokens": 998,
+        "usd": 0.002831
+      },
+      "tool_calls": {
+        "oumv_observe": 2,
+        "search_files": 2,
+        "read_file": 2,
+        "oumv_applyEdit": 2
+      },
+      "tool_result_chars": {
+        "oumv_observe": 1245,
+        "search_files": 1808,
+        "read_file": 1730,
+        "oumv_applyEdit": 390
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "oumv_observe"
+          ],
+          "result_chars": [
+            709
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "oumv_observe",
+            "search_files"
+          ],
+          "result_chars": [
+            536,
+            63
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 3,
+          "tools": [
+            "search_files"
+          ],
+          "result_chars": [
+            1745
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 4,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            1126
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 5,
+          "tools": [
+            "oumv_applyEdit"
+          ],
+          "result_chars": [
+            153
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 6,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            604
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 7,
+          "tools": [
+            "oumv_applyEdit"
+          ],
+          "result_chars": [
+            237
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 1
+    },
+    {
+      "arm": "baseline",
+      "task": "product-create-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC02_CREATE_PRODUCT"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 30.8,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 5,
+        "input_tokens": 22362,
+        "cache_hit_tokens": 16128,
+        "cache_miss_tokens": 6234,
+        "output_tokens": 1612,
+        "usd": 0.004585
+      },
+      "tool_calls": {
+        "list_files": 2,
+        "search_files": 2,
+        "read_file": 2,
+        "write_file": 1
+      },
+      "tool_result_chars": {
+        "list_files": 2868,
+        "search_files": 4800,
+        "read_file": 9012,
+        "write_file": 77
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "list_files",
+            "search_files"
+          ],
+          "result_chars": [
+            2802,
+            4158
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC02_CREATE_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "list_files",
+            "read_file"
+          ],
+          "result_chars": [
+            66,
+            3754
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC02_CREATE_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 3,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            5258
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC02_CREATE_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 4,
+          "tools": [
+            "search_files"
+          ],
+          "result_chars": [
+            642
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC02_CREATE_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 5,
+          "tools": [
+            "write_file"
+          ],
+          "result_chars": [
+            77
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 2
+    },
+    {
+      "arm": "tokensafe",
+      "task": "product-create-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC02_CREATE_PRODUCT"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 21.0,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 3,
+        "input_tokens": 7049,
+        "cache_hit_tokens": 6400,
+        "cache_miss_tokens": 649,
+        "output_tokens": 427,
+        "usd": 0.001093
+      },
+      "tool_calls": {
+        "ts_smart_read_file": 1,
+        "read_file": 1,
+        "ts_apply_edits": 1
+      },
+      "tool_result_chars": {
+        "ts_smart_read_file": 1233,
+        "read_file": 817,
+        "ts_apply_edits": 284
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "ts_smart_read_file"
+          ],
+          "result_chars": [
+            1233
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC02_CREATE_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            817
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC02_CREATE_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 3,
+          "tools": [
+            "ts_apply_edits"
+          ],
+          "result_chars": [
+            284
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 2
+    },
+    {
+      "arm": "oumv",
+      "task": "product-create-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC02_CREATE_PRODUCT"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 18.1,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 2,
+        "input_tokens": 3744,
+        "cache_hit_tokens": 3328,
+        "cache_miss_tokens": 416,
+        "output_tokens": 276,
+        "usd": 0.000649
+      },
+      "tool_calls": {
+        "oumv_observe": 1,
+        "oumv_applyEdit": 1
+      },
+      "tool_result_chars": {
+        "oumv_observe": 721,
+        "oumv_applyEdit": 237
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "oumv_observe"
+          ],
+          "result_chars": [
+            721
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC02_CREATE_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "oumv_applyEdit"
+          ],
+          "result_chars": [
+            237
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 2
+    },
+    {
+      "arm": "baseline",
+      "task": "order-conflict-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 50.9,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 8,
+        "input_tokens": 50791,
+        "cache_hit_tokens": 41984,
+        "cache_miss_tokens": 8807,
+        "output_tokens": 2019,
+        "usd": 0.007538
+      },
+      "tool_calls": {
+        "list_files": 2,
+        "search_files": 3,
+        "read_file": 5,
+        "run_command": 1,
+        "write_file": 1
+      },
+      "tool_result_chars": {
+        "list_files": 2868,
+        "search_files": 4634,
+        "read_file": 15244,
+        "run_command": 332,
+        "write_file": 77
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "list_files",
+            "search_files"
+          ],
+          "result_chars": [
+            2802,
+            1260
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "list_files",
+            "read_file"
+          ],
+          "result_chars": [
+            66,
+            3214
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 3,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            5265
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 4,
+          "tools": [
+            "read_file",
+            "search_files"
+          ],
+          "result_chars": [
+            4345,
+            3228
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 5,
+          "tools": [
+            "read_file",
+            "search_files"
+          ],
+          "result_chars": [
+            774,
+            146
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 6,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            1646
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 7,
+          "tools": [
+            "run_command"
+          ],
+          "result_chars": [
+            332
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 8,
+          "tools": [
+            "write_file"
+          ],
+          "result_chars": [
+            77
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 2
+    },
+    {
+      "arm": "tokensafe",
+      "task": "order-conflict-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 21.9,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 3,
+        "input_tokens": 8478,
+        "cache_hit_tokens": 7936,
+        "cache_miss_tokens": 542,
+        "output_tokens": 394,
+        "usd": 0.001135
+      },
+      "tool_calls": {
+        "ts_smart_read_file": 2,
+        "ts_apply_edits": 1
+      },
+      "tool_result_chars": {
+        "ts_smart_read_file": 5676,
+        "ts_apply_edits": 284
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "ts_smart_read_file"
+          ],
+          "result_chars": [
+            1850
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "ts_smart_read_file"
+          ],
+          "result_chars": [
+            3826
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 3,
+          "tools": [
+            "ts_apply_edits"
+          ],
+          "result_chars": [
+            284
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 2
+    },
+    {
+      "arm": "oumv",
+      "task": "order-conflict-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 25.6,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 3,
+        "input_tokens": 6614,
+        "cache_hit_tokens": 6016,
+        "cache_miss_tokens": 598,
+        "output_tokens": 434,
+        "usd": 0.00106
+      },
+      "tool_calls": {
+        "oumv_observe": 1,
+        "read_file": 1,
+        "oumv_applyEdit": 1
+      },
+      "tool_result_chars": {
+        "oumv_observe": 1040,
+        "read_file": 989,
+        "oumv_applyEdit": 237
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "oumv_observe"
+          ],
+          "result_chars": [
+            1040
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            989
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 3,
+          "tools": [
+            "oumv_applyEdit"
+          ],
+          "result_chars": [
+            237
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 2
+    },
+    {
+      "arm": "baseline",
+      "task": "product-validation-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC03_REJECT_INVALID_PRODUCT"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 37.3,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 6,
+        "input_tokens": 29620,
+        "cache_hit_tokens": 28031,
+        "cache_miss_tokens": 1589,
+        "output_tokens": 1670,
+        "usd": 0.004228
+      },
+      "tool_calls": {
+        "list_files": 2,
+        "search_files": 2,
+        "read_file": 3,
+        "write_file": 1
+      },
+      "tool_result_chars": {
+        "list_files": 2868,
+        "search_files": 4326,
+        "read_file": 10138,
+        "write_file": 77
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "list_files",
+            "search_files"
+          ],
+          "result_chars": [
+            2802,
+            4158
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "list_files",
+            "read_file"
+          ],
+          "result_chars": [
+            66,
+            3754
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 3,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            5246
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 4,
+          "tools": [
+            "search_files"
+          ],
+          "result_chars": [
+            168
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 5,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            1138
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 6,
+          "tools": [
+            "write_file"
+          ],
+          "result_chars": [
+            77
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 2
+    },
+    {
+      "arm": "tokensafe",
+      "task": "product-validation-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC03_REJECT_INVALID_PRODUCT"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 26.2,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 4,
+        "input_tokens": 11146,
+        "cache_hit_tokens": 10240,
+        "cache_miss_tokens": 906,
+        "output_tokens": 495,
+        "usd": 0.001506
+      },
+      "tool_calls": {
+        "ts_smart_read_file": 2,
+        "read_file": 1,
+        "ts_apply_edits": 1
+      },
+      "tool_result_chars": {
+        "ts_smart_read_file": 3770,
+        "read_file": 654,
+        "ts_apply_edits": 284
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "ts_smart_read_file"
+          ],
+          "result_chars": [
+            1221
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "ts_smart_read_file"
+          ],
+          "result_chars": [
+            2549
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 3,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            654
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 4,
+          "tools": [
+            "ts_apply_edits"
+          ],
+          "result_chars": [
+            284
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 2
+    },
+    {
+      "arm": "oumv",
+      "task": "product-validation-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC03_REJECT_INVALID_PRODUCT"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 38.4,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 7,
+        "input_tokens": 20501,
+        "cache_hit_tokens": 18176,
+        "cache_miss_tokens": 2325,
+        "output_tokens": 935,
+        "usd": 0.002929
+      },
+      "tool_calls": {
+        "oumv_observe": 2,
+        "search_files": 2,
+        "read_file": 2,
+        "oumv_applyEdit": 2
+      },
+      "tool_result_chars": {
+        "oumv_observe": 1245,
+        "search_files": 1808,
+        "read_file": 1730,
+        "oumv_applyEdit": 390
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "oumv_observe"
+          ],
+          "result_chars": [
+            709
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "oumv_observe",
+            "search_files"
+          ],
+          "result_chars": [
+            536,
+            63
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 3,
+          "tools": [
+            "search_files"
+          ],
+          "result_chars": [
+            1745
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 4,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            1126
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 5,
+          "tools": [
+            "oumv_applyEdit"
+          ],
+          "result_chars": [
+            153
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 6,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            604
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 7,
+          "tools": [
+            "oumv_applyEdit"
+          ],
+          "result_chars": [
+            237
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 2
+    },
+    {
+      "arm": "baseline",
+      "task": "product-create-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC02_CREATE_PRODUCT"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 34.6,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 5,
+        "input_tokens": 21467,
+        "cache_hit_tokens": 15488,
+        "cache_miss_tokens": 5979,
+        "output_tokens": 1645,
+        "usd": 0.004508
+      },
+      "tool_calls": {
+        "list_files": 2,
+        "search_files": 3,
+        "read_file": 2,
+        "write_file": 1
+      },
+      "tool_result_chars": {
+        "list_files": 2868,
+        "search_files": 4845,
+        "read_file": 8181,
+        "write_file": 77
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "list_files",
+            "search_files"
+          ],
+          "result_chars": [
+            2802,
+            4158
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC02_CREATE_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "list_files",
+            "read_file"
+          ],
+          "result_chars": [
+            66,
+            2923
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC02_CREATE_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 3,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            5258
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC02_CREATE_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 4,
+          "tools": [
+            "search_files",
+            "search_files"
+          ],
+          "result_chars": [
+            216,
+            471
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC02_CREATE_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 5,
+          "tools": [
+            "write_file"
+          ],
+          "result_chars": [
+            77
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 3
+    },
+    {
+      "arm": "tokensafe",
+      "task": "product-create-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC02_CREATE_PRODUCT"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 19.9,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 3,
+        "input_tokens": 6962,
+        "cache_hit_tokens": 6272,
+        "cache_miss_tokens": 690,
+        "output_tokens": 322,
+        "usd": 0.00098
+      },
+      "tool_calls": {
+        "ts_smart_read_file": 1,
+        "read_file": 1,
+        "ts_apply_edits": 1
+      },
+      "tool_result_chars": {
+        "ts_smart_read_file": 1233,
+        "read_file": 616,
+        "ts_apply_edits": 294
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "ts_smart_read_file"
+          ],
+          "result_chars": [
+            1233
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC02_CREATE_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            616
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC02_CREATE_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 3,
+          "tools": [
+            "ts_apply_edits"
+          ],
+          "result_chars": [
+            294
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 3
+    },
+    {
+      "arm": "oumv",
+      "task": "product-create-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC02_CREATE_PRODUCT"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 18.3,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 2,
+        "input_tokens": 3744,
+        "cache_hit_tokens": 3328,
+        "cache_miss_tokens": 416,
+        "output_tokens": 276,
+        "usd": 0.000649
+      },
+      "tool_calls": {
+        "oumv_observe": 1,
+        "oumv_applyEdit": 1
+      },
+      "tool_result_chars": {
+        "oumv_observe": 721,
+        "oumv_applyEdit": 237
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "oumv_observe"
+          ],
+          "result_chars": [
+            721
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC02_CREATE_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "oumv_applyEdit"
+          ],
+          "result_chars": [
+            237
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 3
+    },
+    {
+      "arm": "baseline",
+      "task": "order-conflict-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 31.9,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 5,
+        "input_tokens": 22008,
+        "cache_hit_tokens": 18304,
+        "cache_miss_tokens": 3704,
+        "output_tokens": 1680,
+        "usd": 0.004129
+      },
+      "tool_calls": {
+        "list_files": 2,
+        "search_files": 2,
+        "read_file": 3,
+        "write_file": 1
+      },
+      "tool_result_chars": {
+        "list_files": 2868,
+        "search_files": 5558,
+        "read_file": 12824,
+        "write_file": 77
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "list_files",
+            "search_files"
+          ],
+          "result_chars": [
+            2802,
+            1260
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "list_files",
+            "read_file"
+          ],
+          "result_chars": [
+            66,
+            3214
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 3,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            5265
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 4,
+          "tools": [
+            "read_file",
+            "search_files"
+          ],
+          "result_chars": [
+            4345,
+            4298
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 5,
+          "tools": [
+            "write_file"
+          ],
+          "result_chars": [
+            77
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 3
+    },
+    {
+      "arm": "tokensafe",
+      "task": "order-conflict-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 21.8,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 3,
+        "input_tokens": 8478,
+        "cache_hit_tokens": 7936,
+        "cache_miss_tokens": 542,
+        "output_tokens": 389,
+        "usd": 0.00113
+      },
+      "tool_calls": {
+        "ts_smart_read_file": 2,
+        "ts_apply_edits": 1
+      },
+      "tool_result_chars": {
+        "ts_smart_read_file": 5676,
+        "ts_apply_edits": 284
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "ts_smart_read_file"
+          ],
+          "result_chars": [
+            1850
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "ts_smart_read_file"
+          ],
+          "result_chars": [
+            3826
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 3,
+          "tools": [
+            "ts_apply_edits"
+          ],
+          "result_chars": [
+            284
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 3
+    },
+    {
+      "arm": "oumv",
+      "task": "order-conflict-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 17.9,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 2,
+        "input_tokens": 3928,
+        "cache_hit_tokens": 3584,
+        "cache_miss_tokens": 344,
+        "output_tokens": 331,
+        "usd": 0.000708
+      },
+      "tool_calls": {
+        "oumv_observe": 1,
+        "oumv_applyEdit": 1
+      },
+      "tool_result_chars": {
+        "oumv_observe": 1040,
+        "oumv_applyEdit": 237
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "oumv_observe"
+          ],
+          "result_chars": [
+            1040
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "oumv_applyEdit"
+          ],
+          "result_chars": [
+            237
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 3
+    },
+    {
+      "arm": "baseline",
+      "task": "product-validation-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC03_REJECT_INVALID_PRODUCT"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 35.0,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 6,
+        "input_tokens": 29620,
+        "cache_hit_tokens": 28415,
+        "cache_miss_tokens": 1205,
+        "output_tokens": 1669,
+        "usd": 0.00415
+      },
+      "tool_calls": {
+        "list_files": 2,
+        "search_files": 2,
+        "read_file": 3,
+        "write_file": 1
+      },
+      "tool_result_chars": {
+        "list_files": 2868,
+        "search_files": 4326,
+        "read_file": 10138,
+        "write_file": 77
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "list_files",
+            "search_files"
+          ],
+          "result_chars": [
+            2802,
+            4158
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "list_files",
+            "read_file"
+          ],
+          "result_chars": [
+            66,
+            3754
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 3,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            5246
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 4,
+          "tools": [
+            "search_files"
+          ],
+          "result_chars": [
+            168
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 5,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            1138
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 6,
+          "tools": [
+            "write_file"
+          ],
+          "result_chars": [
+            77
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 3
+    },
+    {
+      "arm": "tokensafe",
+      "task": "product-validation-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC03_REJECT_INVALID_PRODUCT"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 22.3,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 3,
+        "input_tokens": 7500,
+        "cache_hit_tokens": 6912,
+        "cache_miss_tokens": 588,
+        "output_tokens": 390,
+        "usd": 0.001072
+      },
+      "tool_calls": {
+        "ts_smart_read_file": 2,
+        "ts_apply_edits": 1
+      },
+      "tool_result_chars": {
+        "ts_smart_read_file": 3770,
+        "ts_apply_edits": 284
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "ts_smart_read_file"
+          ],
+          "result_chars": [
+            1221
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "ts_smart_read_file"
+          ],
+          "result_chars": [
+            2549
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 3,
+          "tools": [
+            "ts_apply_edits"
+          ],
+          "result_chars": [
+            284
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 3
+    },
+    {
+      "arm": "oumv",
+      "task": "product-validation-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC03_REJECT_INVALID_PRODUCT"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 38.4,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 7,
+        "input_tokens": 20360,
+        "cache_hit_tokens": 18944,
+        "cache_miss_tokens": 1416,
+        "output_tokens": 874,
+        "usd": 0.00267
+      },
+      "tool_calls": {
+        "oumv_observe": 2,
+        "search_files": 2,
+        "read_file": 2,
+        "oumv_applyEdit": 2
+      },
+      "tool_result_chars": {
+        "oumv_observe": 1245,
+        "search_files": 1808,
+        "read_file": 1780,
+        "oumv_applyEdit": 390
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "oumv_observe"
+          ],
+          "result_chars": [
+            709
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "oumv_observe",
+            "search_files"
+          ],
+          "result_chars": [
+            536,
+            63
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 3,
+          "tools": [
+            "search_files"
+          ],
+          "result_chars": [
+            1745
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 4,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            1126
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 5,
+          "tools": [
+            "oumv_applyEdit"
+          ],
+          "result_chars": [
+            153
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 6,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            654
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 7,
+          "tools": [
+            "oumv_applyEdit"
+          ],
+          "result_chars": [
+            237
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 3
+    },
+    {
+      "arm": "baseline",
+      "task": "product-create-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC02_CREATE_PRODUCT"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 34.2,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 6,
+        "input_tokens": 27772,
+        "cache_hit_tokens": 23552,
+        "cache_miss_tokens": 4220,
+        "output_tokens": 1755,
+        "usd": 0.004719
+      },
+      "tool_calls": {
+        "list_files": 2,
+        "search_files": 3,
+        "read_file": 3,
+        "write_file": 1
+      },
+      "tool_result_chars": {
+        "list_files": 2868,
+        "search_files": 4797,
+        "read_file": 8539,
+        "write_file": 77
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "list_files",
+            "search_files"
+          ],
+          "result_chars": [
+            2802,
+            4158
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC02_CREATE_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "list_files",
+            "read_file"
+          ],
+          "result_chars": [
+            66,
+            2280
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC02_CREATE_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 3,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            5258
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC02_CREATE_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 4,
+          "tools": [
+            "search_files",
+            "search_files"
+          ],
+          "result_chars": [
+            471,
+            168
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC02_CREATE_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 5,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            1001
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC02_CREATE_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 6,
+          "tools": [
+            "write_file"
+          ],
+          "result_chars": [
+            77
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 4
+    },
+    {
+      "arm": "tokensafe",
+      "task": "product-create-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC02_CREATE_PRODUCT"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 19.2,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 3,
+        "input_tokens": 7049,
+        "cache_hit_tokens": 6400,
+        "cache_miss_tokens": 649,
+        "output_tokens": 411,
+        "usd": 0.001075
+      },
+      "tool_calls": {
+        "ts_smart_read_file": 1,
+        "read_file": 1,
+        "ts_apply_edits": 1
+      },
+      "tool_result_chars": {
+        "ts_smart_read_file": 1233,
+        "read_file": 817,
+        "ts_apply_edits": 294
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "ts_smart_read_file"
+          ],
+          "result_chars": [
+            1233
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC02_CREATE_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            817
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC02_CREATE_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 3,
+          "tools": [
+            "ts_apply_edits"
+          ],
+          "result_chars": [
+            294
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 4
+    },
+    {
+      "arm": "oumv",
+      "task": "product-create-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC02_CREATE_PRODUCT"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 17.4,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 2,
+        "input_tokens": 3744,
+        "cache_hit_tokens": 3328,
+        "cache_miss_tokens": 416,
+        "output_tokens": 276,
+        "usd": 0.000649
+      },
+      "tool_calls": {
+        "oumv_observe": 1,
+        "oumv_applyEdit": 1
+      },
+      "tool_result_chars": {
+        "oumv_observe": 721,
+        "oumv_applyEdit": 237
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "oumv_observe"
+          ],
+          "result_chars": [
+            721
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC02_CREATE_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "oumv_applyEdit"
+          ],
+          "result_chars": [
+            237
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 4
+    },
+    {
+      "arm": "baseline",
+      "task": "order-conflict-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 30.6,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 5,
+        "input_tokens": 20661,
+        "cache_hit_tokens": 13952,
+        "cache_miss_tokens": 6709,
+        "output_tokens": 1605,
+        "usd": 0.004554
+      },
+      "tool_calls": {
+        "list_files": 2,
+        "search_files": 1,
+        "read_file": 3,
+        "write_file": 1
+      },
+      "tool_result_chars": {
+        "list_files": 2868,
+        "search_files": 1260,
+        "read_file": 12824,
+        "write_file": 77
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "list_files",
+            "search_files"
+          ],
+          "result_chars": [
+            2802,
+            1260
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "list_files",
+            "read_file"
+          ],
+          "result_chars": [
+            66,
+            3214
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 3,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            5265
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 4,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            4345
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 5,
+          "tools": [
+            "write_file"
+          ],
+          "result_chars": [
+            77
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 4
+    },
+    {
+      "arm": "tokensafe",
+      "task": "order-conflict-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 27.7,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 4,
+        "input_tokens": 12722,
+        "cache_hit_tokens": 10752,
+        "cache_miss_tokens": 1970,
+        "output_tokens": 580,
+        "usd": 0.001923
+      },
+      "tool_calls": {
+        "ts_smart_read_file": 2,
+        "ts_apply_edits": 2
+      },
+      "tool_result_chars": {
+        "ts_smart_read_file": 5676,
+        "ts_apply_edits": 612
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "ts_smart_read_file"
+          ],
+          "result_chars": [
+            1850
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "ts_smart_read_file"
+          ],
+          "result_chars": [
+            3826
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 3,
+          "tools": [
+            "ts_apply_edits"
+          ],
+          "result_chars": [
+            328
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 4,
+          "tools": [
+            "ts_apply_edits"
+          ],
+          "result_chars": [
+            284
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 4
+    },
+    {
+      "arm": "oumv",
+      "task": "order-conflict-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 18.1,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 2,
+        "input_tokens": 3926,
+        "cache_hit_tokens": 3584,
+        "cache_miss_tokens": 342,
+        "output_tokens": 329,
+        "usd": 0.000705
+      },
+      "tool_calls": {
+        "oumv_observe": 1,
+        "oumv_applyEdit": 1
+      },
+      "tool_result_chars": {
+        "oumv_observe": 1040,
+        "oumv_applyEdit": 237
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "oumv_observe"
+          ],
+          "result_chars": [
+            1040
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "oumv_applyEdit"
+          ],
+          "result_chars": [
+            237
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 4
+    },
+    {
+      "arm": "baseline",
+      "task": "product-validation-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC03_REJECT_INVALID_PRODUCT"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 34.4,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 6,
+        "input_tokens": 29608,
+        "cache_hit_tokens": 27903,
+        "cache_miss_tokens": 1705,
+        "output_tokens": 1664,
+        "usd": 0.004244
+      },
+      "tool_calls": {
+        "list_files": 2,
+        "search_files": 2,
+        "read_file": 3,
+        "write_file": 1
+      },
+      "tool_result_chars": {
+        "list_files": 2868,
+        "search_files": 4326,
+        "read_file": 10138,
+        "write_file": 77
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "list_files",
+            "search_files"
+          ],
+          "result_chars": [
+            2802,
+            4158
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "list_files",
+            "read_file"
+          ],
+          "result_chars": [
+            66,
+            3754
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 3,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            5246
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 4,
+          "tools": [
+            "search_files"
+          ],
+          "result_chars": [
+            168
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 5,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            1138
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 6,
+          "tools": [
+            "write_file"
+          ],
+          "result_chars": [
+            77
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 4
+    },
+    {
+      "arm": "tokensafe",
+      "task": "product-validation-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC03_REJECT_INVALID_PRODUCT"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 22.5,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 3,
+        "input_tokens": 7500,
+        "cache_hit_tokens": 6912,
+        "cache_miss_tokens": 588,
+        "output_tokens": 390,
+        "usd": 0.001072
+      },
+      "tool_calls": {
+        "ts_smart_read_file": 2,
+        "ts_apply_edits": 1
+      },
+      "tool_result_chars": {
+        "ts_smart_read_file": 3770,
+        "ts_apply_edits": 284
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "ts_smart_read_file"
+          ],
+          "result_chars": [
+            1221
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "ts_smart_read_file"
+          ],
+          "result_chars": [
+            2549
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 3,
+          "tools": [
+            "ts_apply_edits"
+          ],
+          "result_chars": [
+            284
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 4
+    },
+    {
+      "arm": "oumv",
+      "task": "product-validation-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC03_REJECT_INVALID_PRODUCT"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 43.1,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 7,
+        "input_tokens": 20458,
+        "cache_hit_tokens": 18944,
+        "cache_miss_tokens": 1514,
+        "output_tokens": 936,
+        "usd": 0.002764
+      },
+      "tool_calls": {
+        "oumv_observe": 2,
+        "search_files": 2,
+        "read_file": 2,
+        "oumv_applyEdit": 2
+      },
+      "tool_result_chars": {
+        "oumv_observe": 1245,
+        "search_files": 1808,
+        "read_file": 1730,
+        "oumv_applyEdit": 390
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "oumv_observe"
+          ],
+          "result_chars": [
+            709
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "oumv_observe",
+            "search_files"
+          ],
+          "result_chars": [
+            536,
+            63
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 3,
+          "tools": [
+            "search_files"
+          ],
+          "result_chars": [
+            1745
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 4,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            1126
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 5,
+          "tools": [
+            "oumv_applyEdit"
+          ],
+          "result_chars": [
+            153
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 6,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            604
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 7,
+          "tools": [
+            "oumv_applyEdit"
+          ],
+          "result_chars": [
+            237
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 4
+    },
+    {
+      "arm": "baseline",
+      "task": "product-create-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC02_CREATE_PRODUCT"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 30.8,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 5,
+        "input_tokens": 20548,
+        "cache_hit_tokens": 19584,
+        "cache_miss_tokens": 964,
+        "output_tokens": 1600,
+        "usd": 0.003391
+      },
+      "tool_calls": {
+        "list_files": 2,
+        "search_files": 2,
+        "read_file": 2,
+        "write_file": 1
+      },
+      "tool_result_chars": {
+        "list_files": 2868,
+        "search_files": 4629,
+        "read_file": 7538,
+        "write_file": 77
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "list_files",
+            "search_files"
+          ],
+          "result_chars": [
+            2802,
+            4158
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC02_CREATE_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "list_files",
+            "read_file"
+          ],
+          "result_chars": [
+            66,
+            2280
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC02_CREATE_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 3,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            5258
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC02_CREATE_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 4,
+          "tools": [
+            "search_files"
+          ],
+          "result_chars": [
+            471
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC02_CREATE_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 5,
+          "tools": [
+            "write_file"
+          ],
+          "result_chars": [
+            77
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 5
+    },
+    {
+      "arm": "tokensafe",
+      "task": "product-create-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC02_CREATE_PRODUCT"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 21.4,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 3,
+        "input_tokens": 6898,
+        "cache_hit_tokens": 6272,
+        "cache_miss_tokens": 626,
+        "output_tokens": 412,
+        "usd": 0.001061
+      },
+      "tool_calls": {
+        "ts_smart_read_file": 2,
+        "ts_apply_edits": 1
+      },
+      "tool_result_chars": {
+        "ts_smart_read_file": 1710,
+        "ts_apply_edits": 294
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "ts_smart_read_file"
+          ],
+          "result_chars": [
+            1233
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC02_CREATE_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "ts_smart_read_file"
+          ],
+          "result_chars": [
+            477
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC02_CREATE_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 3,
+          "tools": [
+            "ts_apply_edits"
+          ],
+          "result_chars": [
+            294
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 5
+    },
+    {
+      "arm": "oumv",
+      "task": "product-create-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC02_CREATE_PRODUCT"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 19.3,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 2,
+        "input_tokens": 3744,
+        "cache_hit_tokens": 3328,
+        "cache_miss_tokens": 416,
+        "output_tokens": 276,
+        "usd": 0.000649
+      },
+      "tool_calls": {
+        "oumv_observe": 1,
+        "oumv_applyEdit": 1
+      },
+      "tool_result_chars": {
+        "oumv_observe": 721,
+        "oumv_applyEdit": 237
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "oumv_observe"
+          ],
+          "result_chars": [
+            721
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC02_CREATE_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "oumv_applyEdit"
+          ],
+          "result_chars": [
+            237
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 5
+    },
+    {
+      "arm": "baseline",
+      "task": "order-conflict-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 31.7,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 5,
+        "input_tokens": 20583,
+        "cache_hit_tokens": 18176,
+        "cache_miss_tokens": 2407,
+        "output_tokens": 1605,
+        "usd": 0.003688
+      },
+      "tool_calls": {
+        "list_files": 2,
+        "search_files": 1,
+        "read_file": 3,
+        "write_file": 1
+      },
+      "tool_result_chars": {
+        "list_files": 2868,
+        "search_files": 1260,
+        "read_file": 12619,
+        "write_file": 77
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "list_files",
+            "search_files"
+          ],
+          "result_chars": [
+            2802,
+            1260
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "list_files",
+            "read_file"
+          ],
+          "result_chars": [
+            66,
+            3214
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 3,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            5265
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 4,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            4140
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 5,
+          "tools": [
+            "write_file"
+          ],
+          "result_chars": [
+            77
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 5
+    },
+    {
+      "arm": "tokensafe",
+      "task": "order-conflict-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 25.1,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 3,
+        "input_tokens": 8478,
+        "cache_hit_tokens": 7936,
+        "cache_miss_tokens": 542,
+        "output_tokens": 394,
+        "usd": 0.001135
+      },
+      "tool_calls": {
+        "ts_smart_read_file": 2,
+        "ts_apply_edits": 1
+      },
+      "tool_result_chars": {
+        "ts_smart_read_file": 5676,
+        "ts_apply_edits": 283
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "ts_smart_read_file"
+          ],
+          "result_chars": [
+            1850
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "ts_smart_read_file"
+          ],
+          "result_chars": [
+            3826
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 3,
+          "tools": [
+            "ts_apply_edits"
+          ],
+          "result_chars": [
+            283
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 5
+    },
+    {
+      "arm": "oumv",
+      "task": "order-conflict-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 19.6,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 2,
+        "input_tokens": 3928,
+        "cache_hit_tokens": 3584,
+        "cache_miss_tokens": 344,
+        "output_tokens": 331,
+        "usd": 0.000708
+      },
+      "tool_calls": {
+        "oumv_observe": 1,
+        "oumv_applyEdit": 1
+      },
+      "tool_result_chars": {
+        "oumv_observe": 1040,
+        "oumv_applyEdit": 237
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "oumv_observe"
+          ],
+          "result_chars": [
+            1040
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC06_REJECT_DUPLICATE_IDEMPOTENCY"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "oumv_applyEdit"
+          ],
+          "result_chars": [
+            237
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 5
+    },
+    {
+      "arm": "baseline",
+      "task": "product-validation-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC03_REJECT_INVALID_PRODUCT"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 36.0,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 6,
+        "input_tokens": 29622,
+        "cache_hit_tokens": 28031,
+        "cache_miss_tokens": 1591,
+        "output_tokens": 1669,
+        "usd": 0.004228
+      },
+      "tool_calls": {
+        "list_files": 2,
+        "search_files": 2,
+        "read_file": 3,
+        "write_file": 1
+      },
+      "tool_result_chars": {
+        "list_files": 2868,
+        "search_files": 4326,
+        "read_file": 10138,
+        "write_file": 77
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "list_files",
+            "search_files"
+          ],
+          "result_chars": [
+            2802,
+            4158
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "list_files",
+            "read_file"
+          ],
+          "result_chars": [
+            66,
+            3754
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 3,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            5246
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 4,
+          "tools": [
+            "search_files"
+          ],
+          "result_chars": [
+            168
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 5,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            1138
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 6,
+          "tools": [
+            "write_file"
+          ],
+          "result_chars": [
+            77
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 5
+    },
+    {
+      "arm": "tokensafe",
+      "task": "product-validation-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC03_REJECT_INVALID_PRODUCT"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 26.7,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 3,
+        "input_tokens": 7506,
+        "cache_hit_tokens": 6912,
+        "cache_miss_tokens": 594,
+        "output_tokens": 394,
+        "usd": 0.001078
+      },
+      "tool_calls": {
+        "ts_smart_read_file": 2,
+        "ts_apply_edits": 1
+      },
+      "tool_result_chars": {
+        "ts_smart_read_file": 3770,
+        "ts_apply_edits": 284
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "ts_smart_read_file"
+          ],
+          "result_chars": [
+            1221
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "ts_smart_read_file"
+          ],
+          "result_chars": [
+            2549
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 3,
+          "tools": [
+            "ts_apply_edits"
+          ],
+          "result_chars": [
+            284
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 5
+    },
+    {
+      "arm": "oumv",
+      "task": "product-validation-status",
+      "oracle_before": {
+        "passed": 11,
+        "failed": [
+          "TC03_REJECT_INVALID_PRODUCT"
+        ]
+      },
+      "oracle_after": {
+        "passed": 12,
+        "failed": []
+      },
+      "solved": true,
+      "wall_clock_s": 42.2,
+      "model": "deepseek-chat",
+      "temperature": 0.0,
+      "price_snapshot": "2026-11-26",
+      "prices_usd_per_mtok": {
+        "input_miss": 0.27,
+        "input_hit": 0.07,
+        "output": 1.1
+      },
+      "stop_reason": "solved",
+      "usage": {
+        "calls": 7,
+        "input_tokens": 20486,
+        "cache_hit_tokens": 18944,
+        "cache_miss_tokens": 1542,
+        "output_tokens": 945,
+        "usd": 0.002782
+      },
+      "tool_calls": {
+        "oumv_observe": 2,
+        "search_files": 2,
+        "read_file": 2,
+        "oumv_applyEdit": 2
+      },
+      "tool_result_chars": {
+        "oumv_observe": 1245,
+        "search_files": 1808,
+        "read_file": 1780,
+        "oumv_applyEdit": 390
+      },
+      "steps": [
+        {
+          "index": 1,
+          "tools": [
+            "oumv_observe"
+          ],
+          "result_chars": [
+            709
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 2,
+          "tools": [
+            "oumv_observe",
+            "search_files"
+          ],
+          "result_chars": [
+            536,
+            63
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 3,
+          "tools": [
+            "search_files"
+          ],
+          "result_chars": [
+            1745
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 4,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            1126
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 5,
+          "tools": [
+            "oumv_applyEdit"
+          ],
+          "result_chars": [
+            153
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 6,
+          "tools": [
+            "read_file"
+          ],
+          "result_chars": [
+            654
+          ],
+          "oracle_passed": 11,
+          "oracle_failed": [
+            "TC03_REJECT_INVALID_PRODUCT"
+          ],
+          "note": "FAIL"
+        },
+        {
+          "index": 7,
+          "tools": [
+            "oumv_applyEdit"
+          ],
+          "result_chars": [
+            237
+          ],
+          "oracle_passed": 12,
+          "oracle_failed": [],
+          "note": "PASS"
+        }
+      ],
+      "run": 5
+    }
+  ],
+  "provenance": {
+    "prompt_sha256": {
+      "product-create-status": "89c02c8a82305554a14b01d08058bd5d3c64708239b2fca7cc43e889014721c4",
+      "order-conflict-status": "80bab06318391b42054006cee46c3af3e3749873be88c74c37310bfa9def70ed",
+      "product-validation-status": "8e0d8a9c727aa288ec79d8e90e99b576eaad89190578303bf3b23c74f779c41e"
+    },
+    "system_sha256": {
+      "baseline": "5117aa48437f7786d47f695253a7102dace6b913c4c85dfcd82794043d18a121",
+      "tokensafe": "483ae36d0b0a48059504364d02ecd2f3810997122149926300ab833a774ae8eb",
+      "oumv": "70925b0635608afa8c9eb23c4e7d37431662f37c10ee9a1375847b9654e2b039"
+    },
+    "harness_commit": "00dfaac52004c09d17c72a0d20ca62c09264a69b",
+    "harness_dirty": false,
+    "price_snapshot": "2026-11-26"
+  },
+  "generated_at": "2026-11-27T02:12:37Z"
+}

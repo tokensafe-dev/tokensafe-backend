@@ -104,6 +104,11 @@ def main(argv: List[str]) -> int:
     prov = report.get("provenance", {})
     commit = (prov.get("harness_commit") or "unknown")[:8]
     dirty = prov.get("dirty")
+    sandbox_files = int(report.get("sandbox_files") or 0)
+    sandbox_label = (
+        "throwaway copy of `tokensafe-backend/go` with one deliberate regression per task"
+        + (f", plus {sandbox_files} generated service files" if sandbox_files else "")
+    )
 
     md: List[str] = [
         f"# {title}",
@@ -121,13 +126,14 @@ def main(argv: List[str]) -> int:
         f"({len(report['results'])} sessions, ${report.get('spent_usd', 0):.4f} spent) |",
         f"| Harness commit | `{commit}`{' + uncommitted changes' if dirty else ''} |",
         "| Oracle | `go test ./benchmark -run TestGroundTruthOracleVanilla` (12 assertions), after every step |",
-        "| Sandbox | throwaway copy of `tokensafe-backend/go` with one deliberate regression per task |",
+        f"| Sandbox | {sandbox_label} |",
         "| Arms | `baseline` file/command tools; `tokensafe` the product's MCP server; `oumv` the shipped Go adapter |",
         "",
-        "`tokensafe` runs the product's own loop: `scoped_search` → `smart_read_file` (symbol or",
-        "endpoint target) → `apply_edits` with inline `verify=\"auto\"`, so the edit and its test",
-        "verdict come back in one call. `oumv` runs `observe L3` → `getSource` → `applyEdit` →",
-        "`verify`.",
+        "`tokensafe` runs the product's own loop: `smart_read_file(endpoint=\"POST /api/…\")` in one",
+        "call (route → handler body + path + line range + version, plus its cross-file callees), then",
+        "`apply_edits` with the hunk and inline `verify=\"auto\"`, so the edit and its test verdict come",
+        "back in one call. `oumv` runs `observe L3` on the endpoint target (handler source + path +",
+        "`startLine`/`endLine` + sha256 OCC version) → `applyEdit mode=patch` with the hunk → the oracle.",
         "",
         "## Results",
         "",
@@ -143,20 +149,21 @@ def main(argv: List[str]) -> int:
     md += ["### Per task (means)", "", per_task(rows), ""]
 
     if s_ts and s_ou:
-        ratio = s_ou["out"] / s_ts["out"] if s_ts["out"] else 0
+        ratio = s_ou["out"] / s_ts["out"] if s_ts["out"] else 1.0
+        cheaper = "tokensafe" if ratio > 1 else "oumv"
         md += [
-            "### Why the two arms differ on output tokens",
+            "### Output tokens: the mutation unit",
             "",
             f"`oumv` emits {s_ou['out']:,.0f} output tokens per run against `tokensafe`'s "
-            f"{s_ts['out']:,.0f} ({ratio:.1f}x). The protocol's mutation unit is the resource: "
-            "`applyEdit` sends the new file (or one whole declaration with `mode=symbol`) and "
-            "checks the OCC version against it, so a one-line fix still costs a full file on the "
-            "wire. `apply_edits` sends the hunk plus its target snippet. Both pay it back on "
-            "input — `oumv` reads the handler once from `observe L3` and has the file it needs — "
-            "and output is the more expensive side at $1.10/Mtok against $0.07–0.27 for input.",
+            f"{s_ts['out']:,.0f} ({ratio:.2f}x), so `{cheaper}` writes less per fix. Both arms send a "
+            "hunk rather than a file: `applyEdit mode=patch` under OCC on the protocol side, "
+            "`apply_edits` with an exact target snippet on the product side. What is left is how much "
+            "the model must emit to place the edit — the hunk plus its target, and on a rejected edit "
+            "the retry.",
             "",
-            "A `mode=patch` (exact-snippet replace under OCC) would close that gap; it is not in "
-            "the wire today and is the top protocol item on the remaining list.",
+            "Input is the other half: `oumv` gets the handler, its path and its OCC version from one "
+            "`observe L3`, and `tokensafe` gets the same from one `smart_read_file(endpoint=…)`. Both "
+            "arms now resolve an endpoint in a single call, which is the change wave 3 measured.",
             "",
         ]
 
@@ -164,17 +171,23 @@ def main(argv: List[str]) -> int:
         md += ["## Comparison runs", ""]
         for path in extra_paths:
             other, other_rows = load(path)
+            other_files = int(other.get("sandbox_files") or 0)
             other_commit = (other.get("provenance", {}).get("harness_commit") or "unknown")[:8]
-            md.append(f"**`{other_commit}` vs `{commit}`** (identical code where an arm is")
-            md.append("unchanged — that difference is the noise floor at this n):")
+            if other_files == sandbox_files:
+                md.append(f"**`{other_commit}` vs `{commit}`** (identical code where an arm is")
+                md.append("unchanged — that difference is the noise floor at this n):")
+            else:
+                md.append(f"**Sandbox size {other_files} → {sandbox_files} generated files** — same code, "
+                          "same arms, same tasks; only the tree the tools have to search:")
             md.append("")
             for arm in ARM_ORDER:
                 if arm not in rows or arm not in other_rows:
                     continue
                 a, b = stats(other_rows[arm]), stats(rows[arm])
-                md.append(f"- `{arm}`: input {a['inp']:,.0f} → {b['inp']:,.0f} ({pct(a['inp'], b['inp'])}, "
+                md.append(f"- `{arm}`: input {a['inp']:,.0f} → {b['inp']:,.0f} ({pct(a['inp'], b['inp'])}), "
                           f"steps {a['steps']:.1f} → {b['steps']:.1f}, "
-                          f"solved {a['solved']}/{a['n']} → {b['solved']}/{b['n']})")
+                          f"cost ${a['usd']:.4f} → ${b['usd']:.4f}, "
+                          f"solved {a['solved']}/{a['n']} → {b['solved']}/{b['n']}")
             md.append("")
 
     md += [
@@ -183,12 +196,16 @@ def main(argv: List[str]) -> int:
         f"- One model (`{report.get('model')}`, temperature 0), one vendor, "
         f"{len(rows['baseline']) // report.get('runs', 1)} tasks, {report.get('runs')} runs per cell: "
         "the min–max step range in the table is the honest spread.",
-        "- The sandbox is small (a 155-line Go app), so discovery is cheaper than in a large repo",
-        "  and the tool-path saving here is a floor, not a ceiling.",
+        (f"- The target is the module plus {sandbox_files} generated service files: wider than the "
+         "69-file sandbox of matrix v4, still shallower than a real monorepo, so the discovery saving "
+         "here is a floor, not a ceiling."
+         if sandbox_files else
+         "- The sandbox is small (a 155-line Go app), so discovery is cheaper than in a large repo "
+         "and the tool-path saving here is a floor, not a ceiling."),
         "- Every advertised tool schema is re-sent in every request; the three arms do not declare",
         "  the same number of tools, and that difference is part of what is measured.",
-        "- `oumv` mutates the whole resource and needs the full file in context to do it, and",
-        "  `verify` starts a fresh app per call by design; the stateful task is confirmed with the",
+        "- `oumv` needs the handler source in context to choose its hunk (`observe L3` hands it over),",
+        "  and `verify` starts a fresh app per call by design; the stateful task is confirmed with the",
         "  oracle in all three arms.",
         "",
         "## Artifacts",

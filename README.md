@@ -216,26 +216,32 @@ tokens, zero-loss gates) measures the TokenSafe tools, not OUMV.
 
 3 regression tasks × 5 runs × 3 arms on `deepseek-chat` at temperature 0, a real 12-assertion
 oracle re-run after every step, tokens from the provider's `usage` payload. `baseline` gets
-file/search/command tools, `tokensafe` the product's own MCP server (`scoped_search` →
-`smart_read_file` → `apply_edits` with inline `verify="auto"`), `oumv` the shipped Go adapter
-(`observe L3` → `getSource` → `applyEdit` → `verify`).
+file/search/command tools, `tokensafe` the product's own MCP server
+(`smart_read_file(endpoint="POST /api/…")` in one call → `apply_edits` with the hunk and inline
+`verify="auto"`), `oumv` the shipped Go adapter (`observe L3` on the endpoint →
+`applyEdit mode=patch` → the oracle). The target is the module plus **200 generated service
+files** (269 code files), so discovery has to compete with a realistic tree.
 
 | Arm | Solved | Mean steps | Mean input | Mean output | Cost/run |
 | :--- | ---: | ---: | ---: | ---: | ---: |
-| `baseline` | 15/15 | 4.5 | 19,538 | 1,599 | $0.0035 |
-| `tokensafe` | 15/15 | 4.7 | 17,616 | 750 | $0.0025 |
-| `oumv` | 15/15 | 4.3 | **12,323** | 1,735 | $0.0032 |
-| **tokensafe vs baseline** | — | +4.5% | **−9.8%** | **−53.1%** | **−28.7%** |
-| **oumv vs baseline** | — | −4.5% | **−36.9%** | +8.5% | −10.8% |
+| `baseline` | 15/15 | 5.6 | 26,412 | 1,670 | $0.0044 |
+| `tokensafe` | 15/15 | **3.1** | **8,177** | **414** | **$0.0012** |
+| `oumv` | 15/15 | 3.7 | 9,553 | 521 | $0.0014 |
+| **tokensafe vs baseline** | — | −44.0% | **−69.0%** | **−75.2%** | **−73.3%** |
+| **oumv vs baseline** | — | −33.3% | **−63.8%** | **−68.8%** | **−68.2%** |
 
-The two arms trade opposite sides of the bill: TokenSafe sends a hunk per edit and reads more
-(`apply_edits` + `smart_read_file` anchors), OUMV reads the handler once from `observe L3` but
-resends the whole file on `applyEdit` — which costs ~2.3× the output tokens, and output is the
-expensive side ($1.10/Mtok vs $0.07–0.27 for input). A `mode=patch` on the wire would close it.
+Tree size is the lever both product arms removed: on the same tasks with a 69-file tree the
+file-tool arm costs 22,356 input tokens per run against 8,823 (TokenSafe) and 9,756 (OUMV);
+adding 200 files moves only `baseline` (+18%), because the two arms resolve
+`POST /api/products` to its handler in a single call instead of searching for it. Both arms now
+send a hunk rather than a file, so the remaining gap is step count and how much the model must
+emit to place the edit.
 
-Method, per-task table, comparison runs and limits:
-[OUMV_AGENT_MATRIX_V4.md](go/benchmark/OUMV_AGENT_MATRIX_V4.md). Generated from the run
-artifacts by `go/benchmark/render_agent_matrix.py`; the earlier losing row is corrected in
+Method, per-task table, the small-target comparison, artifacts and limits:
+[OUMV_AGENT_MATRIX_V5.md](go/benchmark/OUMV_AGENT_MATRIX_V5.md). Generated from the run
+artifacts by `go/benchmark/render_agent_matrix.py`; the previous measured run is
+[OUMV_AGENT_MATRIX_V4.md](go/benchmark/OUMV_AGENT_MATRIX_V4.md), and the earlier losing row is
+corrected in
 [OUMV_AGENT_MATRIX.md](go/benchmark/OUMV_AGENT_MATRIX.md#correction-post-run-diagnosis-2026-11-26).
 
 Protocol-level numbers (deterministic, no model — `tokensafe bench-oumv --mechanics`): one
