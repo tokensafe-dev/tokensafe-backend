@@ -62,6 +62,17 @@ def load_reports() -> list[tuple[str, dict]]:
     return reports
 
 
+def load_transport_reports() -> list[tuple[str, dict]]:
+    """Optional-binding certificates (certification/transports/*.json)."""
+    directory = REPORTS / "transports"
+    if not directory.is_dir():
+        return []
+    return [
+        (path.name, json.loads(path.read_text(encoding="utf-8")))
+        for path in sorted(directory.glob("*.json"))
+    ]
+
+
 def render(reports: list[tuple[str, dict]]) -> str:
     versions = {report.get("fixtureVersion") for _, report in reports}
     totals = {report.get("total") for _, report in reports}
@@ -138,6 +149,29 @@ def render(reports: list[tuple[str, dict]]) -> str:
                     gaps.append(f"`{report['adapterName']}` → `{case['id']}`: {case.get('error', '')}")
         if gaps:
             lines += ["", "Named gaps:", ""] + [f"- {gap}" for gap in gaps]
+
+    transport_reports = load_transport_reports()
+    if transport_reports:
+        broken = [name for name, report in transport_reports if report.get("failed")]
+        if broken:
+            raise SystemExit(
+                "cannot list a failing transport certificate: " + ", ".join(broken)
+            )
+        lines += [
+            "",
+            "Transport certificates run the same suite over the optional bindings, plus the fixture v8 "
+            "push cases (§2.3 `state` with `Last-Event-ID` replay, §2.4 `notifications/oumv.state`):",
+            "",
+            "| Certificate | Adapter | Transport | Cases |",
+            "| :--- | :--- | :--- | :--- |",
+        ]
+        for name, report in transport_reports:
+            lines.append(
+                f"| [transports/{name}](certification/transports/{name}) "
+                f"| `{report.get('adapterName', Path(name).stem)}` "
+                f"| {report.get('environment', {}).get('transport', '?')} "
+                f"| {report['passed']}/{report['total']} |"
+            )
     return "\n".join(lines) + "\n"
 
 

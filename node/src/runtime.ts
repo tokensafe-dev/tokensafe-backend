@@ -123,6 +123,17 @@ function replaceLines(source: string, startLine: number, endLine: number, replac
   return patched;
 }
 
+/** One server-pushed event on SSE/WS (spec §2.3/§2.4); ids are monotonic. */
+export interface StreamEvent {
+  id: number;
+  type: 'trace' | 'state';
+  timestamp: string;
+  data: Record<string, unknown>;
+}
+
+/** Bounded replay log behind `Last-Event-ID`; a mutation never blocks on it. */
+const MAX_STREAM_EVENTS = 256;
+
 export class OumvRuntime {
   readonly name: string;
   readonly version: string;
@@ -134,6 +145,9 @@ export class OumvRuntime {
 
   private readonly routes = new Map<string, RouteInfo>();
   private readonly traces: TraceEntry[] = [];
+  private readonly events: StreamEvent[] = [];
+  private readonly eventSubscribers = new Set<(event: StreamEvent) => void>();
+  private eventSeq = 0;
   private readonly startTime = Date.now();
   private readonly enabled: { observe: boolean; understand: boolean; mutate: boolean; verify: boolean };
   private transports: string[] = ['http'];
@@ -144,7 +158,15 @@ export class OumvRuntime {
   constructor(options: OumvRuntimeOptions = {}) {
     this.name = options.name || 'tokensafe-node';
     this.version = options.version || '0.3.0';
-    this.workspaceDir = path.resolve(options.workspaceDir || process.cwd());
+    // Canonical root: `resolveWorkspacePath` realpaths the target, so a symlinked
+    // root (macOS /var → /private/var) would otherwise leak `../../..` into every
+    // reported `path`/`backupPath`.
+    const requestedRoot = path.resolve(options.workspaceDir || process.cwd());
+    try {
+      this.workspaceDir = fs.realpathSync(requestedRoot);
+    } catch {
+      this.workspaceDir = requestedRoot;
+    }
     this.transportPath = options.transportPath || '/__oumv/rpc';
     this.maxBodyBytes = options.maxBodyBytes ?? 8 * 1024 * 1024;
     this.authToken = options.authToken || '';
@@ -178,12 +200,50 @@ export class OumvRuntime {
 
   /** Records an executed request: the only source of L4/causality evidence. */
   recordTrace(entry: Omit<TraceEntry, 'timestamp'> & { timestamp?: string }): void {
-    this.traces.push({ ...entry, timestamp: entry.timestamp ?? new Date().toISOString() });
+    const trace: TraceEntry = { ...entry, timestamp: entry.timestamp ?? new Date().toISOString() };
+    this.traces.push(trace);
     if (this.traces.length > MAX_TRACES) this.traces.shift();
+    this.publishEvent('trace', trace as unknown as Record<string, unknown>);
   }
 
   recentTraces(): TraceEntry[] {
     return this.traces.slice();
+  }
+
+  /** Publishes a successful mutation to streaming clients (spec §2.3 `state`). */
+  recordState(resourcePath: string, version: string, operation: string): void {
+    this.publishEvent('state', { path: resourcePath, version, operation });
+  }
+
+  /** Events with an id greater than `lastId` (0 = everything still in the log). */
+  eventsSince(lastId: number): StreamEvent[] {
+    return this.events.filter((event) => event.id > lastId);
+  }
+
+  /** Live event feed for the WebSocket binding; returns the unsubscribe function. */
+  subscribeEvents(subscriber: (event: StreamEvent) => void): () => void {
+    this.eventSubscribers.add(subscriber);
+    return () => {
+      this.eventSubscribers.delete(subscriber);
+    };
+  }
+
+  private publishEvent(type: StreamEvent['type'], data: Record<string, unknown>): void {
+    const event: StreamEvent = {
+      id: ++this.eventSeq,
+      type,
+      timestamp: new Date().toISOString(),
+      data,
+    };
+    this.events.push(event);
+    if (this.events.length > MAX_STREAM_EVENTS) this.events.shift();
+    for (const subscriber of this.eventSubscribers) {
+      try {
+        subscriber(event);
+      } catch {
+        // A broken subscriber must never fail the mutation that published it.
+      }
+    }
   }
 
   setHandler(handler: http.RequestListener): void {
@@ -474,6 +534,20 @@ export class OumvRuntime {
   }
 
   applyEdit(params: Record<string, any> = {}): Record<string, unknown> {
+    const result = this.applyEditInternal(params);
+    if (result && result.status === 'APPLIED') {
+      // Publish after the bytes are on disk: a subscriber must never observe a
+      // state event for a mutation that then failed to persist.
+      this.recordState(
+        String(result.path ?? params.path ?? ''),
+        String(result.newVersion ?? ''),
+        String(params.mode ?? 'replace').toLowerCase()
+      );
+    }
+    return result;
+  }
+
+  private applyEditInternal(params: Record<string, any> = {}): Record<string, unknown> {
     if (!this.enabled.mutate) throw permissionDenied('PERMISSION_DENIED: mutate capability is disabled');
 
     // Guard order is normative (spec §4.6): jail -> missing -> syntax -> version -> OCC.

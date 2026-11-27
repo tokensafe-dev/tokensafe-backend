@@ -6,6 +6,7 @@ and safe dry-run mutation simulation.
 
 import json
 import os
+import time
 from typing import Any, Dict, Optional, Tuple
 import asyncio
 import json as _json
@@ -195,35 +196,85 @@ class TokenSafeFastAPI:
 
         @self.app.get("/__oumv/events", include_in_schema=False)
         async def handle_events(request: Request):
-            """SSE trace stream (spec §2.3)."""
+            """SSE event stream (spec §2.3): trace/state events plus heartbeats.
+
+            Every event carries a monotonic `id`; `Last-Event-ID` replays what the
+            client missed while it was disconnected.
+            """
+            last_id = 0
+            raw_last = (request.headers.get("last-event-id") or "").strip()
+            if raw_last.isdigit():
+                last_id = int(raw_last)
+
             async def event_stream():
-                index = len(self.runtime._traces)
+                nonlocal last_id
                 yield ": connected\n\n"
+                heartbeat_every = max(self.sse_heartbeat_seconds, 0.001)
+                next_heartbeat = time.monotonic() + heartbeat_every
                 while True:
                     if await request.is_disconnected():
                         return
-                    traces = self.runtime._traces[index:]
-                    index += len(traces)
-                    for trace in traces:
-                        payload = _json.dumps(trace)
-                        yield f"id: {trace.get('timestamp', '')}\nevent: trace\ndata: {payload}\n\n"
-                    yield f"event: heartbeat\ndata: {_json.dumps({'ts': self.runtime.state.to_timestamp()})}\n\n"
-                    await asyncio.sleep(self.sse_heartbeat_seconds)
+                    for event in self.runtime.events_since(last_id):
+                        payload = _json.dumps(event["data"])
+                        yield f"id: {event['id']}\nevent: {event['type']}\ndata: {payload}\n\n"
+                        last_id = event["id"]
+                    now = time.monotonic()
+                    if now >= next_heartbeat:
+                        yield f"event: heartbeat\ndata: {_json.dumps({'ts': self.runtime.state.to_timestamp()})}\n\n"
+                        next_heartbeat = now + heartbeat_every
+                    await asyncio.sleep(0.2)
 
             return StreamingResponse(event_stream(), media_type="text/event-stream")
 
         @self.app.websocket(self.rpc_path)
         async def handle_ws(websocket: WebSocket):
-            """JSON-RPC over WebSocket (spec §2.4); notifications get no reply."""
+            """JSON-RPC over WebSocket (spec §2.4) plus server notifications.
+
+            After `oumv/handshake` the connection is bound to that sessionId and
+            receives `notifications/oumv.trace` / `notifications/oumv.state`;
+            closing the socket ends the session.
+            """
             await websocket.accept()
+            queue, unsubscribe = self.runtime.subscribe_events()
+            state = {"session": ""}
+            send_lock = asyncio.Lock()
+
+            async def forward_events():
+                while True:
+                    event = await queue.get()
+                    session_id = state["session"]
+                    if not session_id:
+                        continue  # notifications start after handshake
+                    method = (
+                        "notifications/oumv.state"
+                        if event["type"] == "state"
+                        else "notifications/oumv.trace"
+                    )
+                    params = dict(event["data"])
+                    params["sessionId"] = session_id
+                    async with send_lock:
+                        await websocket.send_json(
+                            {"jsonrpc": "2.0", "method": method, "params": params}
+                        )
+
+            forwarder = asyncio.create_task(forward_events())
             try:
                 while True:
                     payload = await websocket.receive_json()
                     result = await self.runtime.rpc.handle_payload(payload)
-                    if payload.get("id") is not None:
-                        await websocket.send_json(result)
+                    if isinstance(payload, dict) and payload.get("id") is not None:
+                        async with send_lock:
+                            await websocket.send_json(result)
+                        if payload.get("method") == "oumv/handshake" and isinstance(result, dict):
+                            state["session"] = str(
+                                (result.get("result") or {}).get("sessionId") or ""
+                            )
             except WebSocketDisconnect:
                 return
+            finally:
+                forwarder.cancel()
+                unsubscribe()
+                self.runtime.sessions.delete(state["session"])
 
         @self.app.get("/__oumv/health", include_in_schema=False)
         async def handle_health():

@@ -50,12 +50,13 @@ export function createSseHandler(options: SseOptions) {
     if (!Number.isFinite(cursor) || cursor < 0) cursor = 0;
 
     const flush = () => {
-      const traces = runtime.recentTraces();
-      // `id` is the trace's position in the ring; replay starts after the cursor.
-      for (let index = cursor; index < traces.length; index += 1) {
-        res.write(`id: ${index + 1}\nevent: trace\ndata: ${JSON.stringify(traces[index])}\n\n`);
+      // `id` is the event's monotonic sequence, shared by trace and state events,
+      // so `Last-Event-ID` replays exactly what the client missed (spec §2.3).
+      const events = runtime.eventsSince(cursor);
+      for (const event of events) {
+        res.write(`id: ${event.id}\nevent: ${event.type}\ndata: ${JSON.stringify(event.data)}\n\n`);
+        cursor = event.id;
       }
-      cursor = traces.length;
     };
     flush();
 

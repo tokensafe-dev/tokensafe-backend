@@ -40,6 +40,19 @@ export function attachWebSocket(server: HttpServer, options: WsOptions): WsAttac
   server.on('upgrade', onUpgrade);
 
   wss.on('connection', (ws: WebSocket) => {
+    let boundSession = '';
+    // Server-initiated notifications (spec §2.4) start once the connection is
+    // bound by `oumv/handshake`; `ws.send` serialises frames internally.
+    const unsubscribe = runtime.subscribeEvents((event) => {
+      if (!boundSession) return;
+      const method = event.type === 'state' ? 'notifications/oumv.state' : 'notifications/oumv.trace';
+      try {
+        ws.send(JSON.stringify({ jsonrpc: '2.0', method, params: { ...event.data, sessionId: boundSession } }));
+      } catch {
+        // The socket is closing; `close` removes the subscriber.
+      }
+    });
+
     ws.on('message', async (raw) => {
       let payload: JsonRpcRequest | JsonRpcRequest[];
       try {
@@ -55,10 +68,14 @@ export function attachWebSocket(server: HttpServer, options: WsOptions): WsAttac
       ws.send(JSON.stringify(response));
       if (!Array.isArray(payload) && payload?.method === 'oumv/handshake') {
         const sessionId = (response as any)?.result?.sessionId;
-        if (sessionId) sessions.set(ws, sessionId);
+        if (sessionId) {
+          sessions.set(ws, sessionId);
+          boundSession = sessionId;
+        }
       }
     });
     ws.on('close', () => {
+      unsubscribe();
       const sessionId = sessions.get(ws);
       if (sessionId) runtime.sessions.delete(sessionId);
       sessions.delete(ws);

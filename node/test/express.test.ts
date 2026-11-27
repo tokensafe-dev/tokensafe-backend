@@ -11,6 +11,7 @@ describe('Express adapter', () => {
   let baseUrl: string;
   let rpcUrl: string;
   let dispose: () => Promise<void>;
+  let runtime: OumvRuntime;
 
   beforeAll(async () => {
     workspace = createWorkspace();
@@ -18,8 +19,7 @@ describe('Express adapter', () => {
     app.use(express.json());
     // Runtime first, so tracing can wrap the app routes, then mount: mount-time
     // introspection picks those routes up for L1.
-    const runtime = new OumvRuntime({ workspaceDir: workspace.dir });
-    app.use(tracingMiddleware(runtime));
+    runtime = new OumvRuntime({ workspaceDir: workspace.dir });    app.use(tracingMiddleware(runtime));
     app.get('/api/orders', (req, res) => {
       res.json({ orders: [] });
     });
@@ -92,6 +92,63 @@ describe('Express adapter', () => {
     }
     expect(text).toContain(': connected');
     expect(text).toContain('event: trace');
+  });
+
+  async function collectSse(
+    until: (text: string) => boolean,
+    options: { lastEventId?: string; timeoutMs?: number } = {}
+  ): Promise<string> {
+    const controller = new AbortController();
+    const response = await fetch(`${baseUrl}/__oumv/events`, {
+      signal: controller.signal,
+      headers: options.lastEventId ? { 'Last-Event-ID': options.lastEventId } : {},
+    });
+    const reader = response.body!.getReader();
+    const decoder = new TextDecoder();
+    const timer = setTimeout(() => controller.abort(), options.timeoutMs ?? 2000);
+    let text = '';
+    try {
+      while (!until(text)) {
+        const { value, done } = await reader.read();
+        if (done) break;
+        text += decoder.decode(value, { stream: true });
+      }
+    } catch {
+      // Aborted on timeout: whatever arrived already is the evidence.
+    } finally {
+      clearTimeout(timer);
+      controller.abort();
+    }
+    return text;
+  }
+
+  it('streams state events with monotonic ids and replays them from Last-Event-ID', async () => {
+    runtime.recordState('src/state-probe.ts', 'sha256:' + 'a'.repeat(64), 'patch');
+
+    const stateBlock = (text: string) =>
+      text
+        .split('\n\n')
+        .find((block) => block.includes('event: state') && block.includes('src/state-probe.ts')) ?? '';
+    const stateId = (text: string) => /^id: (\d+)$/m.exec(stateBlock(text))?.[1];
+    // Wait for the whole frame: `event:` and `data:` arrive in the same write, but
+    // a chunk boundary can split them. Earlier state events (the fixture suite
+    // edits a file) share the stream, so match on this probe's path.
+    const completeState = (text: string) => stateBlock(text) !== '';
+
+    const first = await collectSse(completeState);
+    expect(stateBlock(first)).toContain('src/state-probe.ts');
+    const id = stateId(first);
+    expect(id).toBeTruthy();
+
+    const replayed = await collectSse(completeState, { lastEventId: '0' });
+    expect(stateId(replayed)).toBe(id);
+    expect(stateBlock(replayed)).toContain('src/state-probe.ts');
+
+    const nothing = await collectSse(completeState, {
+      lastEventId: id,
+      timeoutMs: 300,
+    });
+    expect(nothing).not.toContain('src/state-probe.ts');
   });
 
   it('rejects a wrong session token with 401', async () => {

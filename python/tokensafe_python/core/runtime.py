@@ -3,6 +3,7 @@ Main OUMV / UARP runtime coordinator.
 """
 
 import ast
+import asyncio
 import hashlib
 import os
 import shutil
@@ -59,6 +60,12 @@ class OUMVRuntime:
         # L4 evidence: bounded ring of observed RPC executions (never fabricated).
         self._traces: List[Dict[str, Any]] = []
         self._trace_limit = 128
+        # Streaming transports (spec §2.3/§2.4): one monotonic event log feeds both
+        # `Last-Event-ID` replay over SSE and server-initiated WS notifications.
+        self._events: List[Dict[str, Any]] = []
+        self._event_limit = 256
+        self._event_seq = 0
+        self._event_subscribers: List[asyncio.Queue] = []
 
         self._bind_rpc_methods()
 
@@ -136,7 +143,7 @@ class OUMVRuntime:
             start = time.perf_counter()
             error = ""
             try:
-                return await handler(**kwargs)
+                result = await handler(**kwargs)
             except OumvError as exc:
                 error = exc.message
                 raise
@@ -151,6 +158,19 @@ class OUMVRuntime:
                     duration_ms=elapsed_ms,
                     error=error,
                 )
+            # A successful mutation is published after the bytes are on disk, so a
+            # streaming client never sees `state` for an edit that failed to persist.
+            if (
+                method in ("oumv/applyEdit", "oumv/mutate")
+                and isinstance(result, dict)
+                and result.get("status") == "APPLIED"
+            ):
+                self.record_state(
+                    str(result.get("path") or kwargs.get("path") or ""),
+                    str(result.get("newVersion") or ""),
+                    str(kwargs.get("mode") or "replace").lower(),
+                )
+            return result
 
         return wrapper
 
@@ -167,6 +187,45 @@ class OUMVRuntime:
         if len(self._traces) >= self._trace_limit:
             self._traces.pop(0)
         self._traces.append(trace)
+        self._publish_event("trace", trace)
+
+    def _publish_event(self, kind: str, data: Dict[str, Any]) -> None:
+        """Assigns the next monotonic id and fans out to live streaming clients."""
+        self._event_seq += 1
+        event = {
+            "id": self._event_seq,
+            "type": kind,
+            "timestamp": time.strftime("%Y-%m-%dT%H:%M:%SZ", time.gmtime()),
+            "data": data,
+        }
+        if len(self._events) >= self._event_limit:
+            self._events.pop(0)
+        self._events.append(event)
+        for queue in list(self._event_subscribers):
+            try:
+                queue.put_nowait(event)
+            except asyncio.QueueFull:
+                # A slow subscriber drops events instead of stalling a mutation.
+                pass
+
+    def record_state(self, path: str, version: str, operation: str) -> None:
+        """Publishes a successful mutation (spec §2.3 `event: state`)."""
+        self._publish_event("state", {"path": path, "version": version, "operation": operation})
+
+    def events_since(self, last_id: int = 0) -> List[Dict[str, Any]]:
+        """Events with an id greater than `last_id` (0 = everything in the log)."""
+        return [event for event in self._events if event["id"] > last_id]
+
+    def subscribe_events(self):
+        """Returns (queue, unsubscribe) for WebSocket notifications."""
+        queue: asyncio.Queue = asyncio.Queue(maxsize=32)
+        self._event_subscribers.append(queue)
+
+        def unsubscribe() -> None:
+            if queue in self._event_subscribers:
+                self._event_subscribers.remove(queue)
+
+        return queue, unsubscribe
 
     def _traces_for(self, target: Optional[str]) -> List[Dict[str, Any]]:
         """Returns recorded traces (newest first), filtered by target when given."""
@@ -851,7 +910,9 @@ class OUMVRuntime:
     # ---- OCC source editing (real file edits, no fabricated versions) ----
 
     def _project_root_abs(self) -> str:
-        return os.path.abspath(self.discovery.project_root or os.getcwd())
+        # Canonical root: a symlinked checkout (macOS /var → /private/var) must not
+        # leak `../../..` into reported paths.
+        return os.path.realpath(os.path.abspath(self.discovery.project_root or os.getcwd()))
 
     def _resolve_project_file(self, path: str) -> Optional[str]:
         """Resolves a project-relative path inside the project root boundary."""

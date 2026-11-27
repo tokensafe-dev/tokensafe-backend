@@ -84,7 +84,7 @@ func Mount(r chi.Router, rt *oumv.Runtime, opts ...Options) error {
 		transport.NewSSEHandler(rt).ServeHTTP(w, req)
 	})
 	r.Get(rpcPath, func(w http.ResponseWriter, req *http.Request) {
-		transport.NewWSHandler(transport.NewDispatcher(rt)).ServeHTTP(w, req)
+		transport.NewWSHandler(transport.NewDispatcher(rt), rt).ServeHTTP(w, req)
 	})
 	rt.SetTransports("http", "sse", "ws")
 

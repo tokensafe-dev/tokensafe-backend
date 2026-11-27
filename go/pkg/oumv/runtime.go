@@ -51,11 +51,18 @@ type Runtime struct {
 	traceIdx     int
 	sessions     *SessionRegistry
 	transports   []string
+	events       []protocol.StreamEvent
+	eventSeq     uint64
+	subs         map[chan protocol.StreamEvent]struct{}
 	mu           sync.RWMutex
 }
 
 // maxRequestTraces bounds the in-memory L4 trace ring buffer.
 const maxRequestTraces = 128
+
+// maxStreamEvents bounds the replay log behind SSE `Last-Event-ID` and WS
+// notifications (spec §2.3: reconnecting replays what the client missed).
+const maxStreamEvents = 256
 
 // routeSource is where a registered handler lives on disk, so an endpoint target
 // can be resolved to source (spec §4 target grammar: `"METHOD /path"`).
@@ -159,6 +166,7 @@ func NewRuntime(cfg Config) *Runtime {
 		patcher:      mutate.NewPatcher(cfg.WorkspaceDir),
 		routes:       make([]protocol.RouteInfo, 0),
 		routeSources: make(map[string]routeSource),
+		subs:         make(map[chan protocol.StreamEvent]struct{}),
 		config:       rCfg,
 	}
 }
@@ -195,8 +203,92 @@ func (r *Runtime) RecordTrace(method, path, route, handler string, statusCode in
 	}
 	r.mu.Unlock()
 
+	r.appendEvent("trace", trace)
+
 	if statusCode >= 500 {
 		atomic.AddInt64(&r.errCount1m, 1)
+	}
+}
+
+// RecordState publishes a mutation to streaming clients (spec §2.3 `state`,
+// §2.4 `notifications/oumv.state`). Called on every successful applyEdit.
+func (r *Runtime) RecordState(path, version, operation string) {
+	if r == nil {
+		return
+	}
+	r.appendEvent("state", map[string]string{
+		"path":      path,
+		"version":   version,
+		"operation": operation,
+	})
+}
+
+// appendEvent assigns the next monotonic id, appends to the bounded replay log and
+// fans out to live subscribers without blocking them.
+func (r *Runtime) appendEvent(kind string, payload interface{}) {
+	raw, err := json.Marshal(payload)
+	if err != nil {
+		return
+	}
+	event := protocol.StreamEvent{
+		Type:      kind,
+		Timestamp: time.Now(),
+		Data:      raw,
+	}
+
+	r.mu.Lock()
+	r.eventSeq++
+	event.ID = r.eventSeq
+	if len(r.events) >= maxStreamEvents {
+		r.events = append(r.events[:0], r.events[1:]...)
+	}
+	r.events = append(r.events, event)
+	subs := make([]chan protocol.StreamEvent, 0, len(r.subs))
+	for ch := range r.subs {
+		subs = append(subs, ch)
+	}
+	r.mu.Unlock()
+
+	for _, ch := range subs {
+		select {
+		case ch <- event:
+		default: // a slow subscriber drops events instead of stalling a mutation
+		}
+	}
+}
+
+// EventsSince returns every event with an id greater than lastID (0 = all).
+func (r *Runtime) EventsSince(lastID uint64) []protocol.StreamEvent {
+	if r == nil {
+		return nil
+	}
+	r.mu.RLock()
+	defer r.mu.RUnlock()
+	out := make([]protocol.StreamEvent, 0, len(r.events))
+	for _, event := range r.events {
+		if event.ID > lastID {
+			out = append(out, event)
+		}
+	}
+	return out
+}
+
+// SubscribeEvents returns a live event channel plus the unsubscribe func.
+func (r *Runtime) SubscribeEvents() (<-chan protocol.StreamEvent, func()) {
+	ch := make(chan protocol.StreamEvent, 32)
+	if r == nil {
+		return ch, func() {}
+	}
+	r.mu.Lock()
+	r.subs[ch] = struct{}{}
+	r.mu.Unlock()
+	return ch, func() {
+		r.mu.Lock()
+		if _, ok := r.subs[ch]; ok {
+			delete(r.subs, ch)
+			close(ch)
+		}
+		r.mu.Unlock()
 	}
 }
 
@@ -934,7 +1026,21 @@ func (r *Runtime) GetSource(ctx context.Context, params *protocol.GetSourceParam
 }
 
 // ApplyEdit executes Pillar 3B: Applies source edit with OCC and pre-flight syntax checks.
+// ApplyEdit applies a mutation and, on success, publishes the new resource state
+// to streaming clients (spec §2.3 `event: state`, §2.4 notifications/oumv.state).
 func (r *Runtime) ApplyEdit(ctx context.Context, params *protocol.ApplyEditParams) (*protocol.ApplyEditResult, *protocol.OumvError) {
+	result, err := r.applyEdit(ctx, params)
+	if err == nil && result != nil && result.Status == "APPLIED" {
+		operation := strings.ToLower(strings.TrimSpace(params.Mode))
+		if operation == "" {
+			operation = "replace"
+		}
+		r.RecordState(params.Path, result.NewVersion, operation)
+	}
+	return result, err
+}
+
+func (r *Runtime) applyEdit(ctx context.Context, params *protocol.ApplyEditParams) (*protocol.ApplyEditResult, *protocol.OumvError) {
 	if !r.config.Capabilities.Mutate {
 		return nil, protocol.NewPermissionDeniedError("mutate capability is disabled by policy")
 	}

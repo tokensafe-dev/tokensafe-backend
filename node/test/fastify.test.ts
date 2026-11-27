@@ -1,9 +1,22 @@
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import Fastify from 'fastify';
+import fs from 'node:fs';
+import path from 'node:path';
+import { createHash } from 'node:crypto';
 import type { AddressInfo } from 'node:net';
 import WebSocket from 'ws';
 import { OumvRuntime, registerTokensafe } from '../src/index.js';
 import { createWorkspace, hasConformanceRunner, runFixtures, type Workspace } from './helpers/workspace.js';
+
+async function waitFor<T>(read: () => T | undefined, timeoutMs = 2000): Promise<T> {
+  const start = Date.now();
+  for (;;) {
+    const value = read();
+    if (value !== undefined) return value;
+    if (Date.now() - start > timeoutMs) throw new Error('timed out waiting for a WebSocket frame');
+    await new Promise((resolve) => setTimeout(resolve, 20));
+  }
+}
 
 describe('Fastify adapter', () => {
   let workspace: Workspace;
@@ -86,6 +99,61 @@ describe('Fastify adapter', () => {
       const reply = messages.find((message) => message.id === 2);
       expect(reply.result.level).toBe('L0');
       expect(messages.some((message) => message.id === undefined && message.result)).toBe(false);
+    } finally {
+      socket.close();
+      await attachment.close();
+      await wsAdapter.dispose();
+      await wsApp.close();
+    }
+  }, 20_000);
+
+  it('pushes notifications/oumv.state to the bound socket after an applied edit', async () => {
+    const { registerTokensafe: register } = await import('../src/index.js');
+    const wsApp = Fastify({ logger: false });
+    const wsRuntime = new OumvRuntime({ workspaceDir: workspace.dir });
+    const wsAdapter = await register(wsApp, { runtime: wsRuntime });
+    await wsApp.listen({ port: 0, host: '127.0.0.1' });
+    const port = (wsApp.server.address() as AddressInfo).port;
+    const attachment = wsAdapter.attachWebSocket();
+    const socket = new WebSocket(`ws://127.0.0.1:${port}/__oumv/rpc`);
+    try {
+      await new Promise<void>((resolve, reject) => {
+        socket.once('open', () => resolve());
+        socket.once('error', reject);
+      });
+      const messages: any[] = [];
+      socket.on('message', (data) => messages.push(JSON.parse(String(data))));
+
+      socket.send(JSON.stringify({ jsonrpc: '2.0', id: 1, method: 'oumv/handshake', params: {} }));
+      const handshake = await waitFor(() => messages.find((message) => message.id === 1));
+      const sessionId = handshake.result.sessionId as string;
+      expect(sessionId).toMatch(/^sess-/);
+
+      const relativePath = 'notify_target.js';
+      const content = 'const value = 1;\n';
+      fs.writeFileSync(path.join(workspace.dir, relativePath), content);
+      socket.send(
+        JSON.stringify({
+          jsonrpc: '2.0',
+          id: 2,
+          method: 'oumv/applyEdit',
+          params: {
+            sessionId,
+            path: relativePath,
+            mode: 'patch',
+            expectedVersion: 'sha256:' + createHash('sha256').update(content).digest('hex'),
+            hunks: [{ target: 'value = 1', replacement: 'value = 2' }],
+          },
+        })
+      );
+
+      const notification = await waitFor(() =>
+        messages.find((message) => message.method === 'notifications/oumv.state')
+      );
+      expect(notification.params.sessionId).toBe(sessionId);
+      expect(notification.params.path).toBe(relativePath);
+      expect(notification.params.operation).toBe('patch');
+      expect(notification.params.version).toMatch(/^sha256:[0-9a-f]{64}$/);
     } finally {
       socket.close();
       await attachment.close();

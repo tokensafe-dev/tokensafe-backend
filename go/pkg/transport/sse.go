@@ -1,18 +1,19 @@
 package transport
 
 import (
-	"encoding/json"
-	"fmt"
 	"net/http"
+	"strconv"
 	"strings"
 	"time"
 
 	"github.com/tokensafe-dev/tokensafe-backend/go/pkg/protocol"
 )
 
-// TraceStream is the minimal runtime surface an SSE handler needs.
-type TraceStream interface {
-	RecentTracesSince(since time.Time) []protocol.TraceEntry
+// EventStream is the minimal runtime surface the SSE handler needs: a bounded
+// event log with monotonic ids, which is what `Last-Event-ID` replays from
+// (spec §2.3). Trace and state events share one id space.
+type EventStream interface {
+	EventsSince(lastID uint64) []protocol.StreamEvent
 }
 
 // SSEOptions configures the event stream.
@@ -25,10 +26,13 @@ type SSEOptions struct {
 //
 //	GET /__oumv/events  →  text/event-stream
 //	event: trace      (oumv/observe L4 entries)
-//	event: heartbeat  (keeps proxies from closing the stream)
+//	event: state      (a resource changed through applyEdit)
+//	event: heartbeat  (keeps proxies from closing the stream; no id)
 //
-// `Last-Event-ID` (or `?since=` RFC3339) replays traces newer than that timestamp.
-func NewSSEHandler(stream TraceStream, opts ...SSEOptions) http.Handler {
+// Every trace/state event carries `id: <monotonic sequence>`; reconnecting with
+// `Last-Event-ID` replays everything after it. `?since=<RFC3339>` stays as a
+// timestamp fallback for clients that predate the id cursor.
+func NewSSEHandler(stream EventStream, opts ...SSEOptions) http.Handler {
 	opt := SSEOptions{Heartbeat: 15 * time.Second, Poll: 300 * time.Millisecond}
 	if len(opts) > 0 {
 		if opts[0].Heartbeat > 0 {
@@ -56,19 +60,38 @@ func NewSSEHandler(stream TraceStream, opts ...SSEOptions) http.Handler {
 		w.Header().Set("X-Accel-Buffering", "no")
 		w.WriteHeader(http.StatusOK)
 
-		since := time.Time{}
+		lastID := uint64(0)
 		if raw := strings.TrimSpace(r.Header.Get("Last-Event-ID")); raw != "" {
-			if parsed, err := time.Parse(time.RFC3339Nano, raw); err == nil {
-				since = parsed
+			if parsed, err := strconv.ParseUint(raw, 10, 64); err == nil {
+				lastID = parsed
 			}
 		} else if raw := strings.TrimSpace(r.URL.Query().Get("since")); raw != "" {
-			if parsed, err := time.Parse(time.RFC3339Nano, raw); err == nil {
-				since = parsed
+			if since, err := time.Parse(time.RFC3339Nano, raw); err == nil && stream != nil {
+				for _, event := range stream.EventsSince(0) {
+					if event.Timestamp.After(since) {
+						lastID = event.ID - 1
+						break
+					}
+				}
 			}
 		}
 
-		fmt.Fprint(w, ": connected\n\n")
+		writeEvents := func() {
+			if stream == nil {
+				return
+			}
+			for _, event := range stream.EventsSince(lastID) {
+				w.Write([]byte("id: " + strconv.FormatUint(event.ID, 10) + "\n"))
+				w.Write([]byte("event: " + event.Type + "\n"))
+				w.Write([]byte("data: " + string(event.Data) + "\n\n"))
+				lastID = event.ID
+			}
+			flusher.Flush()
+		}
+
+		w.Write([]byte(": connected\n\n"))
 		flusher.Flush()
+		writeEvents()
 
 		heartbeat := time.NewTicker(opt.Heartbeat)
 		poll := time.NewTicker(opt.Poll)
@@ -80,23 +103,10 @@ func NewSSEHandler(stream TraceStream, opts ...SSEOptions) http.Handler {
 			case <-r.Context().Done():
 				return
 			case <-heartbeat.C:
-				fmt.Fprintf(w, "event: heartbeat\ndata: %q\n\n", time.Now().UTC().Format(time.RFC3339Nano))
+				w.Write([]byte("event: heartbeat\ndata: " + strconv.Quote(time.Now().UTC().Format(time.RFC3339Nano)) + "\n\n"))
 				flusher.Flush()
 			case <-poll.C:
-				if stream == nil {
-					continue
-				}
-				for _, trace := range stream.RecentTracesSince(since) {
-					raw, err := json.Marshal(trace)
-					if err != nil {
-						continue
-					}
-					fmt.Fprintf(w, "id: %s\nevent: trace\ndata: %s\n\n", trace.Timestamp, raw)
-					if parsed, err := time.Parse(time.RFC3339Nano, trace.Timestamp); err == nil {
-						since = parsed
-					}
-				}
-				flusher.Flush()
+				writeEvents()
 			}
 		}
 	})

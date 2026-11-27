@@ -12,6 +12,7 @@ import (
 
 	"github.com/tokensafe-dev/tokensafe-backend/go/pkg/adapters/stdhttp"
 	"github.com/tokensafe-dev/tokensafe-backend/go/pkg/oumv"
+	"github.com/tokensafe-dev/tokensafe-backend/go/pkg/protocol"
 )
 
 // wireCase is one captured request/response pair.
@@ -23,12 +24,12 @@ type wireCase struct {
 
 // wireFile is the committed golden corpus for one method on the backend profile.
 type wireFile struct {
-	Method       string     `json:"method"`
-	Profile      string     `json:"profile"`
-	SpecVersion  string     `json:"specVersion"`
-	Adapter      string     `json:"adapter"`
-	FixtureNote  string     `json:"note,omitempty"`
-	Cases        []wireCase `json:"cases"`
+	Method      string     `json:"method"`
+	Profile     string     `json:"profile"`
+	SpecVersion string     `json:"specVersion"`
+	Adapter     string     `json:"adapter"`
+	FixtureNote string     `json:"note,omitempty"`
+	Cases       []wireCase `json:"cases"`
 }
 
 // TestWireExamples captures frozen request/response pairs from a real adapter over
@@ -87,7 +88,7 @@ func TestWireExamples(t *testing.T) {
 			file = &wireFile{
 				Method:      method,
 				Profile:     "backend",
-				SpecVersion: "1.1.0",
+				SpecVersion: protocol.CurrentProtocolVersion,
 				Adapter:     "backend/stdhttp",
 				FixtureNote: "captured from the net/http adapter against a temp workspace; paths are relative to it",
 			}
@@ -99,11 +100,11 @@ func TestWireExamples(t *testing.T) {
 	files := map[string]*wireFile{}
 
 	add(files, "oumv/handshake", "negotiates capabilities", map[string]interface{}{
-		"protocolVersion": "1.1.0",
+		"protocolVersion": protocol.CurrentProtocolVersion,
 		"clientInfo":      map[string]interface{}{"name": "oumv-examples", "version": "1.0.0"},
 	})
 	add(files, "oumv/handshake", "narrows requested observe levels", map[string]interface{}{
-		"protocolVersion":       "1.1.0",
+		"protocolVersion":       protocol.CurrentProtocolVersion,
 		"requestedCapabilities": map[string]interface{}{"observe": map[string]interface{}{"levels": []string{"L0", "L1"}}},
 	})
 

@@ -27,7 +27,7 @@
 ## Certification (spec §10)
 
 <!-- certification:start -->
-**8 adapters certified against 33 language-neutral cases** (`fixtureVersion` 7): 6 at Level 3 and 2 source-level adapter(s) at Level 2, each with its single L3 gap named below. Generated from `certification/*.json` by `scripts/render_certification.py`; CI fails when this block no longer matches the reports.
+**8 adapters certified against 33 language-neutral cases** (`fixtureVersion` 8): 6 at Level 3 and 2 source-level adapter(s) at Level 2, each with its single L3 gap named below. Generated from `certification/*.json` by `scripts/render_certification.py`; CI fails when this block no longer matches the reports.
 
 | Adapter | Framework | Transport exercised | Level | Cases | Report |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -49,9 +49,20 @@ Named gaps:
 
 - `java-spring` → `observe-l4-returns-recorded-traces`: expected success, got error -32006: UNSUPPORTED_CAPABILITY: observe L4 requires live request traces; this JDK-only sidecar does not run the Spring application, so it records none
 - `php-laravel` → `observe-l4-returns-recorded-traces`: field "data.traces" must be a non-empty array
+
+Transport certificates run the same suite over the optional bindings, plus the fixture v8 push cases (§2.3 `state` with `Last-Event-ID` replay, §2.4 `notifications/oumv.state`):
+
+| Certificate | Adapter | Transport | Cases |
+| :--- | :--- | :--- | :--- |
+| [transports/node-express-sse.json](certification/transports/node-express-sse.json) | `node-express-sse` | sse | 34/34 |
+| [transports/node-express-ws.json](certification/transports/node-express-ws.json) | `node-express-ws` | ws | 34/34 |
+| [transports/node-fastify-sse.json](certification/transports/node-fastify-sse.json) | `node-fastify-sse` | sse | 34/34 |
+| [transports/node-fastify-ws.json](certification/transports/node-fastify-ws.json) | `node-fastify-ws` | ws | 34/34 |
+| [transports/node-stdio.json](certification/transports/node-stdio.json) | `node-stdio` | stdio | 33/33 |
+| [transports/python-stdio.json](certification/transports/python-stdio.json) | `python-stdio` | stdio | 33/33 |
 <!-- certification:end -->
 
-Levels are cumulative and a skipped case never counts as a pass — a missing capability caps the claim instead of inflating it. The same fixtures also run over **stdio** (§2.5) against the Node and Python runtimes: [`certification/transports/node-stdio.json`](certification/transports/node-stdio.json) and [`python-stdio.json`](certification/transports/python-stdio.json), both Level 3, 33/33. Regenerate locally:
+Levels are cumulative and a skipped case never counts as a pass — a missing capability caps the claim instead of inflating it. The transport certificates above cover **stdio** (§2.5) plus the optional **SSE** (§2.3) and **WebSocket** (§2.4) bindings on both Node adapters; those four runs include the fixture v8 push cases and are Level 3, 34/34. Regenerate locally:
 
 ```bash
 # Go adapters (writes certification/*.json)
@@ -60,7 +71,7 @@ cd go && CERT_OUT_DIR=../certification go test ./pkg/adapters -run TestAdapterCe
 # Python/FastAPI — HTTP and stdio
 cd python && CERT_OUT_DIR=../certification .venv/bin/python -m pytest -q tests/test_conformance.py tests/test_stdio.py
 
-# Node adapters — HTTP and stdio
+# Node adapters — HTTP, stdio, SSE and WS (writes certification/*.json and transports/*.json)
 cd node && CERT_OUT_DIR=../certification OUMV_REPO=../../agent-oumv pnpm test
 
 # Spring (JDK-only sidecar) and Laravel/Symfony (PHP sidecar) — Level 2, stdio

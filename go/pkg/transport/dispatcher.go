@@ -58,6 +58,15 @@ func sessionIDFromParams(raw json.RawMessage) string {
 	return probe.SessionID
 }
 
+// EndSession closes the session a streaming connection was bound to (spec §2.4:
+// closing the socket ends the session). Returns false for an unknown or empty id.
+func (d *Dispatcher) EndSession(id string) bool {
+	if sessions, ok := d.adapter.(sessionAware); ok && id != "" {
+		return sessions.Disconnect(id)
+	}
+	return false
+}
+
 // Dispatch routes a validated OumvRequest to the corresponding adapter method.
 func (d *Dispatcher) Dispatch(ctx context.Context, req *protocol.OumvRequest) *protocol.OumvResponse {
 	if sessions, ok := d.adapter.(sessionAware); ok {

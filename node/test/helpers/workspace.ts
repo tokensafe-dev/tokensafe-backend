@@ -13,6 +13,10 @@ const AGENT_OUMV = process.env.OUMV_REPO
 const CONFORMANCE_CJS = path.join(AGENT_OUMV, 'packages/conformance/dist/index.cjs');
 const FIXTURES = path.join(AGENT_OUMV, 'fixtures/conformance-cases.json');
 
+/** Paths for tests that drive the runner directly (transport certificates). */
+export const CONFORMANCE_ENTRY = CONFORMANCE_CJS;
+export const FIXTURES_PATH = FIXTURES;
+
 export const hasConformanceRunner = fs.existsSync(CONFORMANCE_CJS) && fs.existsSync(FIXTURES);
 
 export const EDIT_SOURCE = 'export const value = 41;\n';

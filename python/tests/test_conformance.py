@@ -83,9 +83,12 @@ async def test_conformance_certification(tmp_path):
 
 def test_fixture_file_has_level_tagged_v6_shape():
     data = json.loads(FIXTURES.read_text(encoding="utf-8"))
-    assert data["fixtureVersion"] == 7
+    assert data["fixtureVersion"] == 8
     assert data["protocolVersion"] == "1.3.0"
     assert sorted(data["levelDefinitions"]) == ["1", "2", "3"]
+    # Push cases belong to transport certificates; the native runners assert the
+    # request/response suite and leave them to `oumv-certify --sse/--ws`.
+    assert {case["transport"] for case in data.get("pushCases", [])} <= {"sse", "ws"}
 
     levels = {case["level"] for case in data["cases"]}
     assert levels == {1, 2, 3}

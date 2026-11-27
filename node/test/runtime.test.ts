@@ -1,8 +1,9 @@
 import fs from 'node:fs';
+import path from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
 import { OumvRuntime, checkSyntax, extractSymbolRange, parseVerifyTarget } from '../src/runtime.js';
 import { resolveWorkspacePath } from '../src/paths.js';
-import { createWorkspace } from './helpers/workspace.js';
+import { createWorkspace, sha } from './helpers/workspace.js';
 
 describe('OumvRuntime core', () => {
   let cleanup = () => {};
@@ -174,5 +175,39 @@ describe('OumvRuntime core', () => {
     const l4: any = runtime.observe({ level: 'L4' });
     expect(l4.data.traces).toHaveLength(1);
     expect(l4.data.traceCount).toBe(1);
+  });
+
+  it('publishes a state event on an applied edit and replays it by monotonic id', () => {
+    const workspace = createWorkspace();
+    cleanup = workspace.cleanup;
+    const runtime = new OumvRuntime({ workspaceDir: workspace.dir });
+
+    const seen: any[] = [];
+    const unsubscribe = runtime.subscribeEvents((event) => seen.push(event));
+
+    const relative = 'state_target.js';
+    const content = 'const value = 1;\n';
+    fs.writeFileSync(path.join(workspace.dir, relative), content);
+
+    const result: any = runtime.applyEdit({
+      path: relative,
+      mode: 'patch',
+      expectedVersion: sha(content),
+      hunks: [{ target: 'value = 1', replacement: 'value = 2' }],
+    });
+
+    expect(result.status).toBe('APPLIED');
+    expect(seen).toHaveLength(1);
+    expect(seen[0]).toMatchObject({
+      id: 1,
+      type: 'state',
+      data: { path: relative, operation: 'patch', version: result.newVersion },
+    });
+    expect(runtime.eventsSince(0)).toHaveLength(1);
+    expect(runtime.eventsSince(1)).toHaveLength(0);
+
+    unsubscribe();
+    runtime.recordState(relative, String(result.newVersion), 'patch');
+    expect(seen).toHaveLength(1); // a closed subscription receives nothing
   });
 });

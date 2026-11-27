@@ -1,7 +1,7 @@
 {
   "protocolVersion": "1.3.0",
   "spec": "https://github.com/tokensafe-dev/oumv/blob/main/spec/SPEC.md",
-  "description": "Language-neutral OUMV conformance cases (spec \u00a710). Each case declares the conformance Level (1|2|3) it certifies. A runtime attains Level N only when every case with level <= N passes; a failure at a higher level caps the claim but does not fail the lower levels. fixtureVersion 3 added session handshake, getSource and verify-result shape coverage; fixtureVersion 4 requires the observe `format` field the spec envelope mandates; fixtureVersion 5 covers applyEdit mode=create (new file, no overwrite). Markers substituted by each runner: ${FIXTURE_FILE}, ${MISSING_FILE}, ${EDIT_TARGET_FILE}, ${EDIT_TARGET_VERSION}, ${EDIT_CONTENT}, ${BROKEN_CONTENT}, ${L2_TARGET}, ${L3_TARGET}, ${VERIFY_TARGET}. v7 (wire 1.3.0): applyEdit mode=patch (splice, target-missing), getSource window/dedup markers, unknown mode/symbol/level/version, create with expectedVersion, rename/delete validation.",
+  "description": "Language-neutral OUMV conformance cases (spec \u00a710). Each case declares the conformance Level (1|2|3) it certifies. A runtime attains Level N only when every case with level <= N passes; a failure at a higher level caps the claim but does not fail the lower levels. fixtureVersion 3 added session handshake, getSource and verify-result shape coverage; fixtureVersion 4 requires the observe `format` field the spec envelope mandates; fixtureVersion 5 covers applyEdit mode=create (new file, no overwrite). Markers substituted by each runner: ${FIXTURE_FILE}, ${MISSING_FILE}, ${EDIT_TARGET_FILE}, ${EDIT_TARGET_VERSION}, ${EDIT_CONTENT}, ${BROKEN_CONTENT}, ${L2_TARGET}, ${L3_TARGET}, ${VERIFY_TARGET}. v7 (wire 1.3.0): applyEdit mode=patch (splice, target-missing), getSource window/dedup markers, unknown mode/symbol/level/version, create with expectedVersion, rename/delete validation. v8: pushCases for the SSE (§2.3) and WebSocket (§2.4) bindings — a certificate for that transport proves a mutation is pushed as `state`/`notifications/oumv.state` and that `Last-Event-ID` replays it.",
   "cases": [
     {
       "id": "handshake-negotiates-capabilities",
@@ -500,7 +500,64 @@
       }
     }
   ],
-  "fixtureVersion": 7,
+  "pushCases": [
+    {
+      "id": "sse-state-after-edit",
+      "level": 2,
+      "transport": "sse",
+      "trigger": {
+        "method": "oumv/applyEdit",
+        "params": {
+          "path": "${PUSH_FILE}",
+          "mode": "create",
+          "replacement": "${PUSH_CONTENT}"
+        }
+      },
+      "expectEvents": [
+        {
+          "event": "state",
+          "data": {
+            "path": "${PUSH_FILE}",
+            "operation": "create"
+          }
+        }
+      ],
+      "replay": {
+        "expectEvents": [
+          {
+            "event": "state",
+            "data": {
+              "path": "${PUSH_FILE}",
+              "operation": "create"
+            }
+          }
+        ]
+      }
+    },
+    {
+      "id": "ws-state-notification",
+      "level": 2,
+      "transport": "ws",
+      "trigger": {
+        "method": "oumv/applyEdit",
+        "params": {
+          "path": "${PUSH_FILE}",
+          "mode": "create",
+          "replacement": "${PUSH_CONTENT}"
+        }
+      },
+      "expectEvents": [
+        {
+          "event": "notifications/oumv.state",
+          "data": {
+            "path": "${PUSH_FILE}",
+            "operation": "create"
+          }
+        }
+      ]
+    }
+  ],
+  "fixtureVersion": 8,
   "levelDefinitions": {
     "1": "Handshake, L0-L1 observe, action verification",
     "2": "L2-L3 observe, impact analysis, OCC mutations, surface diffs",

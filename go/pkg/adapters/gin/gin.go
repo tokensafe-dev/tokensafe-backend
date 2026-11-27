@@ -92,7 +92,7 @@ func Mount(r *gin.Engine, rt *oumv.Runtime, opts ...Options) {
 	dispatcherForWS := transport.NewDispatcher(rt)
 	eventsPath := strings.TrimSuffix(rpcPath, "/rpc") + "/events"
 	r.GET(eventsPath, gin.WrapH(transport.NewSSEHandler(rt)))
-	r.GET(rpcPath, gin.WrapH(transport.NewWSHandler(dispatcherForWS)))
+	r.GET(rpcPath, gin.WrapH(transport.NewWSHandler(dispatcherForWS, rt)))
 	// POST/OPTIONS only: GET on this path is the WebSocket upgrade.
 	r.POST(rpcPath, gin.WrapH(handler))
 	r.OPTIONS(rpcPath, gin.WrapH(handler))
