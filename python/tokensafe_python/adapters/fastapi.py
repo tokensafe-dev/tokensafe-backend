@@ -266,9 +266,13 @@ class TokenSafeFastAPI:
                         async with send_lock:
                             await websocket.send_json(result)
                         if payload.get("method") == "oumv/handshake" and isinstance(result, dict):
-                            state["session"] = str(
-                                (result.get("result") or {}).get("sessionId") or ""
-                            )
+                            # A rejected handshake must not unbind a live session:
+                            # only a successful result carrying a sessionId rebinds.
+                            handshake_result = result.get("result")
+                            if isinstance(handshake_result, dict):
+                                session_id = str(handshake_result.get("sessionId") or "")
+                                if session_id:
+                                    state["session"] = session_id
             except WebSocketDisconnect:
                 return
             finally:

@@ -1,6 +1,9 @@
 package stdhttp
 
 import (
+	"bufio"
+	"fmt"
+	"net"
 	"net/http"
 	"strings"
 	"sync"
@@ -124,4 +127,21 @@ func (r *statusRecorder) WriteHeader(code int) {
 		r.wroteHeader = true
 	}
 	r.ResponseWriter.WriteHeader(code)
+}
+
+// Hijack forwards to the underlying writer: the WebSocket binding upgrades the
+// connection, and a wrapper that hides http.Hijacker turns every upgrade into 500.
+func (r *statusRecorder) Hijack() (net.Conn, *bufio.ReadWriter, error) {
+	hijacker, ok := r.ResponseWriter.(http.Hijacker)
+	if !ok {
+		return nil, nil, fmt.Errorf("stdhttp: underlying ResponseWriter does not support hijacking")
+	}
+	return hijacker.Hijack()
+}
+
+// Flush keeps SSE streaming working through the tracing wrapper.
+func (r *statusRecorder) Flush() {
+	if flusher, ok := r.ResponseWriter.(http.Flusher); ok {
+		flusher.Flush()
+	}
 }

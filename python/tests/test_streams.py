@@ -71,7 +71,49 @@ def test_sse_state_event_replays_from_last_event_id(tmp_path):
         assert replayed == first, "Last-Event-ID: 0 must replay the same frame"
 
 
-def test_websocket_pushes_state_notification(tmp_path):
+def test_websocket_rejected_handshake_keeps_the_live_session(tmp_path):
+    content = "value = 1\n"
+    (tmp_path / "target.py").write_text(content, encoding="utf-8")
+
+    app = FastAPI()
+    mount_tokensafe(app, auto_discover=False, project_root=str(tmp_path))
+
+    with TestClient(app).websocket_connect("/__oumv/rpc") as ws:
+        ws.send_json({"jsonrpc": "2.0", "id": 1, "method": "oumv/handshake", "params": {}})
+        session_id = ws.receive_json()["result"]["sessionId"]
+
+        # A negative handshake case must not unbind the connection.
+        ws.send_json(
+            {"jsonrpc": "2.0", "id": 2, "method": "oumv/handshake", "params": {"protocolVersion": "9.9.9"}}
+        )
+        rejected = ws.receive_json()
+        assert rejected["error"]["code"] == -32006
+
+        ws.send_json(
+            {
+                "jsonrpc": "2.0",
+                "id": 3,
+                "method": "oumv/applyEdit",
+                "params": {
+                    "sessionId": session_id,
+                    "path": "target.py",
+                    "mode": "patch",
+                    "expectedVersion": _occ(content),
+                    "hunks": [{"target": "value = 1", "replacement": "value = 2"}],
+                },
+            }
+        )
+        frames = []
+        for _ in range(4):
+            frame = ws.receive_json()
+            frames.append(frame)
+            if frame.get("method") == "notifications/oumv.state":
+                break
+
+    notification = next(
+        frame for frame in frames if frame.get("method") == "notifications/oumv.state"
+    )
+    assert notification["params"]["sessionId"] == session_id
     content = "value = 1\n"
     (tmp_path / "target.py").write_text(content, encoding="utf-8")
 

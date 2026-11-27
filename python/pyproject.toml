@@ -43,7 +43,7 @@ dependencies = [
 
 [project.optional-dependencies]
 sqlalchemy = ["sqlalchemy>=2.0.0"]
-all = ["sqlalchemy>=2.0.0"]
+all = ["sqlalchemy>=2.0.0", "websockets>=12", "uvicorn>=0.30"]
 
 [project.scripts]
 tokensafe-oumv-stdio = "tokensafe_python.stdio:main"

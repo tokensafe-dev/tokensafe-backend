@@ -54,11 +54,15 @@ Transport certificates run the same suite over the optional bindings, plus the f
 
 | Certificate | Adapter | Transport | Cases |
 | :--- | :--- | :--- | :--- |
+| [transports/go-stdhttp-sse.json](certification/transports/go-stdhttp-sse.json) | `go-stdhttp-sse` | sse | 35/35 |
+| [transports/go-stdhttp-ws.json](certification/transports/go-stdhttp-ws.json) | `go-stdhttp-ws` | ws | 35/35 |
 | [transports/node-express-sse.json](certification/transports/node-express-sse.json) | `node-express-sse` | sse | 35/35 |
 | [transports/node-express-ws.json](certification/transports/node-express-ws.json) | `node-express-ws` | ws | 35/35 |
 | [transports/node-fastify-sse.json](certification/transports/node-fastify-sse.json) | `node-fastify-sse` | sse | 35/35 |
 | [transports/node-fastify-ws.json](certification/transports/node-fastify-ws.json) | `node-fastify-ws` | ws | 35/35 |
 | [transports/node-stdio.json](certification/transports/node-stdio.json) | `node-stdio` | stdio | 33/33 |
+| [transports/python-fastapi-sse.json](certification/transports/python-fastapi-sse.json) | `python-fastapi-sse` | sse | 35/35 |
+| [transports/python-fastapi-ws.json](certification/transports/python-fastapi-ws.json) | `python-fastapi-ws` | ws | 35/35 |
 | [transports/python-stdio.json](certification/transports/python-stdio.json) | `python-stdio` | stdio | 33/33 |
 <!-- certification:end -->
 
