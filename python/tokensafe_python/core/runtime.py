@@ -356,7 +356,7 @@ class OUMVRuntime:
             "ttlSeconds": granted_ttl,
             "runtimeInfo": {
                 "name": "tokensafe-python",
-                "version": "0.8.0",
+                "version": "0.10.0",
                 "framework": self.framework,
             },
             "capabilities": caps,
