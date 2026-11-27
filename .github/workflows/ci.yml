@@ -89,6 +89,24 @@ jobs:
       - name: Run tests
         run: pnpm test
 
+  test-dotnet:
+    name: Test .NET Runtime
+    runs-on: ubuntu-latest
+    defaults:
+      run:
+        working-directory: dotnet
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Run .NET tests
+        run: dotnet test tests/TokenSafe.Oumv.Tests/TokenSafe.Oumv.Tests.csproj -c Release --nologo
+
   certification:
     name: Certification is reproducible
     runs-on: ubuntu-latest
@@ -135,6 +153,11 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.3'
+
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
           coverage: none
 
       - name: Install Python dependencies
@@ -204,6 +227,15 @@ jobs:
           REPORT: ${{ github.workspace }}/cert-fresh/php-laravel.json
           OUMV_REPO: ${{ github.workspace }}/vendor/oumv
         run: ./php/certify.sh
+
+      # ASP.NET Core boots the fixture app (minimal APIs + controller + EF Core)
+      # and certifies HTTP, SSE and WebSocket in one run.
+      - name: Generate ASP.NET Core adapter and transport reports
+        env:
+          OUMV_REPO: ${{ github.workspace }}/vendor/oumv
+          REPORT: ${{ github.workspace }}/cert-fresh/dotnet-aspnetcore.json
+          TRANSPORT_DIR: ${{ github.workspace }}/cert-fresh/transports
+        run: ./dotnet/certify.sh
 
       - name: Compare with committed reports
         run: python3 scripts/check_certification.py cert-fresh certification

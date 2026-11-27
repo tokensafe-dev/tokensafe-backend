@@ -1,0 +1,25 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFrameworks>net8.0;net10.0</TargetFrameworks>
+    <RootNamespace>TokenSafe.Oumv</RootNamespace>
+    <AssemblyName>TokenSafe.Oumv</AssemblyName>
+    <PackageId>TokenSafe.Oumv.AspNetCore</PackageId>
+    <Version>0.1.0</Version>
+    <Authors>TokenSafe</Authors>
+    <Description>OUMV (Universal Agent-Runtime Protocol) adapter for ASP.NET Core: observe, understand, mutate and verify minimal APIs and MVC controllers in-process, with JSON-RPC over HTTP, SSE and WebSocket.</Description>
+    <PackageLicenseExpression>Apache-2.0</PackageLicenseExpression>
+    <PackageProjectUrl>https://tokensafe.dev/oumv</PackageProjectUrl>
+    <RepositoryUrl>https://github.com/tokensafe-dev/tokensafe-backend</RepositoryUrl>
+    <RepositoryType>git</RepositoryType>
+    <PackageTags>oumv;agents;aspnetcore;minimal-api;observability</PackageTags>
+    <IncludeSymbols>true</IncludeSymbols>
+    <SymbolPackageFormat>snupkg</SymbolPackageFormat>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <FrameworkReference Include="Microsoft.AspNetCore.App" />
+    <PackageReference Include="Microsoft.CodeAnalysis.CSharp" Version="4.13.0" />
+  </ItemGroup>
+
+</Project>

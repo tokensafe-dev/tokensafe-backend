@@ -27,10 +27,11 @@
 ## Certification (spec §10)
 
 <!-- certification:start -->
-**8 adapters certified against 33 language-neutral cases** (`fixtureVersion` 10): 6 at Level 3 and 2 source-level adapter(s) at Level 2, each with its single L3 gap named below. A report with 34 cases also ran the sandbox capability case its runtime advertises. Generated from `certification/*.json` by `scripts/render_certification.py`; CI fails when this block no longer matches the reports.
+**9 adapters certified against 33 language-neutral cases** (`fixtureVersion` 10): 7 at Level 3 and 2 source-level adapter(s) at Level 2, each with its single L3 gap named below. A report with 34 cases also ran the sandbox capability case its runtime advertises. Generated from `certification/*.json` by `scripts/render_certification.py`; CI fails when this block no longer matches the reports.
 
 | Adapter | Framework | Transport exercised | Level | Cases | Report |
 | :--- | :--- | :--- | :--- | :--- | :--- |
+| `dotnet-aspnetcore` | aspnetcore | ASP.NET Core `POST /__oumv/rpc` | **3** | 37/37 | [certification/dotnet-aspnetcore.json](certification/dotnet-aspnetcore.json) |
 | `go-chi` | chi | HTTP `POST /__oumv/rpc` | **3** | 37/37 | [certification/go-chi.json](certification/go-chi.json) |
 | `go-gin` | Gin | HTTP `POST /__oumv/rpc` | **3** | 37/37 | [certification/go-gin.json](certification/go-gin.json) |
 | `go-stdhttp` | net/http | HTTP `POST /__oumv/rpc` | **3** | 37/37 | [certification/go-stdhttp.json](certification/go-stdhttp.json) |
@@ -54,6 +55,8 @@ Transport certificates run the same suite over the optional bindings, plus the f
 
 | Certificate | Adapter | Transport | Cases |
 | :--- | :--- | :--- | :--- |
+| [transports/dotnet-aspnetcore-sse.json](certification/transports/dotnet-aspnetcore-sse.json) | `dotnet-aspnetcore-sse` | sse | 38/38 |
+| [transports/dotnet-aspnetcore-ws.json](certification/transports/dotnet-aspnetcore-ws.json) | `dotnet-aspnetcore-ws` | ws | 38/38 |
 | [transports/go-stdhttp-sse.json](certification/transports/go-stdhttp-sse.json) | `go-stdhttp-sse` | sse | 38/38 |
 | [transports/go-stdhttp-ws.json](certification/transports/go-stdhttp-ws.json) | `go-stdhttp-ws` | ws | 38/38 |
 | [transports/node-express-sse.json](certification/transports/node-express-sse.json) | `node-express-sse` | sse | 38/38 |

@@ -44,6 +44,7 @@ TRANSPORT = {
     "gin": "HTTP `POST /__oumv/rpc`",
     "chi": "HTTP `POST /__oumv/rpc`",
     "net/http": "HTTP `POST /__oumv/rpc`",
+"aspnetcore": "ASP.NET Core `POST /__oumv/rpc`",
     "fastapi": "ASGI `POST /__oumv/rpc`",
     "express": "Node `POST /__oumv/rpc`",
     "fastify": "Node `POST /__oumv/rpc`",

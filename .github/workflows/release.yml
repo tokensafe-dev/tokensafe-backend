@@ -56,6 +56,41 @@ jobs:
           name: tokensafe-python-dist
           path: python/dist/
 
+      - name: Setup .NET
+        uses: actions/setup-dotnet@v4
+        with:
+          dotnet-version: '10.0.x'
+
+      - name: Run .NET tests
+        working-directory: dotnet
+        run: dotnet test tests/TokenSafe.Oumv.Tests/TokenSafe.Oumv.Tests.csproj -c Release --nologo
+
+      # The NuGet package is built on every tag: the .nupkg rides the GitHub
+      # release even before a nuget.org key is configured.
+      - name: Pack TokenSafe.Oumv.AspNetCore
+        working-directory: dotnet
+        run: dotnet pack src/TokenSafe.Oumv/TokenSafe.Oumv.csproj -c Release -o dist --nologo
+
+      - name: Upload NuGet package artifact
+        uses: actions/upload-artifact@v4
+        with:
+          name: tokensafe-dotnet-dist
+          path: dotnet/dist/
+
+      # Idempotent: --skip-duplicate keeps a re-run tag from failing.
+      - name: Publish TokenSafe.Oumv.AspNetCore to NuGet (when a key is configured)
+        if: startsWith(github.ref, 'refs/tags/v')
+        working-directory: dotnet
+        env:
+          NUGET_API_KEY: ${{ secrets.NUGET_API_KEY }}
+        run: |
+          if [ -z "${NUGET_API_KEY:-}" ]; then
+            echo "NUGET_API_KEY is not configured; the .nupkg is attached to the GitHub release only"
+            exit 0
+          fi
+          dotnet nuget push "dist/*.nupkg" --api-key "$NUGET_API_KEY" \
+            --source https://api.nuget.org/v3/index.json --skip-duplicate
+
       - name: Setup pnpm
         uses: pnpm/action-setup@v4
         with:
@@ -108,3 +143,4 @@ jobs:
           generate_release_notes: true
           draft: false
           prerelease: false
+          files: dotnet/dist/*.nupkg
