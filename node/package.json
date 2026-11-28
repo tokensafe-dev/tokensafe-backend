@@ -1,6 +1,6 @@
 {
   "name": "tokensafe-backend-node",
-  "version": "0.13.0",
+  "version": "0.13.1",
   "description": "OUMV adapter for Node.js and Bun backends (Express, Fastify, Next.js, Elysia): observe, understand, mutate with OCC, verify \u2014 over HTTP, SSE, WebSocket and stdio",
   "license": "Apache-2.0",
   "type": "module",
