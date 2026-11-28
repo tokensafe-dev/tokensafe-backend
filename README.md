@@ -29,7 +29,7 @@
 ## Certification (spec §10)
 
 <!-- certification:start -->
-**13 adapters certified against the same language-neutral fixtures** (`fixtureVersion` 17): 12 at Level 3 and 1 source-level adapter(s) at Level 2 — frozen on the wire 1.5.0 subset they still serve, each with its single L3 gap named below. The smallest suite in the table is 26 cases: a runtime that advertises an optional capability also runs the case gated on it, and a runtime frozen on an older wire skips the newer-wire cases instead of failing them. Generated from `certification/*.json` by `scripts/render_certification.py`; CI fails when this block no longer matches the reports.
+**15 adapters certified against the same language-neutral fixtures** (`fixtureVersion` 17): 14 at Level 3 and 1 source-level adapter(s) at Level 2 — frozen on the wire 1.5.0 subset they still serve, each with its single L3 gap named below. The smallest suite in the table is 26 cases: a runtime that advertises an optional capability also runs the case gated on it, and a runtime frozen on an older wire skips the newer-wire cases instead of failing them. Generated from `certification/*.json` by `scripts/render_certification.py`; CI fails when this block no longer matches the reports.
 
 | Adapter | Framework | Transport exercised | Level | Cases | Report |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -45,6 +45,8 @@
 | `php-laravel` | Laravel / Symfony | PHP `POST /__oumv/rpc` + stdio | **3** | 26/26 | [certification/php-laravel-readonly.json](certification/php-laravel-readonly.json) |
 | `php-laravel` | Laravel / Symfony | PHP `POST /__oumv/rpc` + stdio | **3** | 41/41 | [certification/php-laravel.json](certification/php-laravel.json) |
 | `python-fastapi` | FastAPI | ASGI `POST /__oumv/rpc` | **3** | 48/48 | [certification/python-fastapi.json](certification/python-fastapi.json) |
+| `python-starlette` | starlette | — | **3** | 28/28 | [certification/python-starlette-readonly.json](certification/python-starlette-readonly.json) |
+| `python-starlette` | starlette | — | **3** | 48/48 | [certification/python-starlette.json](certification/python-starlette.json) |
 
 Source-level adapters scan the framework's route declarations statically, apply OCC-checked edits and run a real verify command, but they do not boot the application — so they record no live request traces, `observe-l4-returns-recorded-traces` fails, and Level 3 is not claimed:
 
@@ -73,6 +75,8 @@ Transport certificates run the same suite over the optional bindings, plus the f
 | [transports/node-stdio.json](certification/transports/node-stdio.json) | `node-stdio` | stdio | 45/45 |
 | [transports/python-fastapi-sse.json](certification/transports/python-fastapi-sse.json) | `python-fastapi-sse` | sse | 52/52 |
 | [transports/python-fastapi-ws.json](certification/transports/python-fastapi-ws.json) | `python-fastapi-ws` | ws | 49/49 |
+| [transports/python-starlette-sse.json](certification/transports/python-starlette-sse.json) | `python-starlette-sse` | sse | 52/52 |
+| [transports/python-starlette-ws.json](certification/transports/python-starlette-ws.json) | `python-starlette-ws` | ws | 49/49 |
 | [transports/python-stdio.json](certification/transports/python-stdio.json) | `python-stdio` | stdio | 45/45 |
 <!-- certification:end -->
 
