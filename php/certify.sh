@@ -107,7 +107,10 @@ cp -R "$HERE/testdata/laravel-app" "$TMP/app"
 echo "▸ php: $("$PHP" -r 'echo PHP_VERSION;') ($PHP)"
 echo "▸ workspace: $TMP/app (throw-away copy of testdata/laravel-app)"
 echo "▸ installing the fixture's Composer dependencies (Composer: $COMPOSER)"
-( cd "$TMP/app" && $COMPOSER install --no-interaction --no-progress --quiet )
+# The fixture ships a composer.lock, so this is a resolved install (no version
+# resolution against a moving Packagist) and COMPOSER_NO_AUDIT keeps advisory
+# noise from failing a certification that is about the OUMV wire, not the fixture.
+( cd "$TMP/app" && COMPOSER_NO_AUDIT=1 $COMPOSER install --no-interaction --no-progress )
 
 APP_PORT="$("$NODE" -e 'const s=require("net").createServer();s.listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close();});')"
 APP_LOG="$(dirname "$TMP")/$(basename "$TMP").laravel.log"

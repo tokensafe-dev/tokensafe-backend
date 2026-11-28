@@ -165,6 +165,9 @@ jobs:
         uses: shivammathur/setup-php@v2
         with:
           php-version: '8.3'
+          # The Laravel fixture is a real application: its dependency set needs the
+          # extensions the default setup-php list omits (fileinfo/iconv/session/...).
+          extensions: mbstring, dom, fileinfo, iconv, openssl, tokenizer, ctype, filter, session, xml, json, curl, sqlite3, pdo
 
       - name: Setup .NET
         uses: actions/setup-dotnet@v4
