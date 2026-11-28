@@ -35,6 +35,11 @@ func main() {
 		cfg.Security.AuthToken = *token
 		cfg.Security.AuthenticationRequired = true
 	}
+	// §14.2 workspace policy: the policy certificate runs the same server with the
+	// query permission switched off — oumv/query stays registered and answers -32007.
+	if os.Getenv("TOKENSAFE_CERT_QUERY_DISABLED") == "1" {
+		cfg.Permissions = &oumv.PermissionsConfig{QueryDisabled: true}
+	}
 	rt := oumv.NewRuntime(oumv.Config{
 		Name:         "tokensafe-stdhttp-cert",
 		Version:      "cert",

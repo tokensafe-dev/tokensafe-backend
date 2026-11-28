@@ -1,0 +1,265 @@
+{
+  "adapterName": "python-fastapi",
+  "framework": "fastapi",
+  "specVersion": "1.6.0",
+  "fixtureVersion": 17,
+  "total": 48,
+  "passed": 48,
+  "failed": 0,
+  "skipped": 0,
+  "attainedLevel": 3,
+  "levels": {
+    "1": "passed",
+    "2": "passed",
+    "3": "passed"
+  },
+  "cases": [
+    {
+      "id": "handshake-negotiates-capabilities",
+      "level": 1,
+      "status": "passed"
+    },
+    {
+      "id": "unknown-session-is-rejected",
+      "level": 1,
+      "status": "passed"
+    },
+    {
+      "id": "unknown-method-is-jsonrpc-method-not-found",
+      "level": 1,
+      "status": "passed"
+    },
+    {
+      "id": "observe-l0-returns-pulse",
+      "level": 1,
+      "status": "passed"
+    },
+    {
+      "id": "observe-l1-returns-surface",
+      "level": 1,
+      "status": "passed"
+    },
+    {
+      "id": "observe-l2-returns-targeted-contract",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "observe-l3-returns-source-and-occ-version",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "get-source-returns-occ-token",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "observe-l4-returns-recorded-traces",
+      "level": 3,
+      "status": "passed"
+    },
+    {
+      "id": "understand-impact-resolves-target",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "understand-causality-after-execution",
+      "level": 3,
+      "status": "passed"
+    },
+    {
+      "id": "verify-returns-status-timings-and-scope",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "occ-conflict-rejected",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "apply-edit-without-version-rejected",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "syntax-guard-rejects-broken-code",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "path-traversal-blocked",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "missing-resource-rejected",
+      "level": 1,
+      "status": "passed"
+    },
+    {
+      "id": "apply-edit-returns-real-occ-version",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "create-new-file",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "create-existing-file-rejected",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "apply-edit-patch-target-missing",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "apply-edit-patch-splices",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "verify-multi-step-runs-in-order",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "apply-edit-replace-symbol",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "apply-edit-delete-forbids-replacement",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "apply-edit-delete",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "apply-edit-rename",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "observe-l1-pagination",
+      "level": 1,
+      "status": "passed"
+    },
+    {
+      "id": "apply-edit-unknown-mode-rejected",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "apply-edit-create-forbids-version",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "get-source-unknown-symbol-rejected",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "observe-unknown-level-rejected",
+      "level": 1,
+      "status": "passed"
+    },
+    {
+      "id": "handshake-rejects-unknown-version",
+      "level": 1,
+      "status": "passed"
+    },
+    {
+      "id": "observe-carries-workspace-version",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "understand-carries-workspace-version",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "observe-ifversion-match-answers-unchanged",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "observe-stale-token-rejected",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "verify-sandbox-rolls-back",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "apply-edit-batch-applies-all",
+      "level": 3,
+      "status": "passed"
+    },
+    {
+      "id": "apply-edit-batch-is-atomic",
+      "level": 3,
+      "status": "passed"
+    },
+    {
+      "id": "preview-edit-does-not-write",
+      "level": 3,
+      "status": "passed"
+    },
+    {
+      "id": "apply-edit-idempotency-key-replays",
+      "level": 3,
+      "status": "passed"
+    },
+    {
+      "id": "cancel-unknown-request-id-is-not-an-error",
+      "level": 1,
+      "status": "passed"
+    },
+    {
+      "id": "index-returns-ranked-matches",
+      "level": 3,
+      "status": "passed"
+    },
+    {
+      "id": "build-returns-status-and-diagnostics",
+      "level": 3,
+      "status": "passed"
+    },
+    {
+      "id": "expired-session-is-rejected",
+      "level": 3,
+      "status": "passed"
+    },
+    {
+      "id": "policy-query-disabled-is-refused",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "policy-observe-is-unaffected",
+      "level": 1,
+      "status": "passed"
+    }
+  ],
+  "generatedAt": "2026-11-28T18:01:18.589Z",
+  "environment": {
+    "transport": "http",
+    "profile": "backend",
+    "policy": "query_disabled",
+    "node": "v24.14.0"
+  }
+}

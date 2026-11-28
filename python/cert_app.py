@@ -14,6 +14,10 @@ from sqlalchemy import create_engine, text
 
 from tokensafe_python.adapters.fastapi import mount_tokensafe
 
+# §14.2 workspace policy: the runtime keeps observeQuery.readOnly advertised and
+# answers oumv/query with -32007 query_disabled (fixtures policyCases).
+QUERY_DISABLED = os.environ.get("TOKENSAFE_CERT_QUERY_DISABLED") == "1"
+
 WORKSPACE = os.environ.get("TOKENSAFE_CERT_WORKSPACE") or os.getcwd()
 DB_PATH = os.path.join(WORKSPACE, "cert.sqlite")
 
@@ -23,7 +27,8 @@ with engine.begin() as connection:
     connection.execute(text("INSERT OR IGNORE INTO cert_probe (id, v) VALUES (1, 0)"))
 
 app = FastAPI()
-mounted = mount_tokensafe(app, auto_discover=False, project_root=WORKSPACE, db_engine=engine)
+mounted = mount_tokensafe(app, auto_discover=False, project_root=WORKSPACE, db_engine=engine,
+                          permissions={"query": False} if QUERY_DISABLED else None)
 mounted.runtime.register_route("/api/v1/orders", "GET", "orders")
 
 

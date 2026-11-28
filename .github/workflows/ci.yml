@@ -250,6 +250,21 @@ jobs:
           REPORT_DIR: ${{ github.workspace }}/cert-fresh
         run: ./python/certify-starlette.sh
 
+      # §14.2 workspace policy: the same runtimes started with permissions.query=false.
+      # The refusal is -32007 query_disabled on a registered method, the shape §3.1
+      # rule 5 reserves for policy — it cannot come from a read-only certificate.
+      - name: Generate Go policy certificate (query disabled)
+        env:
+          OUMV_REPO: ${{ github.workspace }}/vendor/oumv
+          REPORT_DIR: ${{ github.workspace }}/cert-fresh
+        run: ./go/certify-policy.sh
+
+      - name: Generate Python (FastAPI) policy certificate (query disabled)
+        env:
+          OUMV_REPO: ${{ github.workspace }}/vendor/oumv
+          REPORT_DIR: ${{ github.workspace }}/cert-fresh
+        run: ./python/certify-policy.sh
+
       # Source-level adapters: same fixtures, static route scan, no live app — the
       # L4 trace case fails by design and the report names it.
       - name: Generate Java (Spring) adapter report

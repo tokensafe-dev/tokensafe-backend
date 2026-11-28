@@ -40,7 +40,7 @@ interface CertApp {
  * read-only query hook are what let the report claim the 2 Level-3 capability cases
  * a Next.js cert cannot (48 base instead of 46).
  */
-async function startCertApp(): Promise<CertApp> {
+async function startCertApp(options: { queryDisabled?: boolean } = {}): Promise<CertApp> {
   const workspace = createWorkspace();
   const db = new Database(':memory:');
   db.run('CREATE TABLE fixture (id INTEGER PRIMARY KEY)');
@@ -69,6 +69,7 @@ async function startCertApp(): Promise<CertApp> {
     workspaceDir: workspace.dir,
     authToken: CERT_TOKEN,
     sandbox,
+    ...(options.queryDisabled ? { permissions: { query: false } } : {}),
   });
   const app = new Elysia()
     .get('/api/orders', () => ({ orders: [] }))
@@ -208,6 +209,32 @@ describe('Elysia/Bun certificate', () => {
       }
     },
     120_000
+  );
+  it(
+    'certifies the §14.2 workspace policy (permissions.query=false)',
+    async () => {
+      if (!hasConformanceRunner) return; // runner not built in agent-oumv
+      const live = await startCertApp({ queryDisabled: true });
+      try {
+        const { loadFixtures, runFixtureSuite, httpTransport } = require(CONFORMANCE_ENTRY);
+        const transport = httpTransport({ url: live.rpcUrl, token: CERT_TOKEN });
+        const report = await runFixtureSuite(transport, loadFixtures(FIXTURES_PATH), live.workspace.markers, {
+          adapterName: 'bun-elysia',
+          negotiatedVersion: '1.6.0',
+          auth: true,
+          policy: true,
+          environment: { transport: 'http', policy: 'query_disabled', runtime: `bun ${Bun.version}` },
+        });
+        const policyCases = report.cases.filter((c: any) => c.id.startsWith('policy-')).map((c: any) => c.id);
+        // The refusal is -32007 with the registry reason, and observe is unaffected.
+        expect(policyCases.sort()).toEqual(['policy-observe-is-unaffected', 'policy-query-disabled-is-refused']);
+        expect(report.cases.filter((c: any) => c.status !== 'passed')).toEqual([]);
+        writeReport('bun-elysia-query-disabled.json', report);
+      } finally {
+        await live.cleanup();
+      }
+    },
+    60000,
   );
 });
 
