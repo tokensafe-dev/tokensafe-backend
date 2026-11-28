@@ -168,7 +168,7 @@ if (($argv[3] ?? '') === '--symfony') {
 $handshake = rpc('oumv/handshake', ['protocolVersion' => '1.0.0']);
 $hs = result($handshake);
 check('handshake returns result', isset($handshake['result']));
-check('handshake protocolVersion is 1.4.0', ($hs['protocolVersion'] ?? '') === '1.4.0', (string) ($hs['protocolVersion'] ?? ''));
+check('handshake protocolVersion is 1.6.0', ($hs['protocolVersion'] ?? '') === '1.6.0', (string) ($hs['protocolVersion'] ?? ''));
 check('handshake profile is backend', ($hs['profile'] ?? '') === 'backend');
 check('handshake names runtimeInfo', ($hs['runtimeInfo']['name'] ?? '') === 'oumv-php' && ($hs['runtimeInfo']['version'] ?? '') !== '');
 check('handshake issues sessionId', is_string($hs['sessionId'] ?? null) && str_starts_with((string) $hs['sessionId'], 'sess-'));
@@ -483,6 +483,48 @@ $read = [$pipes[1]];
 $ready = @stream_select($read, $write, $except, 5);
 $parseLine = $ready === 1 ? json_decode(trim((string) fgets($pipes[1])), true) : null;
 check('malformed JSON is -32700', (int) ($parseLine['error']['code'] ?? 0) === -32700);
+
+// --- read-only profile through the environment (stdio) ----------------------
+//
+// The engine's spawn_env() exports OUMV_READ_ONLY=1 for every transport, so a
+// `--stdio` child must honour it too. It used to be applied only in the
+// cli-server SAPI, which silently kept the write methods registered.
+
+$readOnlyEnv = getenv();
+$readOnlyEnv['OUMV_READ_ONLY'] = '1';
+$roProcess = proc_open([$phpBinary, $adapter, '--root', $root, '--stdio'], $descriptors, $roPipes, null, $readOnlyEnv);
+check('read-only child starts', is_resource($roProcess));
+
+if (is_resource($roProcess)) {
+    $roRpc = static function (int $id, string $method, array $params) use ($roPipes): array {
+        fwrite($roPipes[0], json_encode(['jsonrpc' => '2.0', 'id' => $id, 'method' => $method, 'params' => $params], JSON_UNESCAPED_SLASHES) . "\n");
+        fflush($roPipes[0]);
+        $read = [$roPipes[1]];
+        $write = null;
+        $except = null;
+        if (@stream_select($read, $write, $except, 20) !== 1) {
+            return [];
+        }
+        $decoded = json_decode(trim((string) fgets($roPipes[1])), true);
+        return is_array($decoded) ? $decoded : [];
+    };
+
+    $roHandshake = $roRpc(1, 'oumv/handshake', ['protocolVersion' => '1.0.0']);
+    $roCaps = $roHandshake['result']['capabilities'] ?? [];
+    check('read-only handshake (stdio env) advertises readOnly', ($roCaps['readOnly'] ?? false) === true);
+    check('read-only handshake omits mutate', !array_key_exists('mutate', $roCaps));
+    check('read-only handshake omits verify', !array_key_exists('verify', $roCaps));
+
+    $roEdit = $roRpc(2, 'oumv/applyEdit', ['path' => 'routes/web.php', 'replacement' => 'x', 'expectedVersion' => 'deadbeef']);
+    check('read-only applyEdit under stdio is -32601', errorCode($roEdit) === -32601, (string) errorCode($roEdit));
+    $roObserve = $roRpc(3, 'oumv/observe', ['level' => 'L0']);
+    check('read-only observe still answers under stdio', isset($roObserve['result']));
+
+    fclose($roPipes[0]);
+    fclose($roPipes[1]);
+    fclose($roPipes[2]);
+    proc_close($roProcess);
+}
 
 // --- shutdown -------------------------------------------------------------
 

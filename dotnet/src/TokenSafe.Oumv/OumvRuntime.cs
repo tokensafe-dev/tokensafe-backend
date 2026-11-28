@@ -22,6 +22,8 @@ public sealed class OumvRuntime
     private readonly List<OumvTrace> _traces = new();
     // §3 cooperative cancellation: requestId -> the token its handler observes.
     private readonly System.Collections.Concurrent.ConcurrentDictionary<string, CancellationTokenSource> _inFlight = new();
+    // §3 idempotency (wire 1.6.0): sessionId:idempotencyKey -> the first final result.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, (DateTimeOffset StoredAt, JsonNode Result)> _idempotency = new(StringComparer.Ordinal);
     private volatile string _lastRequestId = string.Empty;
     private readonly object _traceGate = new();
     private readonly DateTimeOffset _started;
@@ -175,8 +177,8 @@ public sealed class OumvRuntime
                 "oumv/observe" => Observe(paramsNode),
                 "oumv/understand" => await UnderstandAsync(paramsNode, cancellationToken),
                 "oumv/getSource" => GetSource(paramsNode),
-                "oumv/applyEdit" => ApplyEdit(paramsNode),
-                "oumv/previewEdit" => PreviewEdit(paramsNode),
+                "oumv/applyEdit" => ApplyEditIdempotent(paramsNode),
+                "oumv/previewEdit" => PreviewEditIdempotent(paramsNode),
                 "oumv/index" => IndexSymbols(paramsNode),
                 "oumv/build" => await BuildAsync(paramsNode, cancellationToken),
                 "oumv/cancel" => Cancel(paramsNode),
@@ -273,7 +275,7 @@ public sealed class OumvRuntime
             ("index", OumvJson.Obj(("symbols", true))),
             // §14.2 is opt-in per app: without a DbContext there is no read-only door.
             ("observeQuery", OumvJson.Obj(("readOnly", _sandbox.HasEngine))),
-            ("sessions", OumvJson.Obj(("ttlSeconds", true), ("cancel", true))),
+            ("sessions", OumvJson.Obj(("ttlSeconds", true), ("cancel", true), ("idempotency", true))),
             ("transports", new[] { "http", "sse", "ws" }));
 
         // §8.5: a read-only deployment advertises neither pillar and says so explicitly,
@@ -289,8 +291,21 @@ public sealed class OumvRuntime
         return capabilities;
     }
 
-    private JsonNode Disconnect(JsonObject parameters) =>
-        OumvJson.Obj(("closed", Sessions.Delete(OumvJson.Str(parameters["sessionId"]))));
+    private JsonNode Disconnect(JsonObject parameters)
+    {
+        var sessionId = OumvJson.Str(parameters["sessionId"]);
+        var closed = Sessions.Delete(sessionId);
+        // §3: replay entries are session-scoped, so they die with the session.
+        if (!string.IsNullOrEmpty(sessionId))
+        {
+            foreach (var entry in _idempotency)
+            {
+                if (entry.Key.StartsWith(sessionId + ":", StringComparison.Ordinal))
+                    _idempotency.TryRemove(entry.Key, out _);
+            }
+        }
+        return OumvJson.Obj(("closed", closed));
+    }
 
     /* -------------------------------------------------------- result versioning */
 
@@ -647,6 +662,45 @@ public sealed class OumvRuntime
 
     /* --------------------------------------------------------------- applyEdit */
 
+    /// <summary>
+    /// §3 idempotency: a retry carrying the same `idempotencyKey` gets the FIRST final
+    /// result verbatim instead of a second write or a spurious -32001. Keyed by
+    /// sessionId:key, pruned when the session goes away.
+    /// </summary>
+    private JsonObject ApplyEditIdempotent(JsonObject parameters) =>
+        WithIdempotency(parameters, ApplyEdit);
+
+    private JsonObject PreviewEditIdempotent(JsonObject parameters) =>
+        WithIdempotency(parameters, PreviewEdit);
+
+    private JsonObject WithIdempotency(JsonObject parameters, Func<JsonObject, JsonObject> invoke)
+    {
+        var key = OumvJson.Str(parameters["idempotencyKey"])?.Trim();
+        if (string.IsNullOrEmpty(key)) return invoke(parameters);
+
+        var sessionId = OumvJson.Str(parameters["sessionId"]) ?? "default";
+        var cacheKey = sessionId + ":" + key;
+        if (_idempotency.TryGetValue(cacheKey, out var cached))
+            return (JsonObject)cached.Result.DeepClone();
+
+        var result = invoke(parameters);
+        PruneIdempotency();
+        _idempotency[cacheKey] = (_time.GetUtcNow(), result.DeepClone());
+        return result;
+    }
+
+    /// <summary>Drops replay entries whose session no longer exists, so the map cannot grow forever.</summary>
+    private void PruneIdempotency()
+    {
+        if (_idempotency.Count < 256) return;
+        foreach (var entry in _idempotency)
+        {
+            var separator = entry.Key.IndexOf(':');
+            var sessionId = separator < 0 ? entry.Key : entry.Key[..separator];
+            if (!Sessions.Validate(sessionId)) _idempotency.TryRemove(entry.Key, out _);
+        }
+    }
+
     private JsonObject ApplyEdit(JsonObject parameters)
     {
         if (!_options.EnableMutations)
@@ -699,6 +753,11 @@ public sealed class OumvRuntime
                 if (!File.Exists(absolute)) throw OumvException.NotFound($"RESOURCE_NOT_FOUND: {path}");
                 var current = _editor.ReadText(absolute);
                 var currentVersion = OumvJson.Sha256(current);
+                // §4.3 guard order: splice + syntax-check the result (step 3) before
+                // the expectedVersion rules (steps 4-5).
+                var patched = _editor.ApplyHunks(current, parameters["hunks"] as JsonArray);
+                var syntax = _editor.Check(absolute, patched);
+                if (syntax.Status == "failed") throw SyntaxError(syntax);
                 if (string.IsNullOrEmpty(expectedVersion))
                     throw OumvException.Validation(
                         "VALIDATION_FAILED: expectedVersion is required to edit an existing file — call oumv/getSource (or observe L3) and pass its version",
@@ -706,9 +765,6 @@ public sealed class OumvRuntime
                 if (expectedVersion != currentVersion)
                     throw OumvException.Conflict($"version mismatch: expected {expectedVersion}, current is {currentVersion}",
                         new Dictionary<string, object?> { ["reason"] = "version_mismatch", ["expected"] = expectedVersion, ["current"] = currentVersion });
-                var patched = _editor.ApplyHunks(current, parameters["hunks"] as JsonArray);
-                var syntax = _editor.Check(absolute, patched);
-                if (syntax.Status == "failed") throw SyntaxError(syntax);
                 var backup = _editor.Backup(absolute, Encoding.UTF8.GetBytes(current));
                 _editor.Write(absolute, patched);
                 return OumvJson.Obj(
@@ -772,15 +828,17 @@ public sealed class OumvRuntime
                 if (!File.Exists(absolute)) throw OumvException.NotFound($"RESOURCE_NOT_FOUND: {path}");
                 var current = _editor.ReadText(absolute);
                 var currentVersion = OumvJson.Sha256(current);
+                // §4.3 guard order: build + syntax-check the patched text (step 3)
+                // before the expectedVersion rules (steps 4-5).
+                var patched = _editor.ReplaceSymbol(absolute, current, symbol, replacement ?? string.Empty);
+                var syntax = _editor.Check(absolute, patched);
+                if (syntax.Status == "failed") throw SyntaxError(syntax);
                 if (string.IsNullOrEmpty(expectedVersion))
                     throw OumvException.Validation("VALIDATION_FAILED: expectedVersion is required to edit a symbol",
                         new Dictionary<string, object?> { ["reason"] = "expected_version_required", ["path"] = path });
                 if (expectedVersion != currentVersion)
                     throw OumvException.Conflict($"version mismatch: expected {expectedVersion}, current is {currentVersion}",
                         new Dictionary<string, object?> { ["reason"] = "version_mismatch", ["expected"] = expectedVersion, ["current"] = currentVersion });
-                var patched = _editor.ReplaceSymbol(absolute, current, symbol, replacement ?? string.Empty);
-                var syntax = _editor.Check(absolute, patched);
-                if (syntax.Status == "failed") throw SyntaxError(syntax);
                 var backup = _editor.Backup(absolute, Encoding.UTF8.GetBytes(current));
                 _editor.Write(absolute, patched);
                 return OumvJson.Obj(
@@ -800,6 +858,10 @@ public sealed class OumvRuntime
                 if (!File.Exists(absolute)) throw OumvException.NotFound($"RESOURCE_NOT_FOUND: {path}");
                 var current = File.ReadAllBytes(absolute);
                 var currentVersion = SourceEditor.Version(current);
+                // §4.3 guard order: syntax pre-flight (step 3) before the
+                // expectedVersion rules (steps 4-5).
+                var syntax = _editor.Check(absolute, replacement);
+                if (syntax.Status == "failed") throw SyntaxError(syntax);
                 if (string.IsNullOrEmpty(expectedVersion))
                     throw OumvException.Validation(
                         "VALIDATION_FAILED: expectedVersion is required to edit an existing file — call oumv/getSource (or observe L3) and pass its version",
@@ -807,8 +869,6 @@ public sealed class OumvRuntime
                 if (expectedVersion != currentVersion)
                     throw OumvException.Conflict($"version mismatch: expected {expectedVersion}, current is {currentVersion}",
                         new Dictionary<string, object?> { ["reason"] = "version_mismatch", ["expected"] = expectedVersion, ["current"] = currentVersion });
-                var syntax = _editor.Check(absolute, replacement);
-                if (syntax.Status == "failed") throw SyntaxError(syntax);
                 var backup = _editor.Backup(absolute, current);
                 _editor.Write(absolute, replacement);
                 return OumvJson.Obj(
@@ -886,6 +946,32 @@ public sealed class OumvRuntime
                 throw fail(OumvException.NotFound($"RESOURCE_NOT_FOUND: {path}"));
             var current = File.ReadAllText(absolute, Encoding.UTF8);
             var currentVersion = OumvJson.Sha256(current);
+
+            // §4.3 guard order: the syntax pre-flight (step 3) runs before the
+            // expectedVersion rules (steps 4-5) — the resulting bytes are known
+            // first, the version is asserted second.
+            string stagedContent;
+            var hunksApplied = 0;
+            if (mode == "patch")
+            {
+                var hunks = item["hunks"] as JsonArray;
+                if (hunks is null || hunks.Count == 0)
+                    throw fail(OumvException.Validation("VALIDATION_FAILED: hunks is required for mode=patch",
+                        new Dictionary<string, object?> { ["reason"] = "hunks_required" }));
+                try { stagedContent = _editor.ApplyHunks(current, hunks); }
+                catch (OumvException hunkError) { throw fail(hunkError); }
+                hunksApplied = hunks.Count;
+            }
+            else
+            {
+                if (string.IsNullOrEmpty(replacement))
+                    throw fail(OumvException.Validation("VALIDATION_FAILED: replacement is required for mode=replace",
+                        new Dictionary<string, object?> { ["reason"] = "replacement_required" }));
+                stagedContent = replacement;
+            }
+            var stagedSyntax = _editor.Check(absolute, stagedContent);
+            if (stagedSyntax.Status == "failed") throw fail(SyntaxError(stagedSyntax));
+
             if (string.IsNullOrEmpty(expectedVersion))
                 throw fail(OumvException.Validation("VALIDATION_FAILED: expectedVersion is required to edit an existing file",
                     new Dictionary<string, object?> { ["reason"] = "expected_version_required", ["current"] = currentVersion }));
@@ -893,27 +979,7 @@ public sealed class OumvRuntime
                 throw fail(OumvException.Conflict($"version mismatch: expected {expectedVersion}, current is {currentVersion}",
                     new Dictionary<string, object?> { ["reason"] = "version_mismatch", ["expected"] = expectedVersion, ["current"] = currentVersion }));
 
-            if (mode == "patch")
-            {
-                var hunks = item["hunks"] as JsonArray;
-                if (hunks is null || hunks.Count == 0)
-                    throw fail(OumvException.Validation("VALIDATION_FAILED: hunks is required for mode=patch",
-                        new Dictionary<string, object?> { ["reason"] = "hunks_required" }));
-                string patched;
-                try { patched = _editor.ApplyHunks(current, hunks); }
-                catch (OumvException hunkError) { throw fail(hunkError); }
-                var syntax = _editor.Check(absolute, patched);
-                if (syntax.Status == "failed") throw fail(SyntaxError(syntax));
-                staged.Add(new StagedEdit(absolute, key, patched, Encoding.UTF8.GetBytes(current), false, hunks.Count));
-                continue;
-            }
-
-            if (string.IsNullOrEmpty(replacement))
-                throw fail(OumvException.Validation("VALIDATION_FAILED: replacement is required for mode=replace",
-                    new Dictionary<string, object?> { ["reason"] = "replacement_required" }));
-            var replaceSyntax = _editor.Check(absolute, replacement);
-            if (replaceSyntax.Status == "failed") throw fail(SyntaxError(replaceSyntax));
-            staged.Add(new StagedEdit(absolute, key, replacement, Encoding.UTF8.GetBytes(current), false, 0));
+            staged.Add(new StagedEdit(absolute, key, stagedContent, Encoding.UTF8.GetBytes(current), false, hunksApplied));
         }
 
         var written = new List<StagedEdit>(staged.Count);

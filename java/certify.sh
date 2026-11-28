@@ -178,4 +178,26 @@ if (r.attainedLevel < Number(process.argv[2]) || bad.length) process.exit(1);
 fi
 
 echo
+echo "== read-only profile (§8.5): method absence, proven by the read-only-* cases"
+cp -R "$HERE/testdata/spring-app" "$WORK/app-ro"
+RO_REPORT="${REPORT%.json}-readonly.json"
+RO_STDIO_CMD="java \"$ADAPTER\" --root \"$WORK/app-ro\" --stdio --read-only --verify-file \"$VERIFY_FILE\""
+set +e
+node "$CERTIFY" --adapter java-spring --framework spring --profile backend \
+  --stdio "$RO_STDIO_CMD" --fixtures "$FIXTURES" --markers "@$MARKERS" \
+  --report "$RO_REPORT" --min-level 1 --quiet >/dev/null 2>&1
+set -e
+node -e '
+const r = require(process.argv[1]);
+const ro = r.cases.filter((c) => c.id.startsWith("read-only-"));
+const failed = ro.filter((c) => c.status !== "passed");
+const unexpected = r.cases.filter((c) => c.status !== "passed" && c.id !== "observe-l4-returns-recorded-traces");
+console.log("  read-only: level " + r.attainedLevel + " · " + r.passed + "/" + r.total +
+  " · " + ro.length + " read-only cases");
+if (ro.length < 6) { console.error("✗ the read-only cases are missing from the report"); process.exit(1); }
+if (failed.length) { console.error("✗ read-only failures: " + failed.map((c) => c.id + ": " + c.error).join("; ")); process.exit(1); }
+if (unexpected.length) { console.error("✗ unexpected failures: " + unexpected.map((c) => c.id).join(", ")); process.exit(1); }
+' "$RO_REPORT"
+
+echo
 echo "report: $REPORT"

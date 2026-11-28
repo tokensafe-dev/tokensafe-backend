@@ -2,7 +2,7 @@
   "adapterName": "python-fastapi",
   "framework": "fastapi",
   "specVersion": "1.6.0",
-  "fixtureVersion": 15,
+  "fixtureVersion": 17,
   "total": 48,
   "passed": 48,
   "failed": 0,
@@ -302,5 +302,5 @@
       "error": ""
     }
   ],
-  "generatedAt": "2026-11-28T05:45:59Z"
+  "generatedAt": "2026-11-28T17:10:26Z"
 }

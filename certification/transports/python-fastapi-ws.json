@@ -2,7 +2,7 @@
   "adapterName": "python-fastapi-ws",
   "framework": "fastapi",
   "specVersion": "1.6.0",
-  "fixtureVersion": 15,
+  "fixtureVersion": 17,
   "total": 49,
   "passed": 49,
   "failed": 0,
@@ -260,7 +260,7 @@
       "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-28T05:47:20.751Z",
+  "generatedAt": "2026-11-28T17:11:16.274Z",
   "environment": {
     "transport": "ws",
     "profile": "backend",

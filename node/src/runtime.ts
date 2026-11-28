@@ -1139,6 +1139,28 @@ export class OumvRuntime {
         }
         const current = fs.readFileSync(resolved, 'utf-8');
         const currentVersion = sha256(current);
+        // §4.3 guard order: the syntax pre-flight (step 3) runs before the
+        // expectedVersion rules (steps 4-5) in every batch item too.
+        let content: string;
+        let hunksApplied: number | undefined;
+        if (mode === 'patch') {
+          const hunks: any[] = Array.isArray(item.hunks) ? item.hunks : [];
+          if (hunks.length === 0) {
+            throw validationFailed('VALIDATION_FAILED: hunks is required for mode=patch', {
+              reason: 'hunks_required',
+            });
+          }
+          content = this.spliceHunks(current, hunks);
+          hunksApplied = hunks.length;
+        } else {
+          content = String(item.replacement ?? '');
+          if (!content) {
+            throw validationFailed('VALIDATION_FAILED: replacement is required for mode=replace', {
+              reason: 'replacement_required',
+            });
+          }
+        }
+        checkSyntax(resolved, content);
         const expectedVersion = String(item.expectedVersion ?? '').trim();
         if (!expectedVersion) {
           throw validationFailed('VALIDATION_FAILED: expectedVersion is required to edit an existing file', {
@@ -1153,26 +1175,7 @@ export class OumvRuntime {
             current: currentVersion,
           });
         }
-        if (mode === 'patch') {
-          const hunks: any[] = Array.isArray(item.hunks) ? item.hunks : [];
-          if (hunks.length === 0) {
-            throw validationFailed('VALIDATION_FAILED: hunks is required for mode=patch', {
-              reason: 'hunks_required',
-            });
-          }
-          const text = this.spliceHunks(current, hunks);
-          checkSyntax(resolved, text);
-          staged.push({ resolved, rel, content: text, previous: current, created: false, hunksApplied: hunks.length });
-          return;
-        }
-        const replacement = String(item.replacement ?? '');
-        if (!replacement) {
-          throw validationFailed('VALIDATION_FAILED: replacement is required for mode=replace', {
-            reason: 'replacement_required',
-          });
-        }
-        checkSyntax(resolved, replacement);
-        staged.push({ resolved, rel, content: replacement, previous: current, created: false });
+        staged.push({ resolved, rel, content, previous: current, created: false, hunksApplied });
       } catch (err) {
         annotate(err);
       }
@@ -1302,6 +1305,10 @@ export class OumvRuntime {
       }
       const current = fs.readFileSync(resolved, 'utf-8');
       const currentVersion = sha256(current);
+      // §4.3 guard order: splice + syntax-check the result (step 3) before the
+      // expectedVersion rules (steps 4-5).
+      const text = this.spliceHunks(current, hunks);
+      const syntax = checkSyntax(resolved, text);
       const expectedVersion = String(params.expectedVersion ?? '').trim();
       if (!expectedVersion) {
         throw validationFailed(
@@ -1315,8 +1322,6 @@ export class OumvRuntime {
           current: currentVersion,
         });
       }
-      const text = this.spliceHunks(current, hunks);
-      const syntax = checkSyntax(resolved, text);
       let backupPath: string | undefined;
       try {
         const backupDir = path.join(this.workspaceDir, '.tokensafe', 'backups');
@@ -1426,6 +1431,14 @@ export class OumvRuntime {
         throw resourceNotFound(`RESOURCE_NOT_FOUND: ${requestedPath}`);
       }
       const current = fs.readFileSync(resolved, 'utf-8');
+      // §4.3 guard order: resolve the symbol and syntax-check the patched text
+      // (steps 2-3) before the expectedVersion rules (steps 4-5).
+      const range = extractSymbolRange(current, symbol);
+      if (!range) {
+        throw resourceNotFound(`RESOURCE_NOT_FOUND: symbol ${JSON.stringify(symbol)} not found in ${requestedPath}`);
+      }
+      const patched = replaceLines(current, range.startLine, range.endLine, replacement);
+      const syntax = checkSyntax(resolved, patched);
       const expectedVersion = String(params.expectedVersion ?? '').trim();
       if (!expectedVersion) {
         throw validationFailed('VALIDATION_FAILED: expectedVersion is required to edit a symbol', {
@@ -1440,12 +1453,6 @@ export class OumvRuntime {
           current: currentVersion,
         });
       }
-      const range = extractSymbolRange(current, symbol);
-      if (!range) {
-        throw resourceNotFound(`RESOURCE_NOT_FOUND: symbol ${JSON.stringify(symbol)} not found in ${requestedPath}`);
-      }
-      const patched = replaceLines(current, range.startLine, range.endLine, replacement);
-      const syntax = checkSyntax(resolved, patched);
       let backupPath: string | undefined;
       try {
         const backupDir = path.join(this.workspaceDir, '.tokensafe', 'backups');

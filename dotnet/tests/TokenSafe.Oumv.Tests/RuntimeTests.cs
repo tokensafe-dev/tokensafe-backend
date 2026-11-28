@@ -192,8 +192,9 @@ public sealed class RuntimeTests : IDisposable
     }
 
     [Fact]
-    public async Task Replace_checks_occ_before_syntax()
+    public async Task Replace_checks_syntax_before_occ()
     {
+        // §4.3 guard order: syntax pre-flight is guard 3, the OCC match guard 5.
         Write("target.cs", "public static class Value { public static int Number => 41; }\n");
         var stale = await Call("oumv/applyEdit", new JsonObject
         {
@@ -201,7 +202,7 @@ public sealed class RuntimeTests : IDisposable
             ["replacement"] = "not valid csharp (",
             ["expectedVersion"] = "sha256:" + new string('0', 64),
         });
-        Assert.Equal(OumvErrorCode.ConflictDetected, ErrorCode(stale));
+        Assert.Equal(OumvErrorCode.SyntaxError, ErrorCode(stale));
 
         var missing = await Call("oumv/applyEdit", new JsonObject
         {
@@ -209,6 +210,92 @@ public sealed class RuntimeTests : IDisposable
             ["replacement"] = "public static class Value { }\n",
         });
         Assert.Equal(OumvErrorCode.ValidationFailed, ErrorCode(missing));
+    }
+
+    [Fact]
+    public async Task ApplyEdit_replays_the_first_result_for_the_same_idempotency_key()
+    {
+        Write("target.cs", "public static class Value { public static int Number => 41; }\n");
+        var handshake = await Call("oumv/handshake", new JsonObject { ["protocolVersion"] = "1.6.0" });
+        var sessionId = handshake!["result"]!["sessionId"]!.GetValue<string>();
+        Assert.True(handshake["result"]!["capabilities"]!["sessions"]!["idempotency"]!.GetValue<bool>());
+        var originalVersion = SourceEditor.Version(File.ReadAllBytes(Path.Combine(_workspace, "target.cs")));
+
+        var first = await Call("oumv/applyEdit", new JsonObject
+        {
+            ["path"] = "target.cs",
+            ["replacement"] = "public static class Value { public static int Number => 42; }\n",
+            ["expectedVersion"] = originalVersion,
+            ["sessionId"] = sessionId,
+            ["idempotencyKey"] = "edit-1",
+        });
+        var newVersion = first!["result"]!["newVersion"]!.GetValue<string>();
+        Assert.Equal("APPLIED", first["result"]!["status"]!.GetValue<string>());
+
+        // The retry carries the now-stale token and the same key: the first result
+        // comes back verbatim instead of a second write or a -32001.
+        var replay = await Call("oumv/applyEdit", new JsonObject
+        {
+            ["path"] = "target.cs",
+            ["replacement"] = "public static class Value { public static int Number => 43; }\n",
+            ["expectedVersion"] = originalVersion,
+            ["sessionId"] = sessionId,
+            ["idempotencyKey"] = "edit-1",
+        });
+        Assert.Equal(0, ErrorCode(replay));
+        Assert.Equal(newVersion, replay!["result"]!["newVersion"]!.GetValue<string>());
+        Assert.Contains("=> 42", File.ReadAllText(Path.Combine(_workspace, "target.cs")));
+
+        // Without a key the same retry keeps plain OCC semantics.
+        var plain = await Call("oumv/applyEdit", new JsonObject
+        {
+            ["path"] = "target.cs",
+            ["replacement"] = "public static class Value { public static int Number => 44; }\n",
+            ["expectedVersion"] = originalVersion,
+            ["sessionId"] = sessionId,
+        });
+        Assert.Equal(OumvErrorCode.ConflictDetected, ErrorCode(plain));
+    }
+
+    [Fact]
+    public async Task PreviewEdit_replays_the_first_result_for_the_same_idempotency_key()
+    {
+        Write("preview.cs", "public static class Preview { public static int Number => 1; }\n");
+        var handshake = await Call("oumv/handshake", new JsonObject { ["protocolVersion"] = "1.6.0" });
+        var sessionId = handshake!["result"]!["sessionId"]!.GetValue<string>();
+        var version = SourceEditor.Version(File.ReadAllBytes(Path.Combine(_workspace, "preview.cs")));
+
+        var first = await Call("oumv/previewEdit", new JsonObject
+        {
+            ["path"] = "preview.cs",
+            ["replacement"] = "public static class Preview { public static int Number => 2; }\n",
+            ["expectedVersion"] = version,
+            ["sessionId"] = sessionId,
+            ["idempotencyKey"] = "preview-1",
+        });
+        await Call("oumv/previewEdit", new JsonObject
+        {
+            ["path"] = "preview.cs",
+            ["replacement"] = "public static class Preview { public static int Number => 3; }\n",
+            ["expectedVersion"] = "sha256:" + new string('0', 64),
+            ["sessionId"] = sessionId,
+            ["idempotencyKey"] = "preview-1",
+        });
+
+        var replay = await Call("oumv/previewEdit", new JsonObject
+        {
+            ["path"] = "preview.cs",
+            ["replacement"] = "public static class Preview { public static int Number => 3; }\n",
+            ["expectedVersion"] = "sha256:" + new string('0', 64),
+            ["sessionId"] = sessionId,
+            ["idempotencyKey"] = "preview-1",
+        });
+        Assert.Equal(0, ErrorCode(replay));
+        Assert.Equal(
+            first!["result"]!["previews"]![0]!["newVersion"]!.GetValue<string>(),
+            replay!["result"]!["previews"]![0]!["newVersion"]!.GetValue<string>());
+        // preview never writes.
+        Assert.Contains("=> 1", File.ReadAllText(Path.Combine(_workspace, "preview.cs")));
     }
 
     [Fact]

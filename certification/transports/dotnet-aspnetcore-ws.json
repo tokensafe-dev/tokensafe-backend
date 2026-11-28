@@ -2,9 +2,9 @@
   "adapterName": "dotnet-aspnetcore-ws",
   "framework": "aspnetcore",
   "specVersion": "1.6.0",
-  "fixtureVersion": 15,
-  "total": 48,
-  "passed": 48,
+  "fixtureVersion": 17,
+  "total": 49,
+  "passed": 49,
   "failed": 0,
   "skipped": 0,
   "attainedLevel": 3,
@@ -225,6 +225,11 @@
       "status": "passed"
     },
     {
+      "id": "apply-edit-idempotency-key-replays",
+      "level": 3,
+      "status": "passed"
+    },
+    {
       "id": "cancel-unknown-request-id-is-not-an-error",
       "level": 1,
       "status": "passed"
@@ -255,7 +260,7 @@
       "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-28T05:49:38.936Z",
+  "generatedAt": "2026-11-28T17:11:04.309Z",
   "environment": {
     "transport": "ws",
     "profile": "backend",

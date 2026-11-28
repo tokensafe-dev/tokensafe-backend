@@ -1,0 +1,154 @@
+{
+  "adapterName": "java-spring",
+  "framework": "spring",
+  "specVersion": "1.6.0",
+  "fixtureVersion": 17,
+  "total": 26,
+  "passed": 26,
+  "failed": 0,
+  "skipped": 0,
+  "attainedLevel": 3,
+  "levels": {
+    "1": "passed",
+    "2": "passed",
+    "3": "passed"
+  },
+  "cases": [
+    {
+      "id": "handshake-negotiates-capabilities",
+      "level": 1,
+      "status": "passed"
+    },
+    {
+      "id": "unknown-session-is-rejected",
+      "level": 1,
+      "status": "passed"
+    },
+    {
+      "id": "unknown-method-is-jsonrpc-method-not-found",
+      "level": 1,
+      "status": "passed"
+    },
+    {
+      "id": "observe-l0-returns-pulse",
+      "level": 1,
+      "status": "passed"
+    },
+    {
+      "id": "observe-l1-returns-surface",
+      "level": 1,
+      "status": "passed"
+    },
+    {
+      "id": "observe-l2-returns-targeted-contract",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "observe-l3-returns-source-and-occ-version",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "get-source-returns-occ-token",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "understand-impact-resolves-target",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "observe-l1-pagination",
+      "level": 1,
+      "status": "passed"
+    },
+    {
+      "id": "get-source-unknown-symbol-rejected",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "observe-unknown-level-rejected",
+      "level": 1,
+      "status": "passed"
+    },
+    {
+      "id": "handshake-rejects-unknown-version",
+      "level": 1,
+      "status": "passed"
+    },
+    {
+      "id": "observe-carries-workspace-version",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "understand-carries-workspace-version",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "observe-ifversion-match-answers-unchanged",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "observe-stale-token-rejected",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "cancel-unknown-request-id-is-not-an-error",
+      "level": 1,
+      "status": "passed"
+    },
+    {
+      "id": "index-returns-ranked-matches",
+      "level": 3,
+      "status": "passed"
+    },
+    {
+      "id": "read-only-handshake-declares",
+      "level": 1,
+      "status": "passed"
+    },
+    {
+      "id": "read-only-apply-edit-not-registered",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "read-only-preview-edit-not-registered",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "read-only-verify-not-registered",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "read-only-build-not-registered",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "read-only-observe-still-works",
+      "level": 1,
+      "status": "passed"
+    },
+    {
+      "id": "expired-session-is-rejected",
+      "level": 3,
+      "status": "passed"
+    }
+  ],
+  "generatedAt": "2026-11-28T17:10:48.924Z",
+  "environment": {
+    "transport": "stdio",
+    "profile": "backend",
+    "node": "v24.14.0"
+  }
+}

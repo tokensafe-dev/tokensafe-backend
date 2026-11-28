@@ -297,3 +297,38 @@ func TestApplyEditCreateMode(t *testing.T) {
 		t.Fatalf("expected SYNTAX_ERROR, got %+v", syntaxErr)
 	}
 }
+
+// TestApplyEditGuardOrderSyntaxBeforeVersion pins §4.3: the syntax pre-flight is
+// guard 3 and the OCC match is guard 5, so a request that violates both must
+// answer SYNTAX_ERROR — in the single-edit path and in every batch item.
+func TestApplyEditGuardOrderSyntaxBeforeVersion(t *testing.T) {
+	workspace := t.TempDir()
+	original := "package main\n\nfunc main() {}\n"
+	if err := os.WriteFile(filepath.Join(workspace, "main.go"), []byte(original), 0o644); err != nil {
+		t.Fatalf("seed workspace: %v", err)
+	}
+	rt := oumv.NewRuntime(oumv.Config{Name: "guards", Version: "1", WorkspaceDir: workspace, Runtime: oumv.DefaultDevelopmentRuntimeConfig()})
+	ctx := context.Background()
+	stale := "sha256:" + strings.Repeat("0", 64)
+	broken := "package main\n\nfunc Broken( {\n"
+
+	_, singleErr := rt.ApplyEdit(ctx, &protocol.ApplyEditParams{
+		Path: "main.go", Mode: "replace", Replacement: broken, ExpectedVersion: stale,
+	})
+	if singleErr == nil || singleErr.Code != protocol.ErrSyntaxError {
+		t.Fatalf("single: expected SYNTAX_ERROR before the version guard, got %+v", singleErr)
+	}
+
+	_, batchErr := rt.ApplyEdit(ctx, &protocol.ApplyEditParams{
+		Edits: []protocol.ApplyEditBatchItem{
+			{Path: "main.go", Mode: "replace", Replacement: broken, ExpectedVersion: stale},
+		},
+	})
+	if batchErr == nil || batchErr.Code != protocol.ErrSyntaxError {
+		t.Fatalf("batch: expected SYNTAX_ERROR before the version guard, got %+v", batchErr)
+	}
+
+	if after, _ := os.ReadFile(filepath.Join(workspace, "main.go")); string(after) != original {
+		t.Fatalf("guards must not write: file changed to %q", string(after))
+	}
+}

@@ -67,7 +67,7 @@ public final class Selftest {
         // ---- handshake -------------------------------------------------
         Map<String, Object> handshake = client.call("oumv/handshake", OumvSpring.map("protocolVersion", "1.0.0"));
         Map<String, Object> handshakeResult = result(handshake, "handshake");
-        check("1.4.0".equals(handshakeResult.get("protocolVersion")), "handshake serves protocol 1.4.0");
+        check("1.6.0".equals(handshakeResult.get("protocolVersion")), "handshake serves protocol 1.6.0");
         check("backend".equals(handshakeResult.get("profile")), "handshake profile is backend");
         check(handshakeResult.get("sessionId") instanceof String, "handshake issues a sessionId");
         String sessionId = String.valueOf(handshakeResult.get("sessionId"));
@@ -323,7 +323,7 @@ public final class Selftest {
 
         // a live session keeps working
         Map<String, Object> fresh = result(client.call("oumv/handshake",
-                OumvSpring.map("protocolVersion", "1.4.0")), "handshake 1.4.0");
+                OumvSpring.map("protocolVersion", "1.6.0")), "handshake 1.6.0");
         String freshSession = String.valueOf(fresh.get("sessionId"));
         Map<String, Object> withSession = result(client.call("oumv/observe",
                 OumvSpring.map("level", "L0", "sessionId", freshSession)), "observe with session");

@@ -128,14 +128,40 @@ schema_exit=$?
 set -e
 
 echo
+echo "== read-only profile (§8.5): method absence, proven by the read-only-* cases"
+cp -R "$HERE/testdata/laravel-app" "$TMP/ro-app"
+RO_REPORT="${REPORT%.json}-readonly.json"
+set +e
+"$NODE" "$CERTIFY" \
+  --adapter php-laravel \
+  --framework laravel \
+  --profile backend \
+  --fixtures "$FIXTURES" \
+  --stdio "$PHP $ADAPTER --root $TMP/ro-app --stdio --read-only" \
+  --markers "@$MARKERS" \
+  --report "$RO_REPORT" \
+  --min-level 1 --quiet >/dev/null 2>&1
+set -e
+"$NODE" -e '
+const r = require(process.argv[1]);
+const ro = r.cases.filter((c) => c.id.startsWith("read-only-"));
+const failed = ro.filter((c) => c.status !== "passed");
+const unexpected = r.cases.filter((c) => c.status !== "passed");
+console.log("  read-only: level " + r.attainedLevel + " · " + r.passed + "/" + r.total + " · " + ro.length + " read-only cases");
+if (ro.length < 6) { console.error("✗ the read-only cases are missing from the report"); process.exit(1); }
+if (failed.length) { console.error("✗ read-only failures: " + failed.map((c) => c.id + ": " + c.error).join("; ")); process.exit(1); }
+if (unexpected.length) { console.error("✗ unexpected failures: " + unexpected.map((c) => c.id).join(", ")); process.exit(1); }
+' -- "$RO_REPORT"
+
+echo
 echo "report: $REPORT"
 if [ "$schema_exit" -ne 0 ]; then
   echo "✗ certification failed its own level/schema gate" >&2
   exit 1
 fi
 if [ "$certify_exit" -ne 0 ]; then
-  echo "✓ certified at Level 2 (the certifier exit code $certify_exit reflects the L3 trace case only)"
+  echo "✓ certified at the level recorded in the report (certifier exit $certify_exit reflects the recorded failures)"
 else
-  echo "✓ certified at Level 2"
+  echo "✓ certified at the level recorded in the report"
 fi
 exit 0

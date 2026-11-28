@@ -2,9 +2,9 @@
   "adapterName": "dotnet-aspnetcore-sse",
   "framework": "aspnetcore",
   "specVersion": "1.6.0",
-  "fixtureVersion": 15,
-  "total": 51,
-  "passed": 51,
+  "fixtureVersion": 17,
+  "total": 52,
+  "passed": 52,
   "failed": 0,
   "skipped": 0,
   "attainedLevel": 3,
@@ -225,6 +225,11 @@
       "status": "passed"
     },
     {
+      "id": "apply-edit-idempotency-key-replays",
+      "level": 3,
+      "status": "passed"
+    },
+    {
       "id": "cancel-unknown-request-id-is-not-an-error",
       "level": 1,
       "status": "passed"
@@ -270,7 +275,7 @@
       "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-28T05:49:36.509Z",
+  "generatedAt": "2026-11-28T17:11:01.859Z",
   "environment": {
     "transport": "sse",
     "profile": "backend",

@@ -1274,6 +1274,11 @@ func (r *Runtime) applyEditBatch(ctx context.Context, params *protocol.ApplyEdit
 					"VALIDATION_FAILED: replacement is required for mode=replace",
 					map[string]interface{}{"reason": "replacement_required"}))
 			}
+			// §4.3 guard order: the syntax pre-flight (step 3) runs before the
+			// expectedVersion rules (steps 4-5), matching the single-edit path.
+			if syntaxErr := checkGoSyntax(cleanPath, item.Replacement); syntaxErr != nil {
+				return nil, annotate(syntaxErr)
+			}
 			currentVersion := hashVersion(currentData)
 			if strings.TrimSpace(item.ExpectedVersion) == "" {
 				return nil, annotate(protocol.NewValidationFailedError(
@@ -1284,9 +1289,6 @@ func (r *Runtime) applyEditBatch(ctx context.Context, params *protocol.ApplyEdit
 				return nil, annotate(protocol.NewConflictError(
 					"version mismatch: expected "+item.ExpectedVersion+", current is "+currentVersion,
 					map[string]interface{}{"reason": "version_mismatch", "expected": item.ExpectedVersion, "current": currentVersion}))
-			}
-			if syntaxErr := checkGoSyntax(cleanPath, item.Replacement); syntaxErr != nil {
-				return nil, annotate(syntaxErr)
 			}
 			staged = append(staged, batchEdit{cleanPath: cleanPath, relPath: item.Path, content: []byte(item.Replacement)})
 
@@ -1300,6 +1302,15 @@ func (r *Runtime) applyEditBatch(ctx context.Context, params *protocol.ApplyEdit
 					"VALIDATION_FAILED: hunks is required for mode=patch",
 					map[string]interface{}{"reason": "hunks_required"}))
 			}
+			// §4.3 guard order: splice the hunks, syntax-check the resulting file
+			// (step 3), then assert the expectedVersion rules (steps 4-5).
+			patched, patchErr := applyHunks(string(currentData), item.Hunks)
+			if patchErr != nil {
+				return nil, annotate(patchErr)
+			}
+			if syntaxErr := checkGoSyntax(cleanPath, patched); syntaxErr != nil {
+				return nil, annotate(syntaxErr)
+			}
 			currentVersion := hashVersion(currentData)
 			if strings.TrimSpace(item.ExpectedVersion) == "" {
 				return nil, annotate(protocol.NewValidationFailedError(
@@ -1310,13 +1321,6 @@ func (r *Runtime) applyEditBatch(ctx context.Context, params *protocol.ApplyEdit
 				return nil, annotate(protocol.NewConflictError(
 					"version mismatch: expected "+item.ExpectedVersion+", current is "+currentVersion,
 					map[string]interface{}{"reason": "version_mismatch", "expected": item.ExpectedVersion, "current": currentVersion}))
-			}
-			patched, patchErr := applyHunks(string(currentData), item.Hunks)
-			if patchErr != nil {
-				return nil, annotate(patchErr)
-			}
-			if syntaxErr := checkGoSyntax(cleanPath, patched); syntaxErr != nil {
-				return nil, annotate(syntaxErr)
 			}
 			staged = append(staged, batchEdit{
 				cleanPath: cleanPath, relPath: item.Path, content: []byte(patched), hunksApplied: len(item.Hunks),

@@ -2,16 +2,16 @@
   "adapterName": "php-laravel",
   "framework": "laravel",
   "specVersion": "1.6.0",
-  "fixtureVersion": 15,
-  "total": 29,
-  "passed": 29,
+  "fixtureVersion": 17,
+  "total": 41,
+  "passed": 41,
   "failed": 0,
   "skipped": 0,
-  "attainedLevel": 2,
+  "attainedLevel": 3,
   "levels": {
     "1": "passed",
     "2": "passed",
-    "3": "skipped"
+    "3": "passed"
   },
   "cases": [
     {
@@ -158,9 +158,69 @@
       "id": "handshake-rejects-unknown-version",
       "level": 1,
       "status": "passed"
+    },
+    {
+      "id": "observe-carries-workspace-version",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "understand-carries-workspace-version",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "observe-ifversion-match-answers-unchanged",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "observe-stale-token-rejected",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "apply-edit-batch-applies-all",
+      "level": 3,
+      "status": "passed"
+    },
+    {
+      "id": "apply-edit-batch-is-atomic",
+      "level": 3,
+      "status": "passed"
+    },
+    {
+      "id": "preview-edit-does-not-write",
+      "level": 3,
+      "status": "passed"
+    },
+    {
+      "id": "apply-edit-idempotency-key-replays",
+      "level": 3,
+      "status": "passed"
+    },
+    {
+      "id": "cancel-unknown-request-id-is-not-an-error",
+      "level": 1,
+      "status": "passed"
+    },
+    {
+      "id": "index-returns-ranked-matches",
+      "level": 3,
+      "status": "passed"
+    },
+    {
+      "id": "build-returns-status-and-diagnostics",
+      "level": 3,
+      "status": "passed"
+    },
+    {
+      "id": "expired-session-is-rejected",
+      "level": 3,
+      "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-28T05:50:19.187Z",
+  "generatedAt": "2026-11-28T17:10:51.270Z",
   "environment": {
     "transport": "stdio",
     "profile": "backend",

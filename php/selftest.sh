@@ -101,7 +101,7 @@ http_check() {
 
 RPC_BODY='{"jsonrpc":"2.0","id":1,"method":"oumv/handshake","params":{"protocolVersion":"1.4.0"}}'
 response="$(curl -sS -X POST "$BASE" -H 'Content-Type: application/json' -d "$RPC_BODY")"
-http_check "HTTP handshake returns protocolVersion 1.4.0" "1.4.0" \
+http_check "HTTP handshake returns protocolVersion 1.6.0" "1.6.0" \
   "$(printf '%s' "$response" | "$PHP" -r '$d=json_decode(stream_get_contents(STDIN),true); echo $d["result"]["protocolVersion"] ?? "missing";')"
 
 batch='[{"jsonrpc":"2.0","id":"a","method":"oumv/observe","params":{"level":"L0"}},{"jsonrpc":"2.0","method":"oumv/observe","params":{"level":"L0"}}]'

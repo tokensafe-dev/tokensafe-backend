@@ -2,7 +2,7 @@
   "adapterName": "python-fastapi-sse",
   "framework": "fastapi",
   "specVersion": "1.6.0",
-  "fixtureVersion": 15,
+  "fixtureVersion": 17,
   "total": 52,
   "passed": 52,
   "failed": 0,
@@ -275,7 +275,7 @@
       "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-28T05:47:23.173Z",
+  "generatedAt": "2026-11-28T17:11:18.630Z",
   "environment": {
     "transport": "sse",
     "profile": "backend",

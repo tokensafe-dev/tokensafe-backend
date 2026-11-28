@@ -78,3 +78,24 @@ def test_adapter_forwards_the_permissions_policy():
     adapter = TokenSafeFastAPI(FastAPI(), permissions={"query": False})
 
     assert adapter.runtime.permissions == {"query": False}
+
+
+async def test_mutate_policy_is_method_absence_not_a_refusal():
+    """§8.4: `permissions.mutate: false` forces the read-only shape.
+
+    A per-handler `-32007` would leave the write path reachable; the spec says the
+    mutating methods are not registered at all (§8.5), so the router answers -32601.
+    """
+    runtime = OUMVRuntime(permissions={"mutate": False})
+
+    assert runtime.read_only is True
+    handshake = await runtime.handle_handshake(protocolVersion="1.6.0")
+    assert handshake["capabilities"]["readOnly"] is True
+    assert "mutate" not in handshake["capabilities"]
+    assert "verify" not in handshake["capabilities"]
+
+
+def test_mutate_true_leaves_the_default_deployment_alone():
+    runtime = OUMVRuntime(permissions={"mutate": True})
+
+    assert runtime.read_only is False

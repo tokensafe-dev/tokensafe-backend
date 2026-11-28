@@ -29,11 +29,12 @@ declare(strict_types=1);
 ini_set('display_errors', 'stderr');
 error_reporting(E_ALL);
 
-const OUMV_PROTOCOL_VERSION = '1.5.0';
+const OUMV_PROTOCOL_VERSION = '1.6.0';
 const OUMV_ADAPTER_NAME = 'oumv-php';
-const OUMV_ADAPTER_VERSION = '0.1.0';
+const OUMV_ADAPTER_VERSION = '0.3.0';
 const OUMV_SOURCE_ADAPTER = 'php-laravel';
 const OUMV_SESSION_TTL = 3600;
+const OUMV_MAX_BATCH_ITEMS = 16;
 const OUMV_MAX_BODY_BYTES = 8388608;
 const OUMV_MAX_SCAN_FILE_BYTES = 2097152;
 const OUMV_HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
@@ -2222,6 +2223,11 @@ function oumv_get_source(Workspace $workspace, array $params): array
 /** @return array<string,mixed> */
 function oumv_apply_edit(Workspace $workspace, array $params): array
 {
+    // Wire 1.5.0: a request carrying `edits` is a multi-file atomic batch.
+    $batch = $params['edits'] ?? null;
+    if (is_array($batch) && $batch !== [] && array_is_list($batch)) {
+        return oumv_apply_edit_batch($workspace, $batch);
+    }
     $rawPath = oumv_param_path($params);
     $mode = strtolower(trim(oumv_str($params, 'mode')));
     if ($mode === '') {
@@ -2759,6 +2765,456 @@ function oumv_understand(Workspace $workspace, array $params): array
  * same semantics over stdio (one process) and HTTP (one process per request)
  * without writing any state file.
  */
+
+// ---------------------------------------------------------------------------
+// §4.1 result versioning (wire 1.6.0)
+// ---------------------------------------------------------------------------
+
+/** Digest of the workspace bytes (path + size + mtime, sorted). */
+function oumv_workspace_version(Workspace $workspace): string
+{
+    $entries = [];
+    $skip = ['.git', 'node_modules', 'vendor', '.tokensafe', '.oumv', 'storage'];
+    $walk = function (string $dir, string $rel) use (&$walk, &$entries, $skip): void {
+        $items = @scandir($dir);
+        if ($items === false) {
+            return;
+        }
+        sort($items);
+        foreach ($items as $item) {
+            if ($item === '.' || $item === '..') {
+                continue;
+            }
+            $absolute = $dir . DIRECTORY_SEPARATOR . $item;
+            $relative = $rel === '' ? $item : $rel . '/' . $item;
+            if (is_dir($absolute)) {
+                if (in_array($item, $skip, true)) {
+                    continue;
+                }
+                $walk($absolute, $relative);
+                continue;
+            }
+            if (!is_file($absolute)) {
+                continue;
+            }
+            $entries[] = $relative . "\0" . filesize($absolute) . "\0" . filemtime($absolute);
+        }
+    };
+    $walk($workspace->root, '');
+    return oumv_version(implode("\n", $entries));
+}
+
+/**
+ * §4.1: every result that carries a workspace version also honours `ifVersion`.
+ * A match answers the short `{unchanged, workspaceVersion}` envelope; a stale
+ * token answers -32010 with the current digest.
+ *
+ * @param array<string,mixed> $result
+ * @return array<string,mixed>
+ */
+function oumv_versioned(array $result, Workspace $workspace, array $params): array
+{
+    $current = oumv_workspace_version($workspace);
+    $ifVersion = trim(oumv_str($params, 'ifVersion'));
+    if ($ifVersion !== '') {
+        if ($ifVersion !== $current) {
+            throw new OumvError(
+                -32010,
+                'STALE_RESOURCE_VERSION: the workspace changed since ' . $ifVersion,
+                ['reason' => 'stale_version', 'current' => $current]
+            );
+        }
+        return ['unchanged' => true, 'workspaceVersion' => $current];
+    }
+    $result['workspaceVersion'] = $current;
+    return $result;
+}
+
+// ---------------------------------------------------------------------------
+// §4.4 previewEdit (wire 1.6.0): the same guards, never a write
+// ---------------------------------------------------------------------------
+
+/** @return array{status:string,applied:bool,previews:list<array<string,mixed>>,files:int} */
+function oumv_preview_edit(Workspace $workspace, array $params): array
+{
+    $previews = [];
+    $batch = $params['edits'] ?? null;
+    if (is_array($batch) && $batch !== [] && array_is_list($batch)) {
+        if (count($batch) > OUMV_MAX_BATCH_ITEMS) {
+            throw new OumvError(-32011, 'VALIDATION_FAILED: edits must hold 1..' . OUMV_MAX_BATCH_ITEMS . ' items', ['reason' => 'edits_size']);
+        }
+        foreach ($batch as $item) {
+            if (!is_array($item)) {
+                throw new OumvError(-32602, 'INVALID_PARAMS: every edit must be an object', ['reason' => 'item_invalid']);
+            }
+            $previews[] = oumv_preview_one($workspace, $item);
+        }
+    } else {
+        $previews[] = oumv_preview_one($workspace, $params);
+    }
+    return ['status' => 'PREVIEW', 'applied' => false, 'previews' => $previews, 'files' => count($previews)];
+}
+
+/** @return array<string,mixed> */
+function oumv_preview_one(Workspace $workspace, array $params): array
+{
+    $path = oumv_param_path($params);
+    $mode = strtolower(trim(oumv_str($params, 'mode')));
+    if ($mode === '') {
+        $mode = 'replace';
+    }
+    $source = oumv_jail($workspace, $path);
+    $exists = is_file($source->absolute);
+    $replacement = oumv_param_replacement($params);
+    $expectedVersion = trim(oumv_str($params, 'expectedVersion'));
+    $content = null;
+
+    if ($mode === 'create') {
+        if ($replacement === '') {
+            throw new OumvError(-32011, 'VALIDATION_FAILED: replacement is required for mode=create', ['reason' => 'replacement_required']);
+        }
+        if ($expectedVersion !== '') {
+            throw new OumvError(-32011, 'VALIDATION_FAILED: expectedVersion must be omitted for mode=create', ['reason' => 'create_forbids_version']);
+        }
+        if ($exists) {
+            throw new OumvError(-32001, 'CONFLICT_DETECTED: file already exists; use mode=replace with its version', ['reason' => 'file_exists', 'path' => $path]);
+        }
+        $content = $replacement;
+    } elseif ($mode === 'patch') {
+        if (!$exists) {
+            throw new OumvError(-32009, 'RESOURCE_NOT_FOUND: "' . $path . '" does not exist in the workspace', ['reason' => 'resource_not_found', 'path' => $path]);
+        }
+        $hunks = $params['hunks'] ?? null;
+        if (!is_array($hunks) || $hunks === []) {
+            throw new OumvError(-32011, 'VALIDATION_FAILED: hunks is required for mode=patch', ['reason' => 'hunks_required']);
+        }
+        $current = (string) @file_get_contents($source->absolute);
+        $content = oumv_apply_hunks($current, $hunks)['text'];
+    } elseif ($mode === 'replace') {
+        if (!$exists) {
+            throw new OumvError(-32009, 'RESOURCE_NOT_FOUND: "' . $path . '" does not exist in the workspace', ['reason' => 'resource_not_found', 'path' => $path]);
+        }
+        if ($replacement === '') {
+            throw new OumvError(-32011, 'VALIDATION_FAILED: replacement is required for mode=replace', ['reason' => 'replacement_required']);
+        }
+        $content = $replacement;
+    } elseif ($mode === 'delete' || $mode === 'rename') {
+        if (!$exists) {
+            throw new OumvError(-32009, 'RESOURCE_NOT_FOUND: "' . $path . '" does not exist in the workspace', ['reason' => 'resource_not_found', 'path' => $path]);
+        }
+        if ($mode === 'rename' && trim(oumv_str($params, 'renameTo')) === '') {
+            throw new OumvError(-32011, 'VALIDATION_FAILED: renameTo is required for mode=rename', ['reason' => 'rename_to_required']);
+        }
+    } else {
+        // symbol previews would need the same splice the edit path uses; refuse
+        // instead of showing a whole-file replacement that will not happen.
+        throw new OumvError(-32006, 'UNSUPPORTED_CAPABILITY: previewEdit mode "' . $mode . '" is not implemented', ['reason' => 'unsupported_preview_mode', 'mode' => $mode]);
+    }
+
+    $syntaxCheck = ['status' => 'skipped'];
+    if ($content !== null) {
+        $syntax = oumv_php_lint($content);
+        if (($syntax['status'] ?? '') === 'failed') {
+            throw new OumvError(-32002, 'SYNTAX_ERROR: pre-flight syntax check failed for ' . $path, ['reason' => 'syntax_error', 'detail' => $syntax['error'] ?? '']);
+        }
+        $syntaxCheck = $syntax;
+    }
+
+    // Guards 4-5 last: expectedVersion rules and the OCC match.
+    if ($mode !== 'create') {
+        $currentVersion = oumv_version((string) @file_get_contents($source->absolute));
+        if ($expectedVersion === '') {
+            throw new OumvError(-32011, 'VALIDATION_FAILED: expectedVersion is required to preview an edit of an existing file', ['reason' => 'expected_version_required', 'path' => $path, 'current' => $currentVersion]);
+        }
+        if ($expectedVersion !== $currentVersion) {
+            throw new OumvError(-32001, 'CONFLICT_DETECTED: version mismatch: expected ' . $expectedVersion . ', current is ' . $currentVersion, ['reason' => 'version_mismatch', 'expected' => $expectedVersion, 'current' => $currentVersion]);
+        }
+    }
+
+    $preview = ['path' => $path, 'mode' => $mode, 'wouldApply' => true, 'syntaxCheck' => $syntaxCheck];
+    if ($content !== null) {
+        $preview['newVersion'] = oumv_version($content);
+    }
+    return $preview;
+}
+
+// ---------------------------------------------------------------------------
+// §14.1 index (wire 1.6.0): ranked symbol search over the static catalog
+// ---------------------------------------------------------------------------
+
+/** @return array<string,mixed> */
+function oumv_index(Workspace $workspace, array $params): array
+{
+    $query = trim(oumv_str($params, 'query'));
+    $limit = oumv_int($params, 'limit', 50);
+    if ($limit <= 0) {
+        $limit = 50;
+    }
+    $candidates = [];
+    if ($query !== '') {
+        $needle = strtolower($query);
+        foreach ($workspace->catalog()->ordered() as $route) {
+            $symbols = [];
+            $handler = trim((string) ($route['handler'] ?? ''));
+            if ($handler !== '' && str_contains($handler, '#')) {
+                $symbols[] = $handler;
+            }
+            $class = trim((string) ($route['class'] ?? ''));
+            if ($class !== '') {
+                $symbols[] = $class;
+            }
+            foreach ($symbols as $symbol) {
+                $rank = oumv_symbol_rank($symbol, $needle);
+                if ($rank === null) {
+                    continue;
+                }
+                $candidates[] = [
+                    'symbol' => $symbol,
+                    'kind' => str_contains($symbol, '#') ? 'method' : 'class',
+                    'path' => (string) ($route['file'] ?? $route['rel'] ?? ''),
+                    'request' => (string) ($route['method'] ?? '') . ' ' . (string) ($route['path'] ?? ''),
+                    'rank' => $rank,
+                ];
+            }
+        }
+    }
+    usort($candidates, static function (array $a, array $b): int {
+        return [$a['rank'], $a['symbol']] <=> [$b['rank'], $b['symbol']];
+    });
+    $truncated = count($candidates) > $limit;
+    $matches = [];
+    foreach (array_slice($candidates, 0, $limit) as $match) {
+        unset($match['rank']);
+        $matches[] = $match;
+    }
+    return ['query' => $query, 'matches' => $matches, 'truncated' => $truncated];
+}
+
+/** exact > prefix > qualified suffix > substring, or null when it does not match. */
+function oumv_symbol_rank(string $symbol, string $needle): ?int
+{
+    $lower = strtolower($symbol);
+    $name = $lower;
+    $hash = strrpos($lower, '#');
+    if ($hash !== false) {
+        $name = substr($lower, $hash + 1);
+    }
+    if ($name === $needle || $lower === $needle) {
+        return 0;
+    }
+    if (str_starts_with($name, $needle) || str_starts_with($lower, $needle)) {
+        return 1;
+    }
+    if (str_ends_with($name, $needle) || str_ends_with($lower, $needle)) {
+        return 2;
+    }
+    if (str_contains($lower, $needle)) {
+        return 3;
+    }
+    return null;
+}
+
+// ---------------------------------------------------------------------------
+// §14.3 build (wire 1.6.0): run a command, return structured diagnostics
+// ---------------------------------------------------------------------------
+
+/** @return array<string,mixed> */
+function oumv_build(Workspace $workspace, array $params, string $template): array
+{
+    $command = trim(oumv_str($params, 'command'));
+    if ($command === '') {
+        $target = trim(oumv_str($params, 'target'));
+        try {
+            $file = oumv_verify_target_file($workspace, $target);
+        } catch (OumvError $error) {
+            return [
+                'status' => 'skipped',
+                'command' => $template,
+                'diagnostics' => [[
+                    'severity' => 'info',
+                    'source' => 'build',
+                    'message' => 'no build target: ' . $error->getMessage(),
+                ]],
+                'durationMs' => 0.0,
+            ];
+        }
+        $command = oumv_verify_command($template, $file, $workspace, $target);
+    }
+    $run = oumv_proc_run(['/bin/sh', '-c', $command], $workspace->root);
+    $diagnostics = [];
+    if (($run['exitCode'] ?? -1) !== 0) {
+        $diagnostics[] = [
+            'severity' => 'error',
+            'source' => 'build',
+            'message' => trim((string) ($run['output'] ?? '')),
+            'tool' => $command,
+        ];
+    }
+    return [
+        'status' => ($run['exitCode'] ?? -1) === 0 ? 'passed' : 'failed',
+        'command' => $command,
+        'diagnostics' => $diagnostics,
+        'durationMs' => (float) ($run['durationMs'] ?? 0.0),
+    ];
+}
+
+// ---------------------------------------------------------------------------
+// Batch applyEdit (wire 1.5.0): every item staged before the first byte
+// ---------------------------------------------------------------------------
+
+function oumv_annotate_edit(OumvError $error, int $index, string $path): OumvError
+{
+    $data = $error->errorData;
+    $data['editIndex'] = $index;
+    if ($path !== '') {
+        $data['path'] = $path;
+    }
+    return new OumvError($error->getCode(), $error->getMessage(), $data);
+}
+
+/** @return array<string,mixed> */
+function oumv_apply_edit_batch(Workspace $workspace, array $items): array
+{
+    if (count($items) > OUMV_MAX_BATCH_ITEMS) {
+        throw new OumvError(-32011, 'VALIDATION_FAILED: edits must hold 1..' . OUMV_MAX_BATCH_ITEMS . ' items', ['reason' => 'batch_size', 'count' => count($items)]);
+    }
+    $staged = [];
+    $seen = [];
+    foreach ($items as $index => $item) {
+        $pathHint = is_array($item) ? (string) ($item['path'] ?? '') : '';
+        try {
+            if (!is_array($item)) {
+                throw new OumvError(-32602, 'INVALID_PARAMS: edit is not an object', ['reason' => 'item_invalid']);
+            }
+            $staged[] = oumv_stage_batch_item($workspace, $item, $seen);
+        } catch (OumvError $error) {
+            throw oumv_annotate_edit($error, (int) $index, $pathHint);
+        }
+    }
+    $written = [];
+    try {
+        foreach ($staged as $edit) {
+            $previous = $edit['created'] ? null : (string) @file_get_contents($edit['absolute']);
+            if ($edit['created']) {
+                $dir = dirname($edit['absolute']);
+                if (!is_dir($dir) && !@mkdir($dir, 0775, true) && !is_dir($dir)) {
+                    throw new RuntimeException('cannot create directory ' . $dir);
+                }
+            }
+            oumv_atomic_write($edit['absolute'], $edit['content']);
+            $written[] = array_merge($edit, ['previous' => $previous]);
+        }
+    } catch (Throwable $error) {
+        $failures = [];
+        foreach (array_reverse($written) as $done) {
+            try {
+                if ($done['created']) {
+                    @unlink($done['absolute']);
+                } else {
+                    oumv_atomic_write($done['absolute'], (string) $done['previous']);
+                }
+            } catch (Throwable $restore) {
+                $failures[] = $done['relative'] . ': ' . $restore->getMessage();
+            }
+        }
+        $failedAt = count($written);
+        $data = [
+            'editIndex' => $failedAt,
+            'path' => $staged[$failedAt]['relative'] ?? '',
+            'rolledBack' => $failures === [],
+        ];
+        if ($failures !== []) {
+            $data['rollbackErrors'] = $failures;
+        }
+        throw new OumvError(-32603, 'failed to persist edit: ' . $error->getMessage(), $data);
+    }
+    $results = [];
+    foreach ($staged as $edit) {
+        $item = ['path' => $edit['relative'], 'newVersion' => oumv_version($edit['content'])];
+        if ($edit['created']) {
+            $item['created'] = true;
+        }
+        if ($edit['hunksApplied'] > 0) {
+            $item['hunksApplied'] = $edit['hunksApplied'];
+        }
+        $results[] = $item;
+    }
+    return ['status' => 'APPLIED', 'edits' => $results];
+}
+
+/** @param array<string,bool> $seen @return array<string,mixed> */
+function oumv_stage_batch_item(Workspace $workspace, array $item, array &$seen): array
+{
+    $path = oumv_param_path($item);
+    if ($path === '') {
+        throw new OumvError(-32602, 'INVALID_PARAMS: path is required', ['reason' => 'path_required']);
+    }
+    $source = oumv_jail($workspace, $path);
+    if (isset($seen[$source->relative])) {
+        throw new OumvError(-32011, 'VALIDATION_FAILED: duplicate path in batch: ' . $source->relative, ['reason' => 'duplicate_path']);
+    }
+    $seen[$source->relative] = true;
+    $mode = strtolower(trim(oumv_str($item, 'mode')));
+    if ($mode === '') {
+        $mode = 'replace';
+    }
+    if (!in_array($mode, ['replace', 'create', 'patch'], true)) {
+        throw new OumvError(-32006, 'UNSUPPORTED_CAPABILITY: applyEdit batch mode "' . $mode . '" (only replace/create/patch are atomic)', ['reason' => 'unknown_mode']);
+    }
+    $exists = is_file($source->absolute);
+    $replacement = oumv_param_replacement($item);
+    $expectedVersion = trim(oumv_str($item, 'expectedVersion'));
+
+    if ($mode === 'create') {
+        if ($replacement === '') {
+            throw new OumvError(-32011, 'VALIDATION_FAILED: replacement is required for mode=create', ['reason' => 'replacement_required']);
+        }
+        if ($expectedVersion !== '') {
+            throw new OumvError(-32011, 'VALIDATION_FAILED: expectedVersion must be omitted for mode=create', ['reason' => 'create_forbids_version']);
+        }
+        if ($exists) {
+            throw new OumvError(-32001, 'CONFLICT_DETECTED: file already exists; use mode=replace with its version', ['reason' => 'file_exists']);
+        }
+        if ((oumv_php_lint($replacement)['status'] ?? '') === 'failed') {
+            throw new OumvError(-32002, 'SYNTAX_ERROR: pre-flight syntax check failed for ' . $source->relative, ['reason' => 'syntax_error']);
+        }
+        return ['absolute' => $source->absolute, 'relative' => $source->relative, 'content' => $replacement, 'created' => true, 'hunksApplied' => 0];
+    }
+
+    if (!$exists) {
+        throw new OumvError(-32009, 'RESOURCE_NOT_FOUND: "' . $path . '" does not exist in the workspace', ['reason' => 'resource_not_found', 'path' => $path]);
+    }
+    $current = (string) @file_get_contents($source->absolute);
+    $content = '';
+    $hunksApplied = 0;
+    if ($mode === 'patch') {
+        $hunks = $item['hunks'] ?? null;
+        if (!is_array($hunks) || $hunks === []) {
+            throw new OumvError(-32011, 'VALIDATION_FAILED: hunks is required for mode=patch', ['reason' => 'hunks_required']);
+        }
+        $applied = oumv_apply_hunks($current, $hunks);
+        $content = $applied['text'];
+        $hunksApplied = (int) $applied['applied'];
+    } else {
+        if ($replacement === '') {
+            throw new OumvError(-32011, 'VALIDATION_FAILED: replacement is required for mode=replace', ['reason' => 'replacement_required']);
+        }
+        $content = $replacement;
+    }
+    // §4.3 guard order: syntax (step 3) before the expectedVersion rules (4-5).
+    if ((oumv_php_lint($content)['status'] ?? '') === 'failed') {
+        throw new OumvError(-32002, 'SYNTAX_ERROR: pre-flight syntax check failed for ' . $source->relative, ['reason' => 'syntax_error']);
+    }
+    $currentVersion = oumv_version($current);
+    if ($expectedVersion === '') {
+        throw new OumvError(-32011, 'VALIDATION_FAILED: expectedVersion is required to edit an existing file', ['reason' => 'expected_version_required', 'current' => $currentVersion]);
+    }
+    if ($expectedVersion !== $currentVersion) {
+        throw new OumvError(-32001, 'CONFLICT_DETECTED: version mismatch: expected ' . $expectedVersion . ', current is ' . $currentVersion, ['reason' => 'version_mismatch', 'expected' => $expectedVersion, 'current' => $currentVersion]);
+    }
+    return ['absolute' => $source->absolute, 'relative' => $source->relative, 'content' => $content, 'created' => false, 'hunksApplied' => $hunksApplied];
+}
+
 final class SessionRegistry
 {
     private string $secret;
@@ -2770,12 +3226,23 @@ final class SessionRegistry
         $this->ttl = $ttl;
     }
 
-    public function create(): string
+    /** §3: the client may ask for a shorter lifetime; it is clamped to 1..86400. */
+    public static function clampTtl(int $requested): int
     {
-        $issued = time();
+        if ($requested <= 0) {
+            return OUMV_SESSION_TTL;
+        }
+        return max(1, min(86400, $requested));
+    }
+
+    public function create(int $requestedTtl = 0): string
+    {
+        // Milliseconds, not seconds: a 1-second TTL must really expire after ~1s.
+        $issued = (int) floor(microtime(true) * 1000);
+        $ttl = self::clampTtl($requestedTtl);
         $nonce = bin2hex(random_bytes(4));
-        $signature = $this->signature($issued, $nonce);
-        return 'sess-' . dechex($issued) . '-' . $nonce . '-' . $signature;
+        $signature = $this->signature($issued, $ttl, $nonce);
+        return 'sess-' . dechex($issued) . '-' . dechex($ttl) . '-' . $nonce . '-' . $signature;
     }
 
     public function validate(string $id): bool
@@ -2783,37 +3250,44 @@ final class SessionRegistry
         if ($id === '') {
             return true; // stateless callers are allowed by spec §3
         }
-        if (!preg_match('/^sess-([0-9a-f]+)-([0-9a-f]{8})-([0-9a-f]{16})$/', $id, $matches)) {
+        if (!preg_match('/^sess-([0-9a-f]+)-([0-9a-f]+)-([0-9a-f]{8})-([0-9a-f]{16})$/', $id, $matches)) {
             return false;
         }
         $issued = (int) hexdec($matches[1]);
-        if (!hash_equals($this->signature($issued, $matches[2]), $matches[3])) {
+        $ttl = (int) hexdec($matches[2]);
+        if (!hash_equals($this->signature($issued, $ttl, $matches[3]), $matches[4])) {
             return false;
         }
-        return (time() - $issued) <= $this->ttl;
+        $nowMs = (int) floor(microtime(true) * 1000);
+        return ($nowMs - $issued) <= $ttl * 1000;
     }
 
-    private function signature(int $issued, string $nonce): string
+    private function signature(int $issued, int $ttl, string $nonce): string
     {
-        return substr(hash_hmac('sha256', $issued . '|' . $nonce, $this->secret), 0, 16);
+        return substr(hash_hmac('sha256', $issued . '|' . $ttl . '|' . $nonce, $this->secret), 0, 16);
     }
 }
 
 /** @return array<string,mixed> */
-function oumv_capabilities(bool $readOnly = false): array
+function oumv_capabilities(bool $readOnly = false, string $transport = 'http'): array
 {
     $capabilities = [
         'observe' => ['levels' => ['L0', 'L1', 'L2', 'L3'], 'formats' => ['json']],
         'understand' => ['causality' => false, 'impactAnalysis' => true],
+        'index' => ['symbols' => true],
+        'sessions' => ['ttlSeconds' => true, 'cancel' => true],
+        'transports' => [$transport],
     ];
     if ($readOnly) {
         // §8.5 (revision v1.11): a read-only deployment registers no writing method,
-        // so it advertises neither pillar and says readOnly explicitly.
+        // so it advertises neither pillar and says readOnly explicitly. `idempotency`
+        // describes applyEdit/previewEdit replay, so it is not advertised either.
         $capabilities['readOnly'] = true;
         return $capabilities;
     }
-    $capabilities['mutate'] = ['occ' => true, 'syntaxGuard' => true];
-    $capabilities['verify'] = ['multiMetric' => false];
+    $capabilities['mutate'] = ['occ' => true, 'syntaxGuard' => true, 'multiFile' => true, 'preview' => true];
+    $capabilities['verify'] = ['multiMetric' => false, 'build' => true];
+    $capabilities['sessions']['idempotency'] = true;
     return $capabilities;
 }
 
@@ -2927,6 +3401,11 @@ final class Adapter
     public array $options;
     public string $transport;
     public bool $readOnly;
+    /** §3 idempotency: sessionId:key -> the first final result. */
+    private array $idempotency = [];
+    /** §3 cooperative cancellation: requestId -> requested flag. */
+    private array $cancellations = [];
+    private string $lastRequestId = '';
 
     /** @param array<string,mixed> $options */
     public function __construct(Workspace $workspace, array $options, string $transport)
@@ -2974,7 +3453,7 @@ final class Adapter
             // §8.5 (revision v1.11): a read-only deployment has no handler for the
             // writing surface. Checked before the session so a stale id cannot turn
             // absence into -32011 — the method simply does not exist.
-            if ($this->readOnly && in_array($method, ['oumv/applyEdit', 'oumv/verify'], true)) {
+            if ($this->readOnly && in_array($method, ['oumv/applyEdit', 'oumv/previewEdit', 'oumv/verify', 'oumv/build'], true)) {
                 throw new OumvError(-32601, 'Method "' . $method . '" not found', ['reason' => 'method_not_found', 'method' => $method]);
             }
 
@@ -2987,6 +3466,12 @@ final class Adapter
                         ['reason' => 'session_expired', 'sessionId' => $sessionId]
                     );
                 }
+            }
+
+            $requestId = trim(oumv_str($params, 'requestId'));
+            if ($requestId !== '' && $method !== 'oumv/cancel') {
+                $this->cancellations[$requestId] = false;
+                $this->lastRequestId = $requestId;
             }
 
             $result = $this->dispatch($method, $params);
@@ -3012,16 +3497,28 @@ final class Adapter
                 return $this->handshake($params);
 
             case 'oumv/observe':
-                return oumv_observe($this->workspace, $params);
+                return oumv_versioned(oumv_observe($this->workspace, $params), $this->workspace, $params);
 
             case 'oumv/understand':
-                return oumv_understand($this->workspace, $params);
+                return oumv_versioned(oumv_understand($this->workspace, $params), $this->workspace, $params);
 
             case 'oumv/getSource':
                 return oumv_get_source($this->workspace, $params);
 
             case 'oumv/applyEdit':
-                return oumv_apply_edit($this->workspace, $params);
+                return $this->withIdempotency($params, fn () => oumv_apply_edit($this->workspace, $params));
+
+            case 'oumv/previewEdit':
+                return $this->withIdempotency($params, fn () => oumv_preview_edit($this->workspace, $params));
+
+            case 'oumv/index':
+                return oumv_index($this->workspace, $params);
+
+            case 'oumv/build':
+                return oumv_build($this->workspace, $params, $this->verifyCommand);
+
+            case 'oumv/cancel':
+                return $this->cancel($params);
 
             case 'oumv/verify':
                 return oumv_verify($this->workspace, $params, $this->verifyCommand);
@@ -3057,13 +3554,14 @@ final class Adapter
             }
         }
 
-        $capabilities = oumv_capabilities($this->readOnly);
+        $capabilities = oumv_capabilities($this->readOnly, $this->transport);
         $requestedCapabilities = $params['requestedCapabilities'] ?? null;
         if (is_array($requestedCapabilities)) {
             $capabilities = oumv_narrow_capabilities($capabilities, $requestedCapabilities);
         }
 
-        $sessionId = $this->sessions->create();
+        $grantedTtl = SessionRegistry::clampTtl(oumv_int($params, 'sessionTtlSeconds', 0));
+        $sessionId = $this->sessions->create($grantedTtl);
         if (($this->options['register'] ?? false) && $this->transport === 'http') {
             try {
                 oumv_write_registry($this->workspace, [
@@ -3082,9 +3580,48 @@ final class Adapter
             'runtimeInfo' => ['name' => OUMV_ADAPTER_NAME, 'version' => OUMV_ADAPTER_VERSION],
             'capabilities' => $capabilities,
             'sessionId' => $sessionId,
-            'ttlSeconds' => $this->sessions->ttl,
+            'ttlSeconds' => $grantedTtl,
             'workspace' => $this->workspace->root,
             'framework' => $this->workspace->catalog()->framework,
+        ];
+    }
+
+    /** §3 idempotency: a retry carrying the same key replays the first final result. */
+    private function withIdempotency(array $params, callable $invoke): array
+    {
+        $key = trim(oumv_str($params, 'idempotencyKey'));
+        if ($key === '') {
+            return $invoke();
+        }
+        $sessionId = trim(oumv_str($params, 'sessionId'));
+        if ($sessionId === '') {
+            $sessionId = 'default';
+        }
+        $cacheKey = $sessionId . ':' . $key;
+        if (isset($this->idempotency[$cacheKey])) {
+            return $this->idempotency[$cacheKey];
+        }
+        $result = $invoke();
+        $this->idempotency[$cacheKey] = $result;
+        return $result;
+    }
+
+    /** §3 cancel: unknown ids are not an error, they are simply not running. */
+    private function cancel(array $params): array
+    {
+        $requestId = trim(oumv_str($params, 'requestId'));
+        $target = trim(oumv_str($params, 'target'));
+        if ($requestId === '' && $target === 'last') {
+            $requestId = $this->lastRequestId;
+        }
+        $known = $requestId !== '' && array_key_exists($requestId, $this->cancellations);
+        if ($known) {
+            $this->cancellations[$requestId] = true;
+        }
+        return [
+            'cancelled' => $known,
+            'requestId' => $requestId,
+            'reason' => $known ? 'cancellation_requested' : 'not_running',
         ];
     }
 }
@@ -3434,7 +3971,22 @@ function oumv_server_argv(): array
             }
         }
     }
+    // Env flags are shared with the plain CLI path — one implementation, so the
+    // two cannot drift (see oumv_env_argv).
+    return array_merge($recovered, oumv_env_argv());
+}
 
+/**
+ * Environment-only flag list (no `ps` recovery). The engine's `spawn_env()`
+ * exports OUMV_READ_ONLY/OUMV_ROOT/... for every mode, so a `--stdio` child must
+ * honour them too: the read-only profile was previously applied only in the
+ * cli-server SAPI, which silently kept the write methods registered under stdio.
+ *
+ * @return list<string>
+ */
+function oumv_env_argv(): array
+{
+    $recovered = [];
     $envRoot = getenv('OUMV_ROOT');
     if (is_string($envRoot) && $envRoot !== '') {
         $recovered[] = '--root';
@@ -3465,6 +4017,9 @@ function oumv_main(array $argv): int
     if ($sapi === 'cli-server') {
         // Rebuild the flag list: argv is empty in the router script.
         $argv = array_merge(['oumv-php'], oumv_server_argv());
+    } else {
+        // Env first so an explicit CLI flag still wins (last assignment).
+        $argv = array_merge(['oumv-php'], oumv_env_argv(), array_slice($argv, 1));
     }
     try {
         $options = oumv_parse_cli($argv);

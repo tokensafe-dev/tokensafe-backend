@@ -2,7 +2,7 @@
   "adapterName": "go-chi",
   "framework": "chi",
   "specVersion": "1.6.0",
-  "fixtureVersion": 15,
+  "fixtureVersion": 17,
   "total": 46,
   "passed": 46,
   "failed": 0,
@@ -244,5 +244,5 @@
       "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-28T05:46:46Z"
+  "generatedAt": "2026-11-28T17:10:22Z"
 }

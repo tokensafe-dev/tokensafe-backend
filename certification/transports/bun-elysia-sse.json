@@ -2,7 +2,7 @@
   "adapterName": "bun-elysia-sse",
   "framework": "elysia",
   "specVersion": "1.6.0",
-  "fixtureVersion": 15,
+  "fixtureVersion": 17,
   "total": 52,
   "passed": 52,
   "failed": 0,
@@ -275,7 +275,7 @@
       "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-28T11:47:57.379Z",
+  "generatedAt": "2026-11-28T17:11:21.647Z",
   "environment": {
     "transport": "sse",
     "auth": "required",

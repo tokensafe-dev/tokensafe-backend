@@ -97,7 +97,10 @@ class OUMVRuntime:
         # §8.5 (revision v1.11): a read-only deployment does not register the writing
         # methods at all. The registry is closed at construction, so no handler can be
         # reached later — the router answers -32601 before session validation.
-        self.read_only = bool(read_only)
+        # §8.4: a workspace policy `permissions.mutate: false` forces the same shape
+        # (method absence), not a per-handler -32007 refusal; query policy is the one
+        # registered-method refusal (§3.1 rule 5, §14.2).
+        self.read_only = bool(read_only) or self.permissions.get("mutate") is False
 
         self._bind_rpc_methods()
 

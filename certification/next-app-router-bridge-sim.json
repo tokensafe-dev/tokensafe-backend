@@ -2,7 +2,7 @@
   "adapterName": "next-app-router-bridge-sim",
   "framework": "nextjs",
   "specVersion": "1.6.0",
-  "fixtureVersion": 15,
+  "fixtureVersion": 17,
   "total": 51,
   "passed": 51,
   "failed": 0,
@@ -270,7 +270,7 @@
       "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-28T14:20:04.398Z",
+  "generatedAt": "2026-11-28T17:10:30.879Z",
   "environment": {
     "transport": "http",
     "auth": "required",

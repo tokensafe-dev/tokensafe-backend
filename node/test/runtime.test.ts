@@ -60,6 +60,34 @@ describe('OumvRuntime core', () => {
     expect(
       attempt({ path: 'edit_target.js', replacement: 'export const value = 1;\n', expectedVersion: 'sha256:' + '0'.repeat(64) })
     ).toBe(-32001);
+
+    // The same order holds for patch, symbol and every batch item: a stale version
+    // paired with broken syntax answers -32002 (guard 3), never -32001 (guard 5).
+    const stale = 'sha256:' + '0'.repeat(64);
+    expect(
+      attempt({
+        path: 'edit_target.js',
+        mode: 'patch',
+        hunks: [{ target: 'export const value = 41;', replacement: 'export function Broken( {' }],
+        expectedVersion: stale,
+      })
+    ).toBe(-32002);
+    expect(
+      attempt({
+        path: 'symbol_target.js',
+        mode: 'symbol',
+        symbol: 'value',
+        replacement: 'export function Broken( {',
+        expectedVersion: stale,
+      })
+    ).toBe(-32002);
+    expect(
+      attempt({
+        edits: [
+          { path: 'edit_target.js', mode: 'replace', replacement: 'export function Broken( {', expectedVersion: stale },
+        ],
+      })
+    ).toBe(-32002);
   });
 
   it('creates a new file with mode=create and never overwrites', () => {

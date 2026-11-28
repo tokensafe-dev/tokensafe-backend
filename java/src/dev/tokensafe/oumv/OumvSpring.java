@@ -55,6 +55,7 @@ import java.util.ArrayDeque;
 import java.util.ArrayList;
 import java.util.Arrays;
 import java.util.Collections;
+import java.util.Comparator;
 import java.util.Deque;
 import java.util.HashSet;
 import java.util.LinkedHashMap;
@@ -71,14 +72,15 @@ import java.util.regex.Pattern;
 public final class OumvSpring {
 
     static final String NAME = "oumv-java-spring";
-    static final String VERSION = "0.2.0";
-    static final String PROTOCOL_VERSION = "1.5.0";
+    static final String VERSION = "0.3.0";
+    static final String PROTOCOL_VERSION = "1.6.0";
     static final int SUPPORTED_MAJOR = 1;
     static final int SUPPORTED_MINOR_MAX = 6;
     static final String PROFILE = "backend";
     static final String FRAMEWORK = "spring";
     static final String[] OBSERVE_LEVELS = { "L0", "L1", "L2", "L3" };
     static final int DEFAULT_SESSION_TTL_SECONDS = 3600;
+    static final int MAX_BATCH_ITEMS = 16;
     static final int MAX_BODY_BYTES = 8 * 1024 * 1024;
 
     // ------------------------------------------------------------------ main
@@ -1928,9 +1930,23 @@ public final class OumvSpring {
         }
 
         String create() {
+            return create(ttlSeconds);
+        }
+
+        /** §3: the client may ask for a shorter lifetime; it is clamped to 1..86400. */
+        String create(long requestedTtl) {
             String id = "sess-" + randomHex(8);
-            expiries.put(id, Instant.now().getEpochSecond() + ttlSeconds);
+            long granted = Math.max(1, Math.min(86400, requestedTtl <= 0 ? ttlSeconds : requestedTtl));
+            // Millisecond precision: a 1-second TTL must actually expire after ~1s.
+            expiries.put(id, System.currentTimeMillis() + granted * 1000L);
             return id;
+        }
+
+        static long clampTtl(long requested) {
+            if (requested <= 0) {
+                return DEFAULT_SESSION_TTL_SECONDS;
+            }
+            return Math.max(1, Math.min(86400, requested));
         }
 
         boolean validate(String id) {
@@ -1941,7 +1957,7 @@ public final class OumvSpring {
             if (expiry == null) {
                 return false;
             }
-            if (Instant.now().getEpochSecond() > expiry) {
+            if (System.currentTimeMillis() > expiry) {
                 expiries.remove(id);
                 return false;
             }
@@ -1966,6 +1982,11 @@ public final class OumvSpring {
         final Deque<Long> internalErrors = new ArrayDeque<>();
         final Object mutateLock = new Object();
         final Object indexLock = new Object();
+        // §3 idempotency (wire 1.6.0): sessionId:key -> the first final result.
+        final Map<String, Map<String, Object>> idempotency = new ConcurrentHashMap<>();
+        // §3 cooperative cancellation: requestId -> cancel flag (§14 verify loops check it).
+        final Map<String, Boolean> cancellations = new ConcurrentHashMap<>();
+        volatile String lastRequestId = "";
         volatile ScanIndex index;
         volatile String descriptorFile;
 
@@ -2094,6 +2115,68 @@ public final class OumvSpring {
             }
         }
 
+        // ---- §4.1 result versioning (wire 1.6.0)
+
+        /**
+         * Digest of the workspace bytes (path + size + mtime, sorted), so a caller can
+         * pass `ifVersion` and learn that its cached copy is still fresh.
+         */
+        String workspaceVersion() throws RpcException {
+            StringBuilder sb = new StringBuilder();
+            try {
+                List<Path> files = new ArrayList<>();
+                Files.walkFileTree(ws.root, new SimpleFileVisitor<>() {
+                    @Override
+                    public FileVisitResult preVisitDirectory(Path dir, BasicFileAttributes attrs) {
+                        String name = dir.getFileName() == null ? "" : dir.getFileName().toString();
+                        if (!dir.equals(ws.root) && (name.equals("target") || name.equals("build")
+                                || name.equals(".git") || name.equals("node_modules")
+                                || name.equals(".tokensafe") || name.equals(".gradle")
+                                || name.equals(".idea") || name.equals("out"))) {
+                            return FileVisitResult.SKIP_SUBTREE;
+                        }
+                        return FileVisitResult.CONTINUE;
+                    }
+
+                    @Override
+                    public FileVisitResult visitFile(Path file, BasicFileAttributes attrs) {
+                        if (attrs.isRegularFile()) {
+                            files.add(file);
+                        }
+                        return FileVisitResult.CONTINUE;
+                    }
+                });
+                files.sort(Comparator.comparing(path -> ws.root.relativize(path).toString()));
+                for (Path file : files) {
+                    sb.append(ws.root.relativize(file).toString().replace('\\', '/')).append('\0')
+                            .append(Files.size(file)).append('\0')
+                            .append(Files.getLastModifiedTime(file).toMillis()).append('\n');
+                }
+            } catch (IOException err) {
+                throw RpcException.internal("cannot digest the workspace: " + err.getMessage());
+            }
+            return sha256(sb.toString().getBytes(StandardCharsets.UTF_8));
+        }
+
+        /**
+         * §4.1: every result that carries a workspace version also honours `ifVersion`.
+         * A match answers the short `{unchanged, workspaceVersion}` envelope; a stale
+         * token answers -32010 with the current digest.
+         */
+        Map<String, Object> versioned(Map<String, Object> result, Map<String, Object> params) throws RpcException {
+            String current = workspaceVersion();
+            String ifVersion = str(params, "ifVersion");
+            if (!blank(ifVersion)) {
+                if (!ifVersion.equals(current)) {
+                    throw new RpcException(-32010, "STALE_RESOURCE_VERSION: the workspace changed since " + ifVersion,
+                            map("reason", "stale_version", "current", current));
+                }
+                return map("unchanged", true, "workspaceVersion", current);
+            }
+            result.put("workspaceVersion", current);
+            return result;
+        }
+
         void requireSession(Map<String, Object> params) throws RpcException {
             String sessionId = str(params, "sessionId");
             if (!blank(sessionId) && !sessions.validate(sessionId)) {
@@ -2131,22 +2214,27 @@ public final class OumvSpring {
                     }
                 }
             }
-            String sessionId = sessions.create();
+            String sessionId = sessions.create(Sessions.clampTtl(intParam(params, "sessionTtlSeconds", 0)));
             Map<String, Object> capabilities = map(
                     "observe", map("levels", levels, "formats", list("json")),
-                    "understand", map("causality", false, "impactAnalysis", true));
+                    "understand", map("causality", false, "impactAnalysis", true),
+                    "index", map("symbols", true),
+                    "sessions", map("ttlSeconds", true, "cancel", true, "idempotency", !opts.readOnly ? true : null),
+                    "transports", list(opts.stdio ? "stdio" : "http"));
             if (opts.readOnly) {
-                // §8.5: no writing pillar is advertised because none is registered.
+                // §8.5: no writing pillar is advertised because none is registered, and
+                // `sessions.idempotency` describes applyEdit/previewEdit replay — it goes too.
                 capabilities.put("readOnly", true);
+                ((Map<String, Object>) capabilities.get("sessions")).remove("idempotency");
             } else {
-                capabilities.put("mutate", map("occ", true, "syntaxGuard", true));
-                capabilities.put("verify", map("multiMetric", true));
+                capabilities.put("mutate", map("occ", true, "syntaxGuard", true, "multiFile", true, "preview", true));
+                capabilities.put("verify", map("multiMetric", true, "build", true));
             }
             return map(
                     "protocolVersion", PROTOCOL_VERSION,
                     "profile", PROFILE,
                     "sessionId", sessionId,
-                    "ttlSeconds", DEFAULT_SESSION_TTL_SECONDS,
+                    "ttlSeconds", Sessions.clampTtl(intParam(params, "sessionTtlSeconds", 0)),
                     "runtimeInfo", map("name", NAME, "version", VERSION, "framework", FRAMEWORK),
                     "capabilities", capabilities);
         }
@@ -2191,13 +2279,13 @@ public final class OumvSpring {
             }
             switch (level) {
                 case "L0":
-                    return observeL0();
+                    return versioned(observeL0(), params);
                 case "L1":
-                    return observeL1(params);
+                    return versioned(observeL1(params), params);
                 case "L2":
-                    return observeL2(params);
+                    return versioned(observeL2(params), params);
                 case "L3":
-                    return observeL3(params);
+                    return versioned(observeL3(params), params);
                 default:
                     throw RpcException.unsupported("unsupported_level", "observe level " + level);
             }
@@ -2603,6 +2691,11 @@ public final class OumvSpring {
                 Arrays.asList("replace", "create", "symbol", "delete", "rename", "patch"));
 
         Map<String, Object> applyEdit(Map<String, Object> params) throws RpcException {
+            // Wire 1.5.0: a request carrying `edits` is a multi-file atomic batch.
+            Object batchRaw = params.get("edits");
+            if (batchRaw instanceof List && !((List<?>) batchRaw).isEmpty()) {
+                return applyEditBatch(params, (List<?>) batchRaw);
+            }
             String requestedPath = firstNonBlank(str(params, "path"), str(params, "filePath"));
             String mode = str(params, "mode", "replace").trim().toLowerCase(Locale.ROOT);
             if (mode.isEmpty()) {
@@ -2631,6 +2724,535 @@ public final class OumvSpring {
                         return replaceFile(requestedPath, file, replacement, expectedVersion, str(params, "symbol"));
                 }
             }
+        }
+
+        /** §3 idempotency: a retry carrying the same key replays the first final result. */
+        Map<String, Object> applyEditIdempotent(Map<String, Object> params) throws RpcException {
+            return withIdempotency(params, true);
+        }
+
+        Map<String, Object> previewEditIdempotent(Map<String, Object> params) throws RpcException {
+            return withIdempotency(params, false);
+        }
+
+        private Map<String, Object> withIdempotency(Map<String, Object> params, boolean apply) throws RpcException {
+            String key = str(params, "idempotencyKey", "").trim();
+            if (blank(key)) {
+                return apply ? applyEdit(params) : previewEdit(params);
+            }
+            String cacheKey = firstNonBlank(str(params, "sessionId", "default"), "default") + ":" + key;
+            Map<String, Object> cached = idempotency.get(cacheKey);
+            if (cached != null) {
+                return cached;
+            }
+            Map<String, Object> result = apply ? applyEdit(params) : previewEdit(params);
+            idempotency.put(cacheKey, result);
+            return result;
+        }
+
+        // ---- batch (wire 1.5.0): every item staged before the first byte is written
+
+        static final class StagedBatchEdit {
+            final Path file;
+            final String rel;
+            final byte[] content;
+            final byte[] previous;
+            final boolean created;
+            final int hunksApplied;
+
+            StagedBatchEdit(Path file, String rel, byte[] content, byte[] previous, boolean created, int hunksApplied) {
+                this.file = file;
+                this.rel = rel;
+                this.content = content;
+                this.previous = previous;
+                this.created = created;
+                this.hunksApplied = hunksApplied;
+            }
+        }
+
+        static RpcException annotateEdit(RpcException error, int index, String path) {
+            Map<String, Object> data = new LinkedHashMap<>();
+            if (error.data != null) {
+                data.putAll(error.data);
+            }
+            data.put("editIndex", index);
+            if (!blank(path)) {
+                data.put("path", path);
+            }
+            return new RpcException(error.code, error.getMessage(), data);
+        }
+
+        Map<String, Object> applyEditBatch(Map<String, Object> params, List<?> items) throws RpcException {
+            if (items.size() > MAX_BATCH_ITEMS) {
+                throw RpcException.validation("batch_size",
+                        "edits must hold 1.." + MAX_BATCH_ITEMS + " items",
+                        map("count", items.size()));
+            }
+            synchronized (mutateLock) {
+                List<StagedBatchEdit> staged = new ArrayList<>();
+                Set<String> seen = new LinkedHashSet<>();
+                for (int index = 0; index < items.size(); index++) {
+                    Object raw = items.get(index);
+                    String pathHint = raw instanceof Map && ((Map<?, ?>) raw).get("path") instanceof String
+                            ? (String) ((Map<?, ?>) raw).get("path")
+                            : "";
+                    try {
+                        if (!(raw instanceof Map)) {
+                            throw RpcException.validation("item_invalid", "edit " + index + " is not an object",
+                                    map("reason", "item_invalid"));
+                        }
+                        staged.add(stageBatchItem((Map<?, ?>) raw, seen));
+                    } catch (RpcException error) {
+                        throw annotateEdit(error, index, pathHint);
+                    }
+                }
+                List<StagedBatchEdit> written = new ArrayList<>();
+                try {
+                    for (StagedBatchEdit edit : staged) {
+                        if (edit.created && edit.file.getParent() != null) {
+                            Files.createDirectories(edit.file.getParent());
+                        }
+                        written.add(edit);
+                        ws.atomicWrite(edit.file, edit.content);
+                    }
+                } catch (IOException err) {
+                    List<String> failures = new ArrayList<>();
+                    for (int i = written.size() - 1; i >= 0; i--) {
+                        StagedBatchEdit done = written.get(i);
+                        try {
+                            if (done.created) {
+                                Files.deleteIfExists(done.file);
+                            } else {
+                                ws.atomicWrite(done.file, done.previous);
+                            }
+                        } catch (IOException restoreErr) {
+                            failures.add(done.rel + ": " + restoreErr.getMessage());
+                        }
+                    }
+                    int failedAt = Math.min(written.size(), staged.size() - 1);
+                    Map<String, Object> data = map(
+                            "editIndex", failedAt,
+                            "path", staged.get(failedAt).rel,
+                            "rolledBack", failures.isEmpty());
+                    if (!failures.isEmpty()) {
+                        data.put("rollbackErrors", failures);
+                    }
+                    throw new RpcException(-32603, "failed to persist edit: " + err.getMessage(), data);
+                }
+                List<Object> results = new ArrayList<>();
+                for (StagedBatchEdit edit : staged) {
+                    Map<String, Object> item = map(
+                            "path", edit.rel,
+                            "newVersion", sha256(edit.content));
+                    if (edit.created) {
+                        item.put("created", true);
+                    }
+                    if (edit.hunksApplied > 0) {
+                        item.put("hunksApplied", edit.hunksApplied);
+                    }
+                    results.add(item);
+                }
+                return map("status", "APPLIED", "edits", results);
+            }
+        }
+
+        StagedBatchEdit stageBatchItem(Map<?, ?> item, Set<String> seen) throws RpcException {
+            String path = item.get("path") instanceof String ? ((String) item.get("path")).trim() : "";
+            if (blank(path)) {
+                throw RpcException.validation("path_required", "path is required", map("reason", "path_required"));
+            }
+            Path file = ws.resolve(path);
+            String rel = ws.relative(file);
+            if (!seen.add(rel)) {
+                throw RpcException.validation("duplicate_path",
+                        "duplicate path in batch: " + rel, map("reason", "duplicate_path"));
+            }
+            String mode = item.get("mode") instanceof String
+                    ? ((String) item.get("mode")).trim().toLowerCase(Locale.ROOT)
+                    : "replace";
+            if (mode.isEmpty()) {
+                mode = "replace";
+            }
+            if (!mode.equals("replace") && !mode.equals("create") && !mode.equals("patch")) {
+                throw RpcException.unsupported("unknown_mode",
+                        "applyEdit batch mode " + mode + " (only replace/create/patch are atomic)");
+            }
+            String replacement = item.get("replacement") instanceof String ? (String) item.get("replacement") : null;
+            String expectedVersion = item.get("expectedVersion") instanceof String
+                    ? ((String) item.get("expectedVersion")).trim()
+                    : null;
+            boolean exists = Files.isRegularFile(file);
+
+            if (mode.equals("create")) {
+                if (blank(replacement)) {
+                    throw RpcException.validation("replacement_required",
+                            "replacement is required for mode=create", map("reason", "replacement_required"));
+                }
+                if (!blank(expectedVersion)) {
+                    throw RpcException.validation("create_forbids_version",
+                            "VALIDATION_FAILED: expectedVersion must be omitted for mode=create",
+                            map("reason", "create_forbids_version"));
+                }
+                if (exists) {
+                    throw RpcException.conflict("file_exists",
+                            "CONFLICT_DETECTED: file already exists; use mode=replace with its version",
+                            map("reason", "file_exists"));
+                }
+                requireSyntax(replacement, rel);
+                return new StagedBatchEdit(file, rel, replacement.getBytes(StandardCharsets.UTF_8), null, true, 0);
+            }
+
+            if (!exists) {
+                throw RpcException.resourceNotFound("file_not_found", "file does not exist: " + rel);
+            }
+            byte[] currentBytes = readBytes(file, rel);
+            String currentText = new String(currentBytes, StandardCharsets.UTF_8);
+            String currentVersion = sha256(currentBytes);
+
+            String content;
+            int hunksApplied = 0;
+            if (mode.equals("patch")) {
+                Object rawHunks = item.get("hunks");
+                List<?> hunks = rawHunks instanceof List ? (List<?>) rawHunks : Collections.emptyList();
+                if (hunks.isEmpty()) {
+                    throw RpcException.validation("hunks_required", "hunks is required for mode=patch",
+                            map("reason", "hunks_required"));
+                }
+                content = currentText;
+                for (int index = 0; index < hunks.size(); index++) {
+                    Object rawHunk = hunks.get(index);
+                    if (!(rawHunk instanceof Map)) {
+                        throw RpcException.validation("hunk_invalid", "hunk " + index + " is not an object",
+                                map("hunk", index));
+                    }
+                    Map<?, ?> hunk = (Map<?, ?>) rawHunk;
+                    String target = hunk.get("target") instanceof String ? (String) hunk.get("target") : null;
+                    String hunkReplacement = hunk.get("replacement") instanceof String
+                            ? (String) hunk.get("replacement")
+                            : "";
+                    if (blank(target)) {
+                        throw RpcException.validation("target_required", "hunk " + index + " has an empty target",
+                                map("hunk", index));
+                    }
+                    content = applyHunk(content, index, target, hunkReplacement,
+                            intOf(hunk.get("startLine")), intOf(hunk.get("endLine")),
+                            Boolean.TRUE.equals(hunk.get("replaceAll")));
+                }
+                hunksApplied = hunks.size();
+            } else {
+                if (blank(replacement)) {
+                    throw RpcException.validation("replacement_required",
+                            "replacement is required for mode=replace", map("reason", "replacement_required"));
+                }
+                content = replacement;
+            }
+            // §4.3 guard order: syntax (step 3) before the expectedVersion rules (4-5).
+            requireSyntax(content, rel);
+            requireVersion(expectedVersion, currentVersion, rel);
+            return new StagedBatchEdit(file, rel, content.getBytes(StandardCharsets.UTF_8), currentBytes, false, hunksApplied);
+        }
+
+        void requireSyntax(String content, String rel) throws RpcException {
+            SyntaxResult syntax = javaSyntaxCheck(content);
+            if (!syntax.status.equals("passed")) {
+                throw RpcException.syntax("pre-flight syntax check failed for " + rel, syntax.error);
+            }
+        }
+
+        // ---- previewEdit (wire 1.6.0, §4.4): the same guards, never a write
+
+        Map<String, Object> previewEdit(Map<String, Object> params) throws RpcException {
+            List<Object> previews = new ArrayList<>();
+            Object rawBatch = params.get("edits");
+            if (rawBatch instanceof List && !((List<?>) rawBatch).isEmpty()) {
+                if (((List<?>) rawBatch).size() > MAX_BATCH_ITEMS) {
+                    throw RpcException.validation("edits_size", "edits must hold 1.." + MAX_BATCH_ITEMS + " items",
+                            map("reason", "edits_size"));
+                }
+                for (Object raw : (List<?>) rawBatch) {
+                    if (!(raw instanceof Map)) {
+                        throw RpcException.validation("item_invalid", "every edit must be an object",
+                                map("reason", "item_invalid"));
+                    }
+                    previews.add(previewOne(castMap(raw)));
+                }
+            } else {
+                previews.add(previewOne(params));
+            }
+            return map("status", "PREVIEW", "applied", false, "previews", previews, "files", previews.size());
+        }
+
+        Map<String, Object> previewOne(Map<String, Object> item) throws RpcException {
+            String path = firstNonBlank(str(item, "path"), str(item, "filePath"));
+            String mode = str(item, "mode", "replace").trim().toLowerCase(Locale.ROOT);
+            if (mode.isEmpty()) {
+                mode = "replace";
+            }
+            String replacement = firstNonBlank(str(item, "replacement"), str(item, "source"));
+            String expectedVersion = str(item, "expectedVersion");
+            Path file = ws.resolve(path);
+            boolean exists = Files.isRegularFile(file);
+            String content;
+            if (mode.equals("create")) {
+                if (blank(replacement)) {
+                    throw RpcException.validation("replacement_required",
+                            "replacement is required for mode=create", map("reason", "replacement_required"));
+                }
+                if (!blank(expectedVersion)) {
+                    throw RpcException.validation("create_forbids_version",
+                            "VALIDATION_FAILED: expectedVersion must be omitted for mode=create",
+                            map("reason", "create_forbids_version"));
+                }
+                if (exists) {
+                    throw RpcException.conflict("file_exists",
+                            "CONFLICT_DETECTED: file already exists; use mode=replace with its version",
+                            map("reason", "file_exists"));
+                }
+                content = replacement;
+            } else if (mode.equals("patch")) {
+                if (!exists) {
+                    throw RpcException.resourceNotFound("file_not_found", "file does not exist: " + path);
+                }
+                Object rawHunks = item.get("hunks");
+                List<?> hunks = rawHunks instanceof List ? (List<?>) rawHunks : Collections.emptyList();
+                if (hunks.isEmpty()) {
+                    throw RpcException.validation("hunks_required", "hunks is required for mode=patch",
+                            map("reason", "hunks_required"));
+                }
+                content = new String(readBytes(file, path), StandardCharsets.UTF_8);
+                for (int index = 0; index < hunks.size(); index++) {
+                    Object rawHunk = hunks.get(index);
+                    if (!(rawHunk instanceof Map)) {
+                        throw RpcException.validation("hunk_invalid", "hunk " + index + " is not an object",
+                                map("hunk", index));
+                    }
+                    Map<?, ?> hunk = (Map<?, ?>) rawHunk;
+                    String target = hunk.get("target") instanceof String ? (String) hunk.get("target") : null;
+                    String hunkReplacement = hunk.get("replacement") instanceof String
+                            ? (String) hunk.get("replacement")
+                            : "";
+                    if (blank(target)) {
+                        throw RpcException.validation("target_required", "hunk " + index + " has an empty target",
+                                map("hunk", index));
+                    }
+                    content = applyHunk(content, index, target, hunkReplacement,
+                            intOf(hunk.get("startLine")), intOf(hunk.get("endLine")),
+                            Boolean.TRUE.equals(hunk.get("replaceAll")));
+                }
+            } else if (mode.equals("delete") || mode.equals("rename")) {
+                if (!exists) {
+                    throw RpcException.resourceNotFound("file_not_found", "file does not exist: " + path);
+                }
+                content = null;
+            } else if (mode.equals("replace") || mode.equals("symbol")) {
+                if (!exists) {
+                    throw RpcException.resourceNotFound("file_not_found", "file does not exist: " + path);
+                }
+                if (blank(replacement)) {
+                    throw RpcException.validation("replacement_required",
+                            "replacement is required for mode=" + mode, map("reason", "replacement_required"));
+                }
+                content = replacement;
+            } else {
+                throw RpcException.unsupported("unknown_mode", "unknown previewEdit mode " + mode);
+            }
+
+            Object syntaxCheck;
+            if (content == null) {
+                syntaxCheck = map("status", "skipped");
+            } else {
+                requireSyntax(content, path);
+                syntaxCheck = map("status", "passed", "tool", "javac");
+            }
+            if (!mode.equals("create")) {
+                requireVersion(expectedVersion, sha256(readBytes(file, path)), path);
+            }
+            Map<String, Object> preview = map(
+                    "path", path,
+                    "mode", mode,
+                    "wouldApply", true,
+                    "syntaxCheck", syntaxCheck);
+            if (content != null) {
+                preview.put("newVersion", sha256(content.getBytes(StandardCharsets.UTF_8)));
+            }
+            return preview;
+        }
+
+        // ---- index (wire 1.6.0, §14.1): ranked symbol search
+
+        Map<String, Object> indexSymbols(Map<String, Object> params) {
+            String query = str(params, "query", "").trim();
+            int limit = intParam(params, "limit", 50);
+            if (limit <= 0) {
+                limit = 50;
+            }
+            List<Map<String, Object>> candidates = new ArrayList<>();
+            if (!query.isEmpty()) {
+                String needle = query.toLowerCase(Locale.ROOT);
+                for (FileModel fm : index().files) {
+                    for (Member member : fm.types) {
+                        addIndexMatch(candidates, member, fm, needle);
+                    }
+                    for (Member member : fm.methods) {
+                        addIndexMatch(candidates, member, fm, needle);
+                    }
+                }
+            }
+            candidates.sort((a, b) -> {
+                int rank = Integer.compare((int) a.get("rank"), (int) b.get("rank"));
+                if (rank != 0) {
+                    return rank;
+                }
+                return String.valueOf(a.get("symbol")).compareTo(String.valueOf(b.get("symbol")));
+            });
+            boolean truncated = candidates.size() > limit;
+            List<Object> matches = new ArrayList<>();
+            for (int i = 0; i < Math.min(limit, candidates.size()); i++) {
+                Map<String, Object> match = new LinkedHashMap<>(candidates.get(i));
+                match.remove("rank");
+                matches.add(match);
+            }
+            return map("query", query, "matches", matches, "truncated", truncated);
+        }
+
+        static void addIndexMatch(List<Map<String, Object>> out, Member member, FileModel fm, String needle) {
+            String symbol = member.symbol();
+            String lower = symbol.toLowerCase(Locale.ROOT);
+            String name = member.name == null ? "" : member.name.toLowerCase(Locale.ROOT);
+            int rank;
+            if (name.equals(needle) || lower.equals(needle)) {
+                rank = 0;
+            } else if (name.startsWith(needle) || lower.startsWith(needle)) {
+                rank = 1;
+            } else if (name.endsWith(needle) || lower.endsWith(needle)) {
+                rank = 2;
+            } else if (lower.contains(needle)) {
+                rank = 3;
+            } else {
+                return;
+            }
+            out.add(map(
+                    "symbol", symbol,
+                    "name", member.name,
+                    "kind", member.kind,
+                    "path", fm.rel,
+                    "line", member.startLine,
+                    "rank", rank));
+        }
+
+        // ---- build (wire 1.6.0, §14.3): run a command, return structured diagnostics
+
+        Map<String, Object> build(Map<String, Object> params) throws RpcException {
+            String command = str(params, "command", "").trim();
+            String target = str(params, "target", "").trim();
+            if (command.isEmpty()) {
+                Path file;
+                try {
+                    file = resolveVerifyFile(target);
+                } catch (RpcException err) {
+                    return map(
+                            "status", "skipped",
+                            "command", opts.verifyCmd,
+                            "diagnostics", list(map(
+                                    "severity", "info",
+                                    "source", "build",
+                                    "message", "no build target: " + err.getMessage())),
+                            "durationMs", 0.0);
+                }
+                command = opts.verifyCmd.replace("{file}", shellQuote(file.toString()));
+            }
+            long started = System.nanoTime();
+            VerifyRun run = runCommand(command, intParam(params, "timeoutMs", 0));
+            List<Object> diagnostics = new ArrayList<>();
+            if (!run.passed) {
+                diagnostics.add(map(
+                        "severity", "error",
+                        "source", "build",
+                        "message", truncate(run.output, 2000),
+                        "tool", command));
+            }
+            return map(
+                    "status", run.passed ? "passed" : "failed",
+                    "command", command,
+                    "diagnostics", diagnostics,
+                    "durationMs", (System.nanoTime() - started) / 1_000_000.0);
+        }
+
+        VerifyRun runCommand(String command, int timeoutMs) throws RpcException {
+            VerifyRun run = new VerifyRun();
+            run.command = command;
+            long effectiveTimeout = timeoutMs > 0 ? timeoutMs : opts.verifyTimeoutMs;
+            Process process = null;
+            try {
+                ProcessBuilder builder = new ProcessBuilder("/bin/sh", "-c", command);
+                builder.directory(ws.root.toFile());
+                builder.redirectErrorStream(true);
+                process = builder.start();
+                ByteArrayOutputStream buffer = new ByteArrayOutputStream();
+                InputStream stream = process.getInputStream();
+                byte[] chunk = new byte[8192];
+                long deadline = System.currentTimeMillis() + Math.max(1000L, effectiveTimeout);
+                boolean timedOut = false;
+                while (true) {
+                    while (stream.available() > 0) {
+                        int read = stream.read(chunk);
+                        if (read < 0) {
+                            break;
+                        }
+                        if (buffer.size() < 200_000) {
+                            buffer.write(chunk, 0, read);
+                        }
+                    }
+                    if (process.isAlive()) {
+                        if (System.currentTimeMillis() > deadline) {
+                            timedOut = true;
+                            process.destroyForcibly();
+                            break;
+                        }
+                        Thread.sleep(10);
+                    } else {
+                        break;
+                    }
+                }
+                if (timedOut) {
+                    run.passed = false;
+                    run.exitCode = -1;
+                    run.output = "build timed out after " + effectiveTimeout + " ms";
+                } else {
+                    run.exitCode = process.exitValue();
+                    run.passed = run.exitCode == 0;
+                    run.output = truncate(buffer.toString(StandardCharsets.UTF_8), 4000);
+                }
+            } catch (IOException err) {
+                throw RpcException.runtimeUnavailable("build_command_failed",
+                        "cannot execute build command: " + err.getMessage());
+            } catch (InterruptedException err) {
+                Thread.currentThread().interrupt();
+                throw RpcException.internal("build interrupted");
+            } finally {
+                if (process != null && process.isAlive()) {
+                    process.destroyForcibly();
+                }
+            }
+            return run;
+        }
+
+        // ---- cancel (wire 1.6.0, §3)
+
+        Map<String, Object> cancel(Map<String, Object> params) {
+            String requestId = str(params, "requestId", "").trim();
+            String target = str(params, "target", "").trim();
+            if (requestId.isEmpty() && target.equals("last")) {
+                requestId = lastRequestId;
+            }
+            boolean known = !requestId.isEmpty() && cancellations.containsKey(requestId);
+            if (known) {
+                cancellations.put(requestId, Boolean.TRUE);
+            }
+            return map(
+                    "cancelled", known,
+                    "requestId", requestId,
+                    "reason", known ? "cancellation_requested" : "not_running");
         }
 
         Map<String, Object> replaceFile(String requestedPath, Path file, String replacement,
@@ -2707,7 +3329,6 @@ public final class OumvSpring {
             byte[] currentBytes = readBytes(file, requestedPath);
             String currentText = new String(currentBytes, StandardCharsets.UTF_8);
             String currentVersion = sha256(currentBytes);
-            requireVersion(expectedVersion, currentVersion, requestedPath);
             String patched = currentText;
             for (int index = 0; index < hunks.size(); index++) {
                 Object raw = hunks.get(index);
@@ -2728,11 +3349,14 @@ public final class OumvSpring {
                         intOf(hunk.get("startLine")), intOf(hunk.get("endLine")),
                         Boolean.TRUE.equals(hunk.get("replaceAll")));
             }
+            // §4.3 guard order: the syntax pre-flight (step 3) runs before the
+            // expectedVersion rules (steps 4-5).
             SyntaxResult syntax = javaSyntaxCheck(patched);
             if (!syntax.status.equals("passed")) {
                 throw RpcException.syntax("pre-flight syntax check failed for the patched " + requestedPath,
                         syntax.error);
             }
+            requireVersion(expectedVersion, currentVersion, requestedPath);
             Path backup = backupOrFail(file);
             byte[] next = patched.getBytes(StandardCharsets.UTF_8);
             writeOrFail(file, next);
@@ -2990,10 +3614,10 @@ public final class OumvSpring {
                 throw RpcException.invalidParams("query_required", "query is required");
             }
             if (query.equals("impact")) {
-                return understandImpact(target);
+                return versioned(understandImpact(target), params);
             }
             if (query.equals("causality") || query.equals("why_state")) {
-                return understandCausality(query, target);
+                return versioned(understandCausality(query, target), params);
             }
             throw RpcException.unsupported("unsupported_query", "understand query " + query);
         }
@@ -3407,7 +4031,8 @@ public final class OumvSpring {
             // §8.5 (revision v1.11): a read-only deployment has no handler for the
             // writing surface at all, so the answer is METHOD_NOT_FOUND whatever the
             // session state is — never a policy refusal of a handler that exists.
-            if (opts.readOnly && ("oumv/applyEdit".equals(method) || "oumv/verify".equals(method))) {
+            if (opts.readOnly && Arrays.asList("oumv/applyEdit", "oumv/previewEdit", "oumv/verify", "oumv/build")
+                    .contains(method)) {
                 throw new RpcException(-32601, "METHOD_NOT_FOUND: unknown method " + method,
                         map("reason", "method_not_found", "method", method));
             }
@@ -3420,13 +4045,26 @@ public final class OumvSpring {
                     break;
             }
             requireSession(params);
+            String requestId = str(params, "requestId");
+            if (!blank(requestId) && !"oumv/cancel".equals(method)) {
+                cancellations.put(requestId, Boolean.FALSE);
+                lastRequestId = requestId;
+            }
             switch (method) {
                 case "oumv/observe":
                     return observe(params);
                 case "oumv/getSource":
                     return getSource(params);
                 case "oumv/applyEdit":
-                    return applyEdit(params);
+                    return applyEditIdempotent(params);
+                case "oumv/previewEdit":
+                    return previewEditIdempotent(params);
+                case "oumv/index":
+                    return indexSymbols(params);
+                case "oumv/build":
+                    return build(params);
+                case "oumv/cancel":
+                    return cancel(params);
                 case "oumv/verify":
                     return verify(params);
                 case "oumv/understand":

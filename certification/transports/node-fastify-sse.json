@@ -2,7 +2,7 @@
   "adapterName": "node-fastify-sse",
   "framework": "fastify",
   "specVersion": "1.6.0",
-  "fixtureVersion": 15,
+  "fixtureVersion": 17,
   "total": 50,
   "passed": 50,
   "failed": 0,
@@ -265,7 +265,7 @@
       "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-28T05:46:13.501Z",
+  "generatedAt": "2026-11-28T17:10:34.058Z",
   "environment": {
     "transport": "sse",
     "auth": "required",
