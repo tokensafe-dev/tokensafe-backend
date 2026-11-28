@@ -260,7 +260,7 @@
       "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-28T17:42:39.848Z",
+  "generatedAt": "2026-11-28T17:53:34.730Z",
   "environment": {
     "transport": "ws",
     "profile": "backend",

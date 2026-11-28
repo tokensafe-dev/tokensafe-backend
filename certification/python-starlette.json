@@ -255,7 +255,7 @@
       "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-28T17:42:35.433Z",
+  "generatedAt": "2026-11-28T17:53:30.312Z",
   "environment": {
     "transport": "http",
     "profile": "backend",

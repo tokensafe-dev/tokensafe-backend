@@ -29,7 +29,7 @@
 ## Certification (spec §10)
 
 <!-- certification:start -->
-**15 adapters certified against the same language-neutral fixtures** (`fixtureVersion` 17): 14 at Level 3 and 1 source-level adapter(s) at Level 2 — frozen on the wire 1.5.0 subset they still serve, each with its single L3 gap named below. The smallest suite in the table is 26 cases: a runtime that advertises an optional capability also runs the case gated on it, and a runtime frozen on an older wire skips the newer-wire cases instead of failing them. Generated from `certification/*.json` by `scripts/render_certification.py`; CI fails when this block no longer matches the reports.
+**16 adapters certified against the same language-neutral fixtures** (`fixtureVersion` 17): 15 at Level 3 and 1 source-level adapter(s) at Level 2 — frozen on the wire 1.5.0 subset they still serve, each with its single L3 gap named below. The smallest suite in the table is 26 cases: a runtime that advertises an optional capability also runs the case gated on it, and a runtime frozen on an older wire skips the newer-wire cases instead of failing them. Generated from `certification/*.json` by `scripts/render_certification.py`; CI fails when this block no longer matches the reports.
 
 | Adapter | Framework | Transport exercised | Level | Cases | Report |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -45,6 +45,7 @@
 | `php-laravel` | Laravel / Symfony | PHP `POST /__oumv/rpc` + stdio | **3** | 26/26 | [certification/php-laravel-readonly.json](certification/php-laravel-readonly.json) |
 | `php-laravel` | Laravel / Symfony | PHP `POST /__oumv/rpc` + stdio | **3** | 41/41 | [certification/php-laravel.json](certification/php-laravel.json) |
 | `python-fastapi` | FastAPI | ASGI `POST /__oumv/rpc` | **3** | 48/48 | [certification/python-fastapi.json](certification/python-fastapi.json) |
+| `python-starlette` | starlette | — | **3** | 48/48 | [certification/python-starlette-query-disabled.json](certification/python-starlette-query-disabled.json) |
 | `python-starlette` | starlette | — | **3** | 28/28 | [certification/python-starlette-readonly.json](certification/python-starlette-readonly.json) |
 | `python-starlette` | starlette | — | **3** | 48/48 | [certification/python-starlette.json](certification/python-starlette.json) |
 

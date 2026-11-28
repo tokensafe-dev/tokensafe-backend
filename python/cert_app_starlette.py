@@ -20,6 +20,9 @@ from tokensafe_python.adapters.starlette import mount_tokensafe_starlette
 WORKSPACE = os.environ.get("TOKENSAFE_CERT_WORKSPACE") or os.getcwd()
 DB_PATH = os.path.join(WORKSPACE, "cert.sqlite")
 READ_ONLY = os.environ.get("TOKENSAFE_CERT_READ_ONLY") == "1"
+# §14.2 workspace policy: the runtime keeps observeQuery.readOnly advertised and
+# answers oumv/query with -32007 query_disabled (fixtures v16 policyCases).
+QUERY_DISABLED = os.environ.get("TOKENSAFE_CERT_QUERY_DISABLED") == "1"
 
 engine = create_engine(f"sqlite:///{DB_PATH}")
 with engine.begin() as connection:
@@ -56,4 +59,5 @@ mounted = mount_tokensafe_starlette(
     auto_discover=False,
     project_root=WORKSPACE,
     read_only=READ_ONLY,
+    permissions={"query": False} if QUERY_DISABLED else None,
 )

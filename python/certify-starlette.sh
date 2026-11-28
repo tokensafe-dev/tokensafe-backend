@@ -82,13 +82,14 @@ prepare_workspace() {
 
 start_server() {
   local read_only="${1:-0}"
+  local query_disabled="${2:-0}"
   if node -e "const s=require('net').connect($PORT,'127.0.0.1');s.on('connect',()=>process.exit(0));s.on('error',()=>process.exit(1))" >/dev/null 2>&1; then
     echo "✗ port $PORT is already in use; kill the stale server first" >&2
     return 1
   fi
   SERVER_LOG="$WORKSPACE/uvicorn.log"
   ( export TOKENSAFE_CERT_WORKSPACE="$WORKSPACE" TOKENSAFE_OUMV_AUTH_TOKEN="$CERT_TOKEN" \
-      TOKENSAFE_CERT_READ_ONLY="$read_only"; cd "$HERE"; \
+      TOKENSAFE_CERT_READ_ONLY="$read_only" TOKENSAFE_CERT_QUERY_DISABLED="$query_disabled"; cd "$HERE"; \
     exec "$PYTHON" -m uvicorn "$CERT_APP" --host 127.0.0.1 --port "$PORT" --log-level warning ) \
     >"$SERVER_LOG" 2>&1 &
   SERVER_PID=$!
@@ -144,6 +145,17 @@ node "$CERTIFY" --adapter python-starlette-sse --framework starlette --profile b
   --token "$CERT_TOKEN" --auth \
   --markers "@$MARKERS" --fixtures "$FIXTURES" \
   --report "$TRANSPORT_DIR/python-starlette-sse.json" --min-level 3
+reset_workspace
+
+echo "▸ certifying the §14.2 workspace policy (permissions.query=false)"
+# The runtime still advertises observeQuery.readOnly and still registers oumv/query:
+# the refusal is -32007 query_disabled, the shape §3.1 rule 5 reserves for policy.
+prepare_workspace
+start_server 0 1
+node "$CERTIFY" --adapter python-starlette --framework starlette --profile backend \
+  --url "http://127.0.0.1:$PORT/__oumv/rpc" --token "$CERT_TOKEN" \
+  --markers "@$MARKERS" --fixtures "$FIXTURES" --policy \
+  --report "$REPORT_DIR/python-starlette-query-disabled.json" --min-level 1 --quiet
 reset_workspace
 
 echo "✓ Starlette certificates written to $REPORT_DIR"
