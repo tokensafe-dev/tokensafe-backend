@@ -15,7 +15,7 @@ from starlette.applications import Starlette
 from starlette.responses import JSONResponse
 from starlette.routing import Route
 
-from tokensafe_python.adapters.starlette import mount_tokensafe_starlette
+from tokensafe_python.adapters.fastapi import mount_tokensafe
 
 WORKSPACE = os.environ.get("TOKENSAFE_CERT_WORKSPACE") or os.getcwd()
 DB_PATH = os.path.join(WORKSPACE, "cert.sqlite")
@@ -54,7 +54,7 @@ app = Starlette(
 # here (instead of passing db_engine=) certifies that lookup, not just the engine.
 app.state.db_engine = engine
 
-mounted = mount_tokensafe_starlette(
+mounted = mount_tokensafe(
     app,
     auto_discover=False,
     project_root=WORKSPACE,

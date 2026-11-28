@@ -15,7 +15,20 @@ from starlette.responses import JSONResponse
 from starlette.routing import Route, WebSocketRoute
 from starlette.testclient import TestClient
 
+from tokensafe_python.adapters.fastapi import mount_tokensafe
 from tokensafe_python.adapters.starlette import TokenSafeStarlette, mount_tokensafe_starlette
+
+
+def test_mount_tokensafe_detects_the_starlette_host():
+    """One entry point: the host is detected, not declared."""
+    from fastapi import FastAPI
+
+    from tokensafe_python.adapters.fastapi import TokenSafeFastAPI
+
+    assert isinstance(mount_tokensafe(_app(), auto_discover=False), TokenSafeStarlette)
+    assert isinstance(mount_tokensafe(FastAPI(), auto_discover=False), TokenSafeFastAPI)
+    # The explicit entry stays available for callers that pin the host.
+    assert isinstance(mount_tokensafe_starlette(_app(), auto_discover=False), TokenSafeStarlette)
 
 
 async def home(request):

@@ -220,8 +220,27 @@ class TokenSafeFastAPI:
             self.runtime.discovery.unregister_runtime()
 
 
+def _is_fastapi_app(app: Any) -> bool:
+    """True for FastAPI, false for a plain Starlette application.
+
+    ``FastAPI`` subclasses ``Starlette``, so the check runs most-specific first:
+    the class itself, the ``dependency_overrides`` registry FastAPI owns, then an
+    ``APIRoute`` (Starlette only ever produces ``Route``/``WebSocketRoute``).
+    """
+    try:
+        from fastapi import FastAPI
+        from fastapi.routing import APIRoute
+    except Exception:  # pragma: no cover - FastAPI is a hard dependency here
+        return False
+    if isinstance(app, FastAPI):
+        return True
+    if hasattr(app, "dependency_overrides"):
+        return True
+    return any(isinstance(route, APIRoute) for route in getattr(app, "routes", []) or [])
+
+
 def mount_tokensafe(
-    app: FastAPI,
+    app: Any,
     *,
     rpc_path: str = "/__oumv/rpc",
     db_engine: Optional[Any] = None,
@@ -231,13 +250,33 @@ def mount_tokensafe(
     project_root: Optional[str] = None,
     permissions: Optional[Dict[str, Any]] = None,
     read_only: bool = False,
-) -> TokenSafeFastAPI:
-    """One-liner helper to mount TokenSafe UARP runtime onto a FastAPI application.
+) -> Any:
+    """One-liner helper to mount the UARP runtime onto an ASGI application.
+
+    The host is detected, not declared: a FastAPI app gets the FastAPI adapter
+    (Pydantic schemas, ``dependency_overrides`` DB discovery, startup/shutdown
+    events) and a plain Starlette app gets the Starlette adapter (duck-typed
+    routes, ``app.state`` DB discovery, lifespan wrapper). Both share the same
+    wire transport, so an agent cannot tell them apart on the protocol surface.
 
     ``read_only=True`` is the spec §8.5 deployment shape: the writing methods
     (applyEdit/previewEdit/verify/build and the mutation.* extensions) are never
     registered, so they answer -32601 instead of a policy refusal.
     """
+    if not _is_fastapi_app(app):
+        from tokensafe_python.adapters.starlette import TokenSafeStarlette
+
+        return TokenSafeStarlette(
+            app=app,
+            rpc_path=rpc_path,
+            db_engine=db_engine,
+            auto_discover=auto_discover,
+            host=host,
+            port=port,
+            project_root=project_root,
+            permissions=permissions,
+            read_only=read_only,
+        )
     return TokenSafeFastAPI(
         app=app,
         rpc_path=rpc_path,

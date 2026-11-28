@@ -180,11 +180,12 @@ def mount_tokensafe_starlette(
     permissions: Optional[Dict[str, Any]] = None,
     read_only: bool = False,
 ) -> TokenSafeStarlette:
-    """One-liner helper to mount the UARP runtime onto a Starlette application.
+    """Explicit Starlette entry point (kept for callers that pin the host).
 
-    ``read_only=True`` is the spec §8.5 deployment shape: the writing methods
-    (applyEdit/previewEdit/verify/build and the mutation.* extensions) are never
-    registered, so they answer -32601 instead of a policy refusal.
+    ``mount_tokensafe`` now detects the host and returns this adapter for a plain
+    Starlette application, so new code should call it instead: one entry point,
+    one behaviour to document. ``read_only=True`` is the spec §8.5 deployment
+    shape (writing methods absent, ``-32601``).
     """
     return TokenSafeStarlette(
         app=app,
