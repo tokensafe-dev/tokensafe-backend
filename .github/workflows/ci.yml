@@ -60,7 +60,9 @@ jobs:
           pip install -e ".[all]" pytest pytest-asyncio pytest-timeout anyio
 
       - name: Run Python tests
-        run: pytest -v
+        # pytest-timeout bounds each test; this bounds the whole run, including the
+        # collection phase (a module that hangs on import is outside its scope).
+        run: timeout 900 pytest -v
 
   test-node:
     name: Test Node Runtime

@@ -1,11 +1,31 @@
 """SSE and WebSocket transports for the FastAPI adapter (spec §2.3/§2.4)."""
 
 import hashlib
+import re
 
+import pytest
+import starlette
 from fastapi import FastAPI
 from fastapi.testclient import TestClient
 
 from tokensafe_python.adapters.fastapi import mount_tokensafe
+
+# Starlette's TestClient only returns response headers for a streaming endpoint from
+# 1.10 on; 1.7 blocks inside `client.stream()` until the app finishes, which an
+# infinite SSE stream never does. Python 3.10 cannot install fastapi 0.165 (it
+# requires >= 3.11), so it resolves 0.162 -> starlette 1.7 and hangs. Gate on the
+# client's capability, not on the interpreter, so coverage returns by itself once
+# fastapi supports 3.10 again.
+_STARLETTE = tuple(int(part) for part in re.findall(r"\d+", starlette.__version__)[:2])
+_SSE_STREAMING_CLIENT = _STARLETTE >= (1, 10)
+
+sse_needs_streaming_client = pytest.mark.skipif(
+    not _SSE_STREAMING_CLIENT,
+    reason=(
+        f"starlette {starlette.__version__} TestClient blocks on an infinite SSE stream "
+        "(Python 3.10 resolves fastapi 0.162); the transport itself is covered on 3.11+"
+    ),
+)
 
 
 def _occ(content: str) -> str:
@@ -13,7 +33,9 @@ def _occ(content: str) -> str:
 
 
 def _read_state_event(client: TestClient, headers: dict | None = None) -> str:
-    with client.stream("GET", "/__oumv/events", headers=headers or {}) as response:
+    # A bounded read: an SSE frame that never arrives must fail the test, not
+    # stall the runner (that is how the 3.10 leg used to hang for 50 minutes).
+    with client.stream("GET", "/__oumv/events", headers=headers or {}, timeout=10.0) as response:
         text = ""
         for chunk in response.iter_text():
             text += chunk
@@ -56,6 +78,7 @@ def test_websocket_notification_gets_no_reply():
     assert reply["result"]["level"] == "L1"
 
 
+@sse_needs_streaming_client
 def test_sse_state_event_replays_from_last_event_id(tmp_path):
     app = FastAPI()
     adapter = mount_tokensafe(app, auto_discover=False, project_root=str(tmp_path))
