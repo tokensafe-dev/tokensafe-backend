@@ -8,7 +8,7 @@ from tokensafe_python.core.contracts import oumv_operation
 from tokensafe_python.adapters.fastapi import mount_tokensafe, TokenSafeFastAPI
 from tokensafe_python.adapters.starlette import mount_tokensafe_starlette, TokenSafeStarlette
 
-__version__ = "0.2.0"
+from tokensafe_python.version import __version__  # noqa: F401
 __all__ = [
     "OUMVRuntime",
     "mount_tokensafe",

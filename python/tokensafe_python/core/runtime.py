@@ -1,3 +1,4 @@
+from tokensafe_python.version import __version__
 """
 Main OUMV / UARP runtime coordinator.
 """
@@ -421,7 +422,7 @@ class OUMVRuntime:
             "ttlSeconds": granted_ttl,
             "runtimeInfo": {
                 "name": "tokensafe-python",
-                "version": "0.10.0",
+                "version": __version__,
                 "framework": self.framework,
             },
             "capabilities": caps,
