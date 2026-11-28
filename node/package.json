@@ -1,7 +1,7 @@
 {
   "name": "tokensafe-backend-node",
-  "version": "0.10.0",
-  "description": "OUMV adapter for Node.js backends (Express, Fastify): observe, understand, mutate with OCC, verify \u2014 over HTTP, SSE, WebSocket and stdio",
+  "version": "0.11.0",
+  "description": "OUMV adapter for Node.js and Bun backends (Express, Fastify, Next.js, Elysia): observe, understand, mutate with OCC, verify — over HTTP, SSE, WebSocket and stdio",
   "license": "Apache-2.0",
   "type": "module",
   "main": "./dist/index.cjs",
@@ -27,6 +27,19 @@
       "types": "./dist/readonly.d.ts",
       "import": "./dist/readonly.js",
       "require": "./dist/readonly.cjs"
+    },
+    "./elysia": {
+      "types": "./dist/elysia.d.ts",
+      "import": "./dist/elysia.js",
+      "require": "./dist/elysia.cjs"
+    }
+  },
+  "peerDependencies": {
+    "elysia": ">=1.2 <2"
+  },
+  "peerDependenciesMeta": {
+    "elysia": {
+      "optional": true
     }
   },
   "dependencies": {
@@ -37,6 +50,7 @@
     "@types/express": "^4.17.21",
     "@types/node": "^22.10.1",
     "@types/ws": "^8.5.13",
+    "elysia": "^1.4.32",
     "express": "^4.21.2",
     "fastify": "^5.2.1",
     "tsup": "^8.3.5",
@@ -45,7 +59,8 @@
   },
   "scripts": {
     "build": "tsup",
-    "test": "vitest run"
+    "test": "vitest run",
+    "test:bun": "bun test test-bun"
   },
   "repository": {
     "type": "git",

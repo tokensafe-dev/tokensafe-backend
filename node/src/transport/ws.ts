@@ -2,8 +2,8 @@ import type { Server as HttpServer } from 'node:http';
 import type { Duplex } from 'node:stream';
 import { WebSocketServer, type WebSocket } from 'ws';
 import type { OumvRuntime } from '../runtime.js';
-import { Dispatcher, dispatchAll, failure, type JsonRpcRequest } from './dispatcher.js';
 import { isAuthorized } from './http.js';
+import { bindWsSession } from './ws-core.js';
 
 export interface WsOptions {
   runtime: OumvRuntime;
@@ -23,9 +23,7 @@ export interface WsAttachment {
 export function attachWebSocket(server: HttpServer, options: WsOptions): WsAttachment {
   const runtime = options.runtime;
   const token = options.authToken ?? runtime.authToken ?? '';
-  const dispatcher = new Dispatcher(runtime);
   const wss = new WebSocketServer({ noServer: true });
-  const sessions = new WeakMap<WebSocket, string>();
 
   const onUpgrade = (req: any, socket: Duplex, head: Buffer) => {
     const pathname = String(req.url || '').split('?')[0];
@@ -40,49 +38,13 @@ export function attachWebSocket(server: HttpServer, options: WsOptions): WsAttac
   server.on('upgrade', onUpgrade);
 
   wss.on('connection', (ws: WebSocket) => {
-    let boundSession = '';
-    // Server-initiated notifications (spec §2.4) start once the connection is
-    // bound by `oumv/handshake`; `ws.send` serialises frames internally.
-    const unsubscribe = runtime.subscribeEvents((event) => {
-      if (!boundSession) return;
-      const method = {
-        state: 'notifications/oumv.state',
-        diagnostic: 'notifications/oumv.diagnostic',
-      }[event.type as string] ?? 'notifications/oumv.trace';
-      try {
-        ws.send(JSON.stringify({ jsonrpc: '2.0', method, params: { ...event.data, sessionId: boundSession } }));
-      } catch {
-        // The socket is closing; `close` removes the subscriber.
-      }
+    // The session/broadcast contract is shared with the Bun/Elysia adapter
+    // (`ws-core.ts`), so the two push implementations cannot drift apart.
+    const binding = bindWsSession(runtime, (payload) => ws.send(JSON.stringify(payload)));
+    ws.on('message', (raw) => {
+      void binding.handleMessage(raw);
     });
-
-    ws.on('message', async (raw) => {
-      let payload: JsonRpcRequest | JsonRpcRequest[];
-      try {
-        payload = JSON.parse(String(raw));
-      } catch (error: any) {
-        ws.send(JSON.stringify(failure(null, -32700, `Parse error: ${error.message}`)));
-        return;
-      }
-      const isNotification = !Array.isArray(payload) && payload && typeof payload === 'object' && payload.id === undefined;
-      const response = await dispatchAll(dispatcher, payload);
-      if (isNotification && !Array.isArray(payload) && !(response as any).error) return;
-      if (Array.isArray(payload) && Array.isArray(response) && response.length === 0) return;
-      ws.send(JSON.stringify(response));
-      if (!Array.isArray(payload) && payload?.method === 'oumv/handshake') {
-        const sessionId = (response as any)?.result?.sessionId;
-        if (sessionId) {
-          sessions.set(ws, sessionId);
-          boundSession = sessionId;
-        }
-      }
-    });
-    ws.on('close', () => {
-      unsubscribe();
-      const sessionId = sessions.get(ws);
-      if (sessionId) runtime.sessions.delete(sessionId);
-      sessions.delete(ws);
-    });
+    ws.on('close', () => binding.handleClose());
   });
 
   return {

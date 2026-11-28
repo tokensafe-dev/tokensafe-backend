@@ -1,10 +1,8 @@
 import fs from 'node:fs';
-import type http from 'node:http';
 import path from 'node:path';
 import { OumvRuntime, type OumvRuntimeOptions } from '../runtime.js';
 import { deleteDescriptor, writeDescriptor } from '../descriptor.js';
-import { ERROR_CODES } from '../errors.js';
-import { Dispatcher, dispatchAll, failure, parsePayload, type JsonRpcRequest } from '../transport/dispatcher.js';
+import { createFetchHandlers, webHandlerToNode } from '../transport/fetch.js';
 
 /**
  * Next.js App Router adapter (server profile).
@@ -98,47 +96,6 @@ export function scanAppRouterRoutes(appDir: string): Array<{ method: string; pat
   return routes;
 }
 
-/** Spec §12: a configured token is always required; no token stays open for dev. */
-function isAuthorizedRequest(request: Request, token: string): boolean {
-  if (!token) return true;
-  const authorization = request.headers.get('authorization') ?? '';
-  const provided =
-    request.headers.get('x-oumv-session-token') ??
-    (authorization.toLowerCase().startsWith('bearer ') ? authorization.slice(7).trim() : '');
-  return Boolean(provided) && provided === token;
-}
-
-const jsonResponse = (payload: unknown, status = 200): Response =>
-  new Response(JSON.stringify(payload), { status, headers: { 'Content-Type': 'application/json' } });
-
-/** Bridges a Web handler into the Node listener the runtime dispatches verify through. */
-function webHandlerToNode(fetchHandler: (request: Request) => Promise<Response>): http.RequestListener {
-  return (req, res) => {
-    void (async () => {
-      const chunks: Buffer[] = [];
-      for await (const chunk of req) chunks.push(Buffer.from(chunk));
-      const headers = new Headers();
-      for (const [key, value] of Object.entries(req.headers)) {
-        if (typeof value === 'string') headers.set(key, value);
-      }
-      const request = new Request(`http://${req.headers.host ?? '127.0.0.1'}${req.url ?? '/'}`, {
-        method: req.method,
-        headers,
-        ...(chunks.length > 0 && req.method !== 'GET' && req.method !== 'HEAD'
-          ? { body: Buffer.concat(chunks) }
-          : {}),
-      });
-      const response = await fetchHandler(request);
-      res.statusCode = response.status;
-      response.headers.forEach((value, key) => res.setHeader(key, value));
-      res.end(Buffer.from(await response.arrayBuffer()));
-    })().catch(() => {
-      if (!res.headersSent) res.statusCode = 500;
-      res.end();
-    });
-  };
-}
-
 export function createNextRouteHandlers(options: NextAdapterOptions = {}): NextRouteHandlers {
   const workspaceDir = options.workspaceDir ?? process.cwd();
   const runtime =
@@ -147,8 +104,14 @@ export function createNextRouteHandlers(options: NextAdapterOptions = {}): NextR
       ...options,
       workspaceDir,
     });
-  const dispatcher = new Dispatcher(runtime);
   const token = options.authToken ?? runtime.authToken ?? '';
+  const handlers = createFetchHandlers({
+    runtime,
+    authToken: options.authToken,
+    maxBodyBytes: options.maxBodyBytes,
+    // Next Route Handlers are same-origin; the Node/Express binding owns CORS there.
+    cors: false,
+  });
 
   for (const route of scanAppRouterRoutes(options.appDir ?? path.join(workspaceDir, 'app'))) {
     runtime.registerRoute(route.method, route.path, 'route');
@@ -169,93 +132,10 @@ export function createNextRouteHandlers(options: NextAdapterOptions = {}): NextR
     });
   }
 
-  const POST = async (request: Request): Promise<Response> => {
-    if (!isAuthorizedRequest(request, token)) {
-      return jsonResponse(
-        failure(null, ERROR_CODES.PERMISSION_DENIED, 'PERMISSION_DENIED: invalid OUMV session token'),
-        401
-      );
-    }
-    let payload: JsonRpcRequest | JsonRpcRequest[];
-    try {
-      payload = parsePayload(await request.text());
-    } catch (error: any) {
-      return jsonResponse(failure(null, ERROR_CODES.PARSE_ERROR, error?.message ?? 'PARSE_ERROR'));
-    }
-    try {
-      return jsonResponse(await dispatchAll(dispatcher, payload));
-    } catch (error: any) {
-      return jsonResponse(
-        failure(null, error?.code ?? ERROR_CODES.INTERNAL_ERROR, error?.message ?? 'INTERNAL_ERROR')
-      );
-    }
-  };
-
-  const GET = (request: Request): Response => {
-    if (!isAuthorizedRequest(request, token)) {
-      return jsonResponse(
-        failure(null, ERROR_CODES.PERMISSION_DENIED, 'PERMISSION_DENIED: invalid OUMV session token'),
-        401
-      );
-    }
-    const encoder = new TextEncoder();
-    const rawCursor = request.headers.get('last-event-id') ?? '0';
-    let cursor = Number.parseInt(rawCursor, 10);
-    if (!Number.isFinite(cursor) || cursor < 0) cursor = 0;
-
-    const stream = new ReadableStream<Uint8Array>({
-      start(controller) {
-        let closed = false;
-        const write = (text: string) => {
-          if (closed) return;
-          try {
-            controller.enqueue(encoder.encode(text));
-          } catch {
-            closed = true;
-          }
-        };
-        write(': connected\n\n');
-        for (const event of runtime.eventsSince(cursor)) {
-          write(`id: ${event.id}\nevent: ${event.type}\ndata: ${JSON.stringify(event.data)}\n\n`);
-          cursor = event.id;
-        }
-        const unsubscribe = runtime.subscribeEvents((event) => {
-          if (event.id <= cursor) return;
-          cursor = event.id;
-          write(`id: ${event.id}\nevent: ${event.type}\ndata: ${JSON.stringify(event.data)}\n\n`);
-        });
-        const heartbeat = setInterval(() => write(': heartbeat\n\n'), 15_000);
-        if (typeof heartbeat === 'object' && 'unref' in heartbeat) heartbeat.unref();
-        const close = () => {
-          if (closed) return;
-          closed = true;
-          clearInterval(heartbeat);
-          unsubscribe();
-          try {
-            controller.close();
-          } catch {
-            // already closed by the consumer
-          }
-        };
-        request.signal.addEventListener('abort', close);
-      },
-    });
-
-    return new Response(stream, {
-      status: 200,
-      headers: {
-        'Content-Type': 'text/event-stream',
-        'Cache-Control': 'no-cache',
-        Connection: 'keep-alive',
-        'X-Accel-Buffering': 'no',
-      },
-    });
-  };
-
   return {
     runtime,
-    POST,
-    GET,
+    POST: handlers.POST,
+    GET: handlers.GET,
     dispose: async () => {
       deleteDescriptor(workspaceDir);
       await runtime.dispose();

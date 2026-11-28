@@ -211,6 +211,21 @@ jobs:
           OUMV_REPO: ${{ github.workspace }}/vendor/oumv
         run: pnpm test
 
+      # The Elysia adapter runs on Bun, not Node: the fetch binding, the plugin and
+      # the HTTP/SSE/WS certificates are exercised by `bun test` against a real
+      # Bun.serve application (the same fixtures, plus the 3 transport-auth cases).
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: '1.3.x'
+
+      - name: Generate Bun/Elysia adapter reports
+        working-directory: node
+        env:
+          CERT_OUT_DIR: ${{ github.workspace }}/cert-fresh
+          OUMV_REPO: ${{ github.workspace }}/vendor/oumv
+        run: bun test test-bun
+
       # Transport certificates boot a live application per runtime: the same
       # fixtures plus the push cases run over SSE and WebSocket, so the optional
       # bindings are proven by a report instead of by a unit test.

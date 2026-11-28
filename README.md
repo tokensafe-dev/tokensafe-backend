@@ -29,15 +29,16 @@
 ## Certification (spec §10)
 
 <!-- certification:start -->
-**10 adapters certified against the same language-neutral fixtures** (`fixtureVersion` 14): 8 at Level 3 and 2 source-level adapter(s) at Level 2 — frozen on the wire 1.5.0 subset they still serve, each with its single L3 gap named below. The smallest suite in the table is 29 cases: a runtime that advertises an optional capability also runs the case gated on it, and a runtime frozen on an older wire skips the newer-wire cases instead of failing them. Generated from `certification/*.json` by `scripts/render_certification.py`; CI fails when this block no longer matches the reports.
+**11 adapters certified against the same language-neutral fixtures** (`fixtureVersion` 14): 9 at Level 3 and 2 source-level adapter(s) at Level 2 — frozen on the wire 1.5.0 subset they still serve, each with its single L3 gap named below. The smallest suite in the table is 29 cases: a runtime that advertises an optional capability also runs the case gated on it, and a runtime frozen on an older wire skips the newer-wire cases instead of failing them. Generated from `certification/*.json` by `scripts/render_certification.py`; CI fails when this block no longer matches the reports.
 
 | Adapter | Framework | Transport exercised | Level | Cases | Report |
 | :--- | :--- | :--- | :--- | :--- | :--- |
+| `bun-elysia` | Elysia (Bun) | Bun `POST /__oumv/rpc` + SSE/WS | **3** | 51/51 | [certification/bun-elysia.json](certification/bun-elysia.json) |
 | `dotnet-aspnetcore` | aspnetcore | ASP.NET Core `POST /__oumv/rpc` | **3** | 50/50 | [certification/dotnet-aspnetcore.json](certification/dotnet-aspnetcore.json) |
 | `go-chi` | chi | HTTP `POST /__oumv/rpc` | **3** | 46/46 | [certification/go-chi.json](certification/go-chi.json) |
 | `go-gin` | Gin | HTTP `POST /__oumv/rpc` | **3** | 46/46 | [certification/go-gin.json](certification/go-gin.json) |
 | `go-stdhttp` | net/http | HTTP `POST /__oumv/rpc` | **3** | 46/46 | [certification/go-stdhttp.json](certification/go-stdhttp.json) |
-| `next-app-router` | nextjs | — | **3** | 48/48 | [certification/next-app-router.json](certification/next-app-router.json) |
+| `next-app-router` | Next.js App Router | Web `Request`/`Response` `POST /__oumv/rpc` | **3** | 48/48 | [certification/next-app-router.json](certification/next-app-router.json) |
 | `node-express` | Express | Node `POST /__oumv/rpc` | **3** | 46/46 | [certification/node-express.json](certification/node-express.json) |
 | `node-fastify` | Fastify | Node `POST /__oumv/rpc` | **3** | 46/46 | [certification/node-fastify.json](certification/node-fastify.json) |
 | `python-fastapi` | FastAPI | ASGI `POST /__oumv/rpc` | **3** | 48/48 | [certification/python-fastapi.json](certification/python-fastapi.json) |
@@ -57,6 +58,8 @@ Transport certificates run the same suite over the optional bindings, plus the f
 
 | Certificate | Adapter | Transport | Cases |
 | :--- | :--- | :--- | :--- |
+| [transports/bun-elysia-sse.json](certification/transports/bun-elysia-sse.json) | `bun-elysia-sse` | sse | 52/52 |
+| [transports/bun-elysia-ws.json](certification/transports/bun-elysia-ws.json) | `bun-elysia-ws` | ws | 49/49 |
 | [transports/dotnet-aspnetcore-sse.json](certification/transports/dotnet-aspnetcore-sse.json) | `dotnet-aspnetcore-sse` | sse | 51/51 |
 | [transports/dotnet-aspnetcore-ws.json](certification/transports/dotnet-aspnetcore-ws.json) | `dotnet-aspnetcore-ws` | ws | 48/48 |
 | [transports/go-stdhttp-sse.json](certification/transports/go-stdhttp-sse.json) | `go-stdhttp-sse` | sse | 50/50 |

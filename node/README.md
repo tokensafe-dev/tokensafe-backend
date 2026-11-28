@@ -1,11 +1,18 @@
 # tokensafe-backend-node
 
-OUMV adapter for Node.js backends — **Express** and **Fastify** — sharing one
-framework-neutral runtime, so every Node framework answers the same wire shapes
-(spec §4) and certifies identically.
+OUMV adapter for Node.js and Bun backends — **Express**, **Fastify**, **Next.js App
+Router** and **Elysia** — sharing one framework-neutral runtime, so every framework
+answers the same wire shapes (spec §4) and certifies identically.
 
 ```bash
 npm install tokensafe-backend-node
+```
+
+The Elysia plugin lives on the `./elysia` subpath and declares `elysia` as an
+optional peer dependency, so a plain Node install never pulls Bun packages:
+
+```bash
+bun add tokensafe-backend-node
 ```
 
 ## Express
@@ -36,6 +43,24 @@ await app.listen({ port: 3000 });
 const ws = oumv.attachWebSocket();
 ```
 
+## Elysia (Bun)
+
+```ts
+import { Elysia } from 'elysia';
+import { oumv } from 'tokensafe-backend-node/elysia';
+
+const app = new Elysia()
+  .get('/api/orders', () => ({ orders: [] }))
+  .use(oumv({ authToken: process.env.OUMV_TOKEN, buildCommand: 'bun run build' }));
+app.listen(3000);
+```
+
+The plugin mounts `POST /__oumv/rpc`, `GET /__oumv/events` (SSE) and the WebSocket
+upgrade on the same path, reads the composed app's route table in `onStart` (so L1
+is the routes the host actually serves), writes the discovery descriptor with the
+bound port, and dispatches `oumv/verify` through `app.handle`. `readOnly: true`
+registers no mutating method (`-32601`, §8.5).
+
 ## What it implements
 
 | Pillar | Behaviour |
@@ -63,14 +88,18 @@ without it, the file-based pillar (`observe L3`, `getSource`, `applyEdit`) still
 ## Certification
 
 ```bash
+# Node adapters (Express, Fastify, Next.js) — vitest
 CERT_OUT_DIR=../certification OUMV_REPO=../../agent-oumv pnpm test
+# Elysia/Bun — the fetch binding, the plugin and the HTTP/SSE/WS certificates
+CERT_OUT_DIR=../certification OUMV_REPO=../../agent-oumv bun test test-bun
 ```
 
-The fixture suite (owner: `tokensafe-dev/oumv`) runs over real HTTP against both
-adapters and over stdio against the shared runtime. Committed reports:
-`../certification/node-express.json`, `node-fastify.json` (Level 3, 25/25,
-fixtureVersion 6) and `../certification/transports/node-stdio.json` (Level 3, 25/25).
+The fixture suite (owner: `tokensafe-dev/oumv`) runs over real HTTP against every
+adapter, over stdio against the shared runtime, and over SSE/WebSocket for the
+transport certificates. Committed reports live in `../certification/`; the Bun
+adapter also certifies the HTTP, SSE and WS bindings (`bun-elysia.json` plus
+`transports/bun-elysia-{sse,ws}.json`).
 
-Notes: paths are workspace-jailed and credential files are refused; a Node backend
-adapter is development-time tooling and must not be exposed publicly without the
-session token.
+Notes: paths are workspace-jailed and credential files are refused; a Node/Bun
+backend adapter is development-time tooling and must not be exposed publicly
+without the session token.

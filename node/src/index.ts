@@ -1,8 +1,10 @@
 /**
- * OUMV backend adapter for Node.js (Express, Fastify).
+ * OUMV backend adapter for Node.js (Express, Fastify, Next.js App Router).
  *
  * The runtime is framework-neutral: adapters only mount transports and teach it the
  * route table, so every Node framework answers the same wire shapes (spec §4).
+ * The Bun/Elysia adapter lives in the `./elysia` subpath: it is the only entry that
+ * imports the `elysia` peer dependency, so plain Node installs never need it.
  */
 export { OumvRuntime, PROTOCOL_VERSION, OBSERVE_LEVELS } from './runtime.js';
 export type {
@@ -20,6 +22,10 @@ export { writeDescriptor, deleteDescriptor, descriptorPath } from './descriptor.
 export type { RuntimeDescriptor } from './descriptor.js';
 export { Dispatcher, success, failure, parsePayload, dispatchAll } from './transport/dispatcher.js';
 export { createHttpHandler, isAuthorized } from './transport/http.js';
+export { createFetchHandlers, isAuthorizedFetchRequest, webHandlerToNode } from './transport/fetch.js';
+export type { FetchHandlerOptions, FetchHandlers } from './transport/fetch.js';
+export { bindWsSession } from './transport/ws-core.js';
+export type { WsSessionBinding } from './transport/ws-core.js';
 export { createSseHandler } from './transport/sse.js';
 export { attachWebSocket } from './transport/ws.js';
 export { attachStdio } from './transport/stdio.js';

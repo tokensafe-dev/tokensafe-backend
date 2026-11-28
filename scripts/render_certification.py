@@ -37,6 +37,8 @@ FRAMEWORK = {
     "fastapi": "FastAPI",
     "express": "Express",
     "fastify": "Fastify",
+    "nextjs": "Next.js App Router",
+    "elysia": "Elysia (Bun)",
     "spring": "Spring Boot",
     "laravel": "Laravel / Symfony",
 }
@@ -48,6 +50,8 @@ TRANSPORT = {
     "fastapi": "ASGI `POST /__oumv/rpc`",
     "express": "Node `POST /__oumv/rpc`",
     "fastify": "Node `POST /__oumv/rpc`",
+    "nextjs": "Web `Request`/`Response` `POST /__oumv/rpc`",
+    "elysia": "Bun `POST /__oumv/rpc` + SSE/WS",
     "spring": "JDK `POST /__oumv/rpc` + stdio",
     "laravel": "PHP `POST /__oumv/rpc` + stdio",
 }

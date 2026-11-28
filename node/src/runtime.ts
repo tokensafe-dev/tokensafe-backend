@@ -197,7 +197,7 @@ export class OumvRuntime {
 
   constructor(options: OumvRuntimeOptions = {}) {
     this.name = options.name || 'tokensafe-node';
-    this.version = options.version || '0.7.1';
+    this.version = options.version || '0.11.0';
     // Canonical root: `resolveWorkspacePath` realpaths the target, so a symlinked
     // root (macOS /var → /private/var) would otherwise leak `../../..` into every
     // reported `path`/`backupPath`.
