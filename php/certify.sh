@@ -8,18 +8,22 @@
 # What it does:
 #   1. copies testdata/laravel-app into a throw-away directory (the fixtures
 #      mutate files: create, patch, delete, rename);
-#   2. runs the agent-oumv conformance CLI over stdio against that copy;
-#   3. validates the produced report against schemas/conformance-report.json;
-#   4. exits 0 only when Level 1 and Level 2 fully pass and the attained level
-#      is at least 2. The Level 3 case `observe-l4-returns-recorded-traces`
-#      fails by design: this sidecar has no live PHP application to record real
-#      request traces from and never fabricates them.
+#   2. installs the fixture's Composer dependencies and starts it as a REAL
+#      Laravel application on the PHP built-in server;
+#   3. runs the agent-oumv conformance CLI over stdio against that copy with
+#      --app-url, so oumv/verify dispatches GET /health to the live app and the
+#      real response becomes the L4 trace evidence (Level 3);
+#   4. validates the produced report against schemas/conformance-report.json.
+#
+# The sidecar itself stays dependency-free — Composer and Laravel exist only in
+# this harness, pinned and cached under ~/.tokensafe/cache.
 #
 # Environment:
 #   PHP        php binary (default: `php` on PATH, then /opt/homebrew/bin/php,
 #              then /usr/local/bin/php)
 #   NODE       node binary (default: `node` on PATH)
 #   OUMV_REPO  agent-oumv checkout (default: ../agent-oumv next to this repo)
+#   COMPOSER_HOME  Composer cache (default: ~/.tokensafe/cache/composer)
 
 set -euo pipefail
 
@@ -64,12 +68,71 @@ for required in "$FIXTURES" "$CERTIFY" "$REPORT_SCHEMA" "$MARKERS"; do
 done
 
 TMP="$(mktemp -d "${TMPDIR:-/tmp}/oumv-php-certify.XXXXXX")"
-cleanup() { rm -rf "$TMP"; }
+APP_PID=""
+cleanup() {
+  if [ -n "$APP_PID" ] && kill -0 "$APP_PID" 2>/dev/null; then
+    kill "$APP_PID" 2>/dev/null || true
+    wait "$APP_PID" 2>/dev/null || true
+  fi
+  rm -rf "$TMP"
+}
 trap cleanup EXIT
+
+# --- Composer: from PATH, else a pinned phar (the same managed-download pattern
+# the engine uses for its Python runtime). The sidecar never needs it; only this
+# harness does, to install the real Laravel application.
+COMPOSER_VERSION="2.8.4"
+COMPOSER_SHA256="c4c4e2e1beab0ea04e0bd042a5dbba9feda1fbf5eda0d36203958edd343c0a8a"
+CACHE="${TOKENSAFE_CACHE_DIR:-$HOME/.tokensafe/cache}"
+COMPOSER=""
+if command -v composer >/dev/null 2>&1; then
+  COMPOSER="$(command -v composer)"
+else
+  PHAR="$CACHE/composer-$COMPOSER_VERSION.phar"
+  if [ ! -f "$PHAR" ]; then
+    command -v curl >/dev/null 2>&1 || { echo "curl is required to fetch Composer $COMPOSER_VERSION" >&2; exit 2; }
+    mkdir -p "$CACHE"
+    curl -fsSL -o "$PHAR" "https://getcomposer.org/download/$COMPOSER_VERSION/composer.phar"
+    if command -v sha256sum >/dev/null 2>&1; then
+      echo "$COMPOSER_SHA256  $PHAR" | sha256sum -c - >/dev/null
+    else
+      echo "$COMPOSER_SHA256  $PHAR" | shasum -a 256 -c - >/dev/null
+    fi
+  fi
+  COMPOSER="$PHP $PHAR"
+fi
+export COMPOSER_HOME="${COMPOSER_HOME:-$CACHE/composer}"
 
 cp -R "$HERE/testdata/laravel-app" "$TMP/app"
 echo "▸ php: $("$PHP" -r 'echo PHP_VERSION;') ($PHP)"
 echo "▸ workspace: $TMP/app (throw-away copy of testdata/laravel-app)"
+echo "▸ installing the fixture's Composer dependencies (Composer: $COMPOSER)"
+( cd "$TMP/app" && $COMPOSER install --no-interaction --no-progress --quiet )
+
+APP_PORT="$("$NODE" -e 'const s=require("net").createServer();s.listen(0,"127.0.0.1",()=>{console.log(s.address().port);s.close();});')"
+APP_LOG="$(dirname "$TMP")/$(basename "$TMP").laravel.log"
+echo "▸ starting the Laravel app on 127.0.0.1:$APP_PORT"
+# The fixture has no database: array-backed session/cache keep the framework from
+# resolving a SQLite file it does not ship (Laravel defaults to the database driver).
+( cd "$TMP/app" && SESSION_DRIVER=array CACHE_STORE=array QUEUE_CONNECTION=sync \
+    exec "$PHP" -S "127.0.0.1:$APP_PORT" -t public ) >"$APP_LOG" 2>&1 &
+APP_PID=$!
+APP_READY=0
+for _ in $(seq 1 120); do
+  if ! kill -0 "$APP_PID" 2>/dev/null; then
+    echo "✗ the Laravel app exited early; log:" >&2
+    tail -40 "$APP_LOG" >&2
+    exit 1
+  fi
+  if "$PHP" -r 'exit(@file_get_contents("http://127.0.0.1:" . $argv[1] . "/health") === false ? 1 : 0);' "$APP_PORT" 2>/dev/null; then
+    APP_READY=1
+    break
+  fi
+  sleep 0.25
+done
+[ "$APP_READY" -eq 1 ] || { echo "✗ the Laravel app did not answer /health; log:" >&2; tail -40 "$APP_LOG" >&2; exit 1; }
+APP_URL="http://127.0.0.1:$APP_PORT"
+echo "▸ app under test: $APP_URL (verify dispatches here; each response is an L4 trace)"
 echo "▸ fixtures: $FIXTURES"
 echo "▸ adapter: $ADAPTER"
 echo
@@ -82,10 +145,10 @@ set +e
   --framework laravel \
   --profile backend \
   --fixtures "$FIXTURES" \
-  --stdio "$PHP $ADAPTER --root $TMP/app --stdio" \
+  --stdio "$PHP $ADAPTER --root $TMP/app --stdio --app-url $APP_URL" \
   --markers "@$MARKERS" \
   --report "$REPORT" \
-  --min-level 2
+  --min-level 3
 certify_exit=$?
 set -e
 
@@ -95,7 +158,8 @@ if [ ! -f "$REPORT" ]; then
 fi
 
 # Validate the artifact against schemas/conformance-report.json and enforce the
-# honest claim: Level 1 + Level 2 must be fully green, Level 3 failures allowed.
+# honest claim: with --app-url the L4 trace case has real evidence, so every case
+# must pass and the attained level is 3.
 set +e
 "$NODE" -e '
 const fs = require("node:fs");
@@ -111,18 +175,17 @@ if (!validate(report)) {
   process.exit(2);
 }
 console.log("▸ report schema: valid");
-const atLevel = (max) => report.cases.filter((c) => c.level <= max);
-const l1 = atLevel(1);
-const l2 = atLevel(2);
-const l1Green = l1.every((c) => c.status === "passed");
-const l2Green = l2.every((c) => c.status === "passed");
-for (const c of report.cases.filter((c) => c.status !== "passed")) {
+const failures = report.cases.filter((c) => c.status !== "passed");
+for (const c of failures) {
   console.log(`  ✗ L${c.level} ${c.id}${c.error ? " — " + c.error : ""}`);
 }
-console.log(`▸ level 1: ${l1Green ? "passed" : "failed"} (${l1.filter((c) => c.status === "passed").length}/${l1.length})`);
-console.log(`▸ level 2: ${l2Green ? "passed" : "failed"} (${l2.filter((c) => c.status === "passed").length}/${l2.length})`);
+for (const level of [1, 2, 3]) {
+  const cases = report.cases.filter((c) => c.level === level);
+  const green = cases.every((c) => c.status === "passed");
+  console.log(`▸ level ${level}: ${green ? "passed" : "failed"} (${cases.filter((c) => c.status === "passed").length}/${cases.length})`);
+}
 console.log(`▸ attainedLevel: ${report.attainedLevel} · ${report.passed}/${report.total} cases passed`);
-if (!l1Green || !l2Green || report.attainedLevel < 2) process.exit(1);
+if (failures.length || report.attainedLevel < 3) process.exit(1);
 ' -- "$REPORT" "$REPORT_SCHEMA" "$OUMV_REPO/node_modules/ajv/dist/2020.js"
 schema_exit=$?
 set -e

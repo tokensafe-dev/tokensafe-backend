@@ -429,7 +429,7 @@ $verify = result(rpc('oumv/verify', ['target' => 'GET /health', 'action' => 'con
 check('verify returns a status', in_array($verify['status'] ?? '', ['passed', 'failed'], true));
 check('verify reports real timings', is_numeric($verify['timings']['t_total_ms'] ?? null) && ($verify['timings']['t_total_ms'] ?? -1) >= 0);
 check('verify states what it checked', is_array($verify['scope']['checked'] ?? null) && ($verify['scope']['checked'] ?? []) !== []);
-check('verify states what it did not execute', in_array('runtime dispatch of the request (no live PHP application attached)', $verify['scope']['notExecuted'] ?? [], true));
+check('verify states what it did not execute', in_array('runtime dispatch of the request (no --app-url configured)', $verify['scope']['notExecuted'] ?? [], true));
 check('verify resolves a route target to its handler file', ($verify['diff']['checkedFile'] ?? '') === 'app/Http/Controllers/HealthController.php', json_encode($verify['diff'] ?? []));
 check('verify passes on a valid handler', ($verify['status'] ?? '') === 'passed', json_encode($verify['diff'] ?? []));
 
@@ -458,9 +458,9 @@ check('causality is not observed without traces', ($causality['causality']['obse
 check('causality explains the missing evidence', strlen((string) ($causality['causality']['note'] ?? '')) > 20);
 check('causality never fabricates a root cause', ($causality['causality']['rootCause'] ?? '') === 'unknown');
 
-$l4 = result(rpc('oumv/observe', ['level' => 'L4']));
-check('L4 returns an empty trace collection, never invented traces', ($l4['data']['traces'] ?? null) === [] && ($l4['data']['traceCount'] ?? -1) === 0);
-check('L4 explains why there are no traces', str_contains((string) ($l4['data']['note'] ?? ''), 'no request traces'));
+$l4 = rpc('oumv/observe', ['level' => 'L4']);
+check('L4 without --app-url is an honest -32006', ($l4['error']['code'] ?? 0) === -32006);
+check('L4 explains that a trace is never fabricated', str_contains((string) ($l4['error']['message'] ?? ''), 'No trace is ever fabricated'));
 
 // --- descriptor / notifications ------------------------------------------
 

@@ -13,30 +13,43 @@ It scans a Laravel or Symfony project statically, serves the OUMV wire over
 (PHP built-in server router, spec §2.2), and mutates source under mandatory OCC,
 a workspace jail, a `php -l` pre-flight and automatic backups.
 
-## Honest conformance claim: **Level 2**
+## Conformance claim: **Level 3**
 
 | Level | Result | Cases |
 | :--- | :--- | :--- |
-| 1 | passed | 9/9 |
-| 2 | passed | 31/31 |
-| 3 | **failed by design** | 0/1 — `observe-l4-returns-recorded-traces` |
+| 1 | passed | 10/10 |
+| 2 | passed | 26/26 |
+| 3 | passed | 9/9 |
 
 Report: [`certification/php-laravel.json`](../certification/php-laravel.json)
-(fixtures v11, spec wire 1.6.0, 32/33 cases).
+(fixtures v17, spec wire 1.6.0, 45/45 cases).
 
-Level 3 requires L4 request traces and runtime causality derived from real
-executions. This sidecar has **no live PHP application** attached: `verify` runs
-a static check, not a request dispatch. It therefore answers L4 with an empty
-collection plus a note, and `understand(causality)` with `observed: false` and a
-note — it never fabricates traces, root causes or latency. `understand` does not
-advertise `causality` in the handshake and the adapter manifest does not list
-`observe.traces` or `understand.causality`.
+Level 3 needs L4 request traces and runtime causality from real executions, so
+run the sidecar with `--app-url` pointing at the running application:
+
+```bash
+php bin/oumv-php --root /path/to/app --stdio --app-url http://127.0.0.1:8000
+```
+
+`oumv/verify` then dispatches endpoint targets to that application over HTTP and
+records the real response (`method`, `path`, `route`, `handler`, `statusCode`,
+`durationMs`, `timestamp`) as an L4 trace; `understand(causality)` is derived
+from the same ring. Without `--app-url` no request exists to observe: L4 is not
+advertised and answers `-32006`, and `verify` runs the configured static command
+instead. The sidecar never fabricates a trace.
+
+The certification harness (`certify.sh`) installs the fixture's Composer
+dependencies, starts it as a real Laravel application on the PHP built-in server
+and certifies against it. The sidecar itself stays dependency-free: Composer and
+Laravel exist only in the harness.
 
 ## Requirements
 
 * PHP 8.1+ CLI (`php -v`); PHP 8.6.0 was used for the committed certification.
 * `proc_open` enabled (used for `php -l` and the configured verify command).
-* Nothing else. Composer, Laravel and Symfony are **not** installed or booted.
+* Nothing else for the sidecar. The *certification harness* additionally needs
+  Composer (a pinned `composer.phar` is fetched and SHA-256 verified when
+  `composer` is not on PATH).
 
 ## Usage
 

@@ -3,8 +3,8 @@
   "framework": "laravel",
   "specVersion": "1.6.0",
   "fixtureVersion": 17,
-  "total": 41,
-  "passed": 41,
+  "total": 45,
+  "passed": 45,
   "failed": 0,
   "skipped": 0,
   "attainedLevel": 3,
@@ -55,7 +55,22 @@
       "status": "passed"
     },
     {
+      "id": "observe-l4-returns-recorded-traces",
+      "level": 3,
+      "status": "passed"
+    },
+    {
       "id": "understand-impact-resolves-target",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "understand-causality-after-execution",
+      "level": 3,
+      "status": "passed"
+    },
+    {
+      "id": "verify-returns-status-timings-and-scope",
       "level": 2,
       "status": "passed"
     },
@@ -106,6 +121,11 @@
     },
     {
       "id": "apply-edit-patch-splices",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "verify-multi-step-runs-in-order",
       "level": 2,
       "status": "passed"
     },
@@ -220,7 +240,7 @@
       "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-28T17:10:51.270Z",
+  "generatedAt": "2026-11-28T19:21:44.104Z",
   "environment": {
     "transport": "stdio",
     "profile": "backend",

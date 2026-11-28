@@ -4,10 +4,9 @@
 /**
  * oumv-php — a dependency-free OUMV protocol sidecar for PHP projects.
  *
- * It implements the backend profile of the OUMV specification (wire 1.5.0,
- * frozen: the 1.6.0 surface is deliberately not implemented) for
- * Laravel and Symfony projects without Composer, without booting the framework
- * and without any third-party code: routes are read statically from
+ * It implements the backend profile of the OUMV specification (wire 1.6.0,
+ * spec v1.14) for Laravel and Symfony projects without Composer, without booting
+ * the framework and without any third-party code: routes are read statically from
  * `Route::…` registrations and `#[Route]` attributes, controller handlers are
  * resolved with `token_get_all()`, and every mutation is guarded by the
  * workspace jail, a `php -l` syntax pre-flight, mandatory OCC and a backup.
@@ -19,9 +18,10 @@
  *            optional bearer/session token (spec §2.2)
  *            php -S 127.0.0.1:8787 bin/oumv-php --root /path/to/app
  *
- * Honest level claim: Level 2 (see README.md). L4 request traces and runtime
- * causality need a live, instrumented PHP application; this sidecar never
- * fabricates traces, so it answers L4 with an empty collection plus a note.
+ * Conformance: Level 3 when `--app-url` points at the running application —
+ * `oumv/verify` dispatches endpoint targets to it over HTTP and records the real
+ * responses as L4 traces. Without `--app-url` no request exists to observe, so L4
+ * is not advertised and answers -32006; a trace is never fabricated.
  */
 
 declare(strict_types=1);
@@ -31,10 +31,11 @@ error_reporting(E_ALL);
 
 const OUMV_PROTOCOL_VERSION = '1.6.0';
 const OUMV_ADAPTER_NAME = 'oumv-php';
-const OUMV_ADAPTER_VERSION = '0.3.0';
+const OUMV_ADAPTER_VERSION = '0.4.0';
 const OUMV_SOURCE_ADAPTER = 'php-laravel';
 const OUMV_SESSION_TTL = 3600;
 const OUMV_MAX_BATCH_ITEMS = 16;
+const OUMV_MAX_REQUEST_TRACES = 128;
 const OUMV_MAX_BODY_BYTES = 8388608;
 const OUMV_MAX_SCAN_FILE_BYTES = 2097152;
 const OUMV_HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'];
@@ -66,6 +67,43 @@ final class OumvError extends RuntimeException
             $payload['data'] = $this->errorData;
         }
         return $payload;
+    }
+}
+
+// ---------------------------------------------------------------------------
+// L4 trace ring (spec §4.1)
+// ---------------------------------------------------------------------------
+
+/**
+ * Bounded process-local ring of observed request executions.
+ *
+ * Only real dispatches made by oumv/verify against `--app-url` are recorded. With
+ * no app URL the ring stays empty and observe L4 answers -32006 — an empty array
+ * is never dressed up as evidence.
+ */
+final class TraceStore
+{
+    /** @var list<array<string,mixed>> */
+    private static array $traces = [];
+
+    /** @param array<string,mixed> $trace */
+    public static function record(array $trace): void
+    {
+        self::$traces[] = $trace;
+        while (count(self::$traces) > OUMV_MAX_REQUEST_TRACES) {
+            array_shift(self::$traces);
+        }
+    }
+
+    /** @return list<array<string,mixed>> */
+    public static function all(): array
+    {
+        return self::$traces;
+    }
+
+    public static function reset(): void
+    {
+        self::$traces = [];
     }
 }
 
@@ -1934,7 +1972,7 @@ function oumv_page_bounds(int $total, int $limit, string $cursor): array
 }
 
 /** @return array<string,mixed> */
-function oumv_observe(Workspace $workspace, array $params): array
+function oumv_observe(Workspace $workspace, array $params, ?string $appUrl = null): array
 {
     $level = strtoupper(trim(oumv_str($params, 'level')));
     if ($level === '') {
@@ -2077,25 +2115,53 @@ function oumv_observe(Workspace $workspace, array $params): array
             ];
 
         case 'L4':
+            if ($appUrl === null || $appUrl === '') {
+                throw new OumvError(
+                    -32006,
+                    'UNSUPPORTED_CAPABILITY: observe L4 needs a live request — start the sidecar with --app-url '
+                        . 'so oumv/verify dispatches endpoint targets to the running PHP application. '
+                        . 'No trace is ever fabricated.',
+                    ['reason' => 'level_not_implemented', 'level' => 'L4']
+                );
+            }
             $target = trim(oumv_str($params, 'target'));
+            $endpoint = $target !== '' ? oumv_parse_endpoint_target($target) : null;
+            $wantedMethod = $endpoint === null || $endpoint['method'] === '' ? null : $endpoint['method'];
+            $wantedPath = $endpoint === null ? null : $endpoint['path'];
+            $page = [];
+            foreach (TraceStore::all() as $trace) {
+                if ($wantedPath !== null) {
+                    $methodOk = $wantedMethod === null || strcasecmp((string) $trace['method'], $wantedMethod) === 0;
+                    $pathOk = $trace['path'] === $wantedPath || $trace['path'] === $target;
+                    if (!$methodOk || !$pathOk) {
+                        continue;
+                    }
+                } elseif ($target !== '' && strcasecmp((string) $trace['handler'], $target) !== 0) {
+                    continue;
+                }
+                $page[] = $trace;
+            }
             $data = [
-                'traces' => [],
-                'traceCount' => 0,
-                'note' => 'no request traces recorded: this sidecar has no live PHP application to instrument (verify runs a static php -l check, not dispatch). L4 requires a traced dev server and is not claimed by this adapter.',
+                'traces' => $page,
+                'traceCount' => count($page),
                 'evidence' => [
                     'provenance' => 'runtime',
                     'sourceAdapter' => OUMV_SOURCE_ADAPTER,
-                    'confidence' => 'unknown',
+                    'confidence' => $page === [] ? 'unknown' : 'confirmed',
                 ],
             ];
             if ($target !== '') {
                 $data['target'] = $target;
             }
+            if ($page === []) {
+                $data['note'] = 'no request has been observed yet: oumv/verify an endpoint target with '
+                    . '--app-url configured, then read L4 again';
+            }
             return [
                 'level' => 'L4',
                 'format' => 'json',
                 'data' => $data,
-                'tokenEstimate' => 60,
+                'tokenEstimate' => 60 + count($page) * 20,
             ];
     }
 
@@ -2481,25 +2547,112 @@ function oumv_apply_edit(Workspace $workspace, array $params): array
 }
 
 /** @return list<string> */
-function oumv_verify_scope_checked(): array
+function oumv_verify_scope_checked(bool $dispatched = false, ?string $appUrl = null): array
 {
+    if ($dispatched) {
+        return ['HTTP dispatch of the requested route target to ' . (string) $appUrl];
+    }
     return ['static syntax pre-flight of the resolved handler file (php -l)'];
 }
 
 /** @return list<string> */
-function oumv_verify_scope_not_executed(): array
+function oumv_verify_scope_not_executed(bool $dispatched = false): array
 {
+    if ($dispatched) {
+        return [
+            'persistent database state written by the probe',
+            'shared state between multi-step calls (each dispatch is independent)',
+        ];
+    }
     return [
-        'runtime dispatch of the request (no live PHP application attached)',
+        'runtime dispatch of the request (no --app-url configured)',
         'real network calls',
         'persistent database state',
     ];
 }
 
 /** @return list<string> */
-function oumv_verify_scope_not_supported(): array
+function oumv_verify_scope_not_supported(bool $dispatched = false): array
 {
+    if ($dispatched) {
+        return ['browser/DOM assertions'];
+    }
     return ['HTTP status-code assertions (no dispatch)', 'browser/DOM assertions'];
+}
+
+/**
+ * §4.5 dispatch: an endpoint target is executed against the running application
+ * (`--app-url`) and the real response is recorded as an L4 trace.
+ *
+ * @return array{status:string,step:array<string,mixed>,diff:array<string,mixed>,durationMs:float}
+ */
+function oumv_dispatch_one(Workspace $workspace, string $target, string $appUrl): array
+{
+    $endpoint = oumv_parse_endpoint_target($target);
+    $method = $endpoint !== null && $endpoint['method'] !== '' ? strtoupper($endpoint['method']) : 'GET';
+    $path = $endpoint !== null && $endpoint['path'] !== '' ? $endpoint['path'] : '/';
+    $url = rtrim($appUrl, '/') . $path;
+    $route = oumv_find_route($workspace->catalog(), $target);
+    $handler = $route['handlerName'] ?? '';
+    $started = microtime(true);
+    $headers = "Accept: application/json\r\nX-TokenSafe-Probe: oumv-verify\r\n";
+    $body = '';
+    if (!in_array($method, ['GET', 'HEAD', 'DELETE'], true)) {
+        $headers .= "Content-Type: application/json\r\n";
+        $body = '{}';
+    }
+    $context = stream_context_create([
+        'http' => [
+            'method' => $method,
+            'header' => $headers,
+            'content' => $body,
+            'ignore_errors' => true,
+            'timeout' => 30,
+        ],
+    ]);
+    $responseBody = @file_get_contents($url, false, $context);
+    $responseHeaders = $http_response_header ?? [];
+    $statusCode = 0;
+    foreach ($responseHeaders as $header) {
+        if (preg_match('#^HTTP/\S+\s+(\d{3})#', $header, $match) === 1) {
+            $statusCode = (int) $match[1];
+            break;
+        }
+    }
+    $duration = round((microtime(true) - $started) * 1000, 3);
+    $output = is_string($responseBody) ? $responseBody : '';
+    $lastError = error_get_last();
+    if (!is_string($responseBody)) {
+        $output = 'dispatch failed: ' . (string) ($lastError['message'] ?? 'no response');
+    }
+    $passed = $statusCode >= 200 && $statusCode < 400;
+    TraceStore::record([
+        'method' => $method,
+        'path' => $path,
+        'route' => $route['path'] ?? $path,
+        'handler' => $handler,
+        'statusCode' => $statusCode,
+        'durationMs' => $duration,
+        'timestamp' => gmdate('Y-m-d\TH:i:s\Z'),
+    ]);
+    return [
+        'status' => $passed ? 'passed' : 'failed',
+        'step' => [
+            'target' => $target,
+            'status' => $passed ? 'passed' : 'failed',
+            'statusCode' => $statusCode,
+            'responseBody' => trim(substr($output, 0, 4000)),
+        ],
+        'diff' => [
+            'dispatch' => 'http',
+            'url' => $url,
+            'route' => $route['path'] ?? $path,
+            'handler' => $handler,
+            'statusCode' => $statusCode,
+            'output' => trim(substr($output, 0, 4000)),
+        ],
+        'durationMs' => $duration,
+    ];
 }
 
 /**
@@ -2547,8 +2700,11 @@ function oumv_verify_command(string $template, array $file, Workspace $workspace
  *
  * @return array{status:string,step:array<string,mixed>,diff:array<string,mixed>,durationMs:float}
  */
-function oumv_verify_one(Workspace $workspace, string $target, string $command): array
+function oumv_verify_one(Workspace $workspace, string $target, string $command, ?string $appUrl = null): array
 {
+    if ($target !== '' && $appUrl !== null && $appUrl !== '' && oumv_parse_endpoint_target($target) !== null) {
+        return oumv_dispatch_one($workspace, $target, $appUrl);
+    }
     $started = microtime(true);
     if ($target === '') {
         return [
@@ -2590,10 +2746,11 @@ function oumv_verify_one(Workspace $workspace, string $target, string $command):
 }
 
 /** @return array<string,mixed> */
-function oumv_verify(Workspace $workspace, array $params, string $command): array
+function oumv_verify(Workspace $workspace, array $params, string $command, ?string $appUrl = null): array
 {
     $target = trim(oumv_str($params, 'target'));
     $steps = $params['steps'] ?? null;
+    $dispatched = false;
 
     if (is_array($steps) && $steps !== []) {
         $results = [];
@@ -2606,7 +2763,10 @@ function oumv_verify(Workspace $workspace, array $params, string $command): arra
                 continue;
             }
             $stepTarget = trim(oumv_str($step, 'target'));
-            $outcome = oumv_verify_one($workspace, $stepTarget, $command);
+            $outcome = oumv_verify_one($workspace, $stepTarget, $command, $appUrl);
+            if (($outcome['diff']['dispatch'] ?? '') === 'http') {
+                $dispatched = true;
+            }
             $results[] = $outcome['step'];
             $total += $outcome['durationMs'];
             if ($outcome['status'] !== 'passed') {
@@ -2617,8 +2777,9 @@ function oumv_verify(Workspace $workspace, array $params, string $command): arra
         return [
             'status' => $allPassed ? 'passed' : 'failed',
             'target' => $target,
+            'statusCode' => $last['statusCode'] ?? 0,
             'steps' => $results,
-            'diff' => ['stepCount' => count($results), 'status' => $last['status']],
+            'diff' => ['stepCount' => count($results), 'status' => $last['status'], 'dispatch' => $dispatched ? 'http' : 'none'],
             'timings' => [
                 't_action_ms' => round($total, 3),
                 't_schema_ms' => 0,
@@ -2628,21 +2789,25 @@ function oumv_verify(Workspace $workspace, array $params, string $command): arra
             ],
             'durationMs' => round($total, 3),
             'scope' => [
-                'checked' => oumv_verify_scope_checked(),
-                'notExecuted' => oumv_verify_scope_not_executed(),
-                'notSupported' => oumv_verify_scope_not_supported(),
+                'checked' => oumv_verify_scope_checked($dispatched, $appUrl),
+                'notExecuted' => oumv_verify_scope_not_executed($dispatched),
+                'notSupported' => oumv_verify_scope_not_supported($dispatched),
             ],
-            'note' => 'multi-step scenario: each step runs the configured static check on its resolved handler; steps never share application state because no PHP application is dispatched',
+            'note' => $dispatched
+                ? 'multi-step scenario: every endpoint step dispatched to ' . (string) $appUrl . ' and was recorded as an L4 trace'
+                : 'multi-step scenario: each step runs the configured static check on its resolved handler; steps never share application state because no PHP application is dispatched (start with --app-url to dispatch)',
         ];
     }
 
     if ($target === '') {
         throw new OumvError(-32602, 'target is required', ['reason' => 'target_required']);
     }
-    $outcome = oumv_verify_one($workspace, $target, $command);
+    $outcome = oumv_verify_one($workspace, $target, $command, $appUrl);
+    $dispatched = ($outcome['diff']['dispatch'] ?? '') === 'http';
     return [
         'status' => $outcome['status'],
         'target' => $target,
+        'statusCode' => $outcome['step']['statusCode'] ?? 0,
         'diff' => $outcome['diff'],
         'timings' => [
             't_action_ms' => $outcome['durationMs'],
@@ -2653,16 +2818,18 @@ function oumv_verify(Workspace $workspace, array $params, string $command): arra
         ],
         'durationMs' => $outcome['durationMs'],
         'scope' => [
-            'checked' => oumv_verify_scope_checked(),
-            'notExecuted' => oumv_verify_scope_not_executed(),
-            'notSupported' => oumv_verify_scope_not_supported(),
+            'checked' => oumv_verify_scope_checked($dispatched, $appUrl),
+            'notExecuted' => oumv_verify_scope_not_executed($dispatched),
+            'notSupported' => oumv_verify_scope_not_supported($dispatched),
         ],
-        'note' => 'verification ran the configured static check against the resolved handler; no request was dispatched, so no HTTP status is asserted (see scope.notExecuted)',
+        'note' => $dispatched
+            ? 'verification dispatched the target to ' . (string) $appUrl . ' and recorded the real response as an L4 trace'
+            : 'verification ran the configured static check against the resolved handler; no request was dispatched, so no HTTP status is asserted (see scope.notExecuted)',
     ];
 }
 
 /** @return array<string,mixed> */
-function oumv_understand(Workspace $workspace, array $params): array
+function oumv_understand(Workspace $workspace, array $params, ?string $appUrl = null): array
 {
     $query = strtolower(trim(oumv_str($params, 'query')));
     $target = trim(oumv_str($params, 'target'));
@@ -2733,23 +2900,77 @@ function oumv_understand(Workspace $workspace, array $params): array
         return ['query' => 'impact', 'target' => $target, 'impact' => $impact];
     }
 
-    // causality / why_state: never fabricated. This adapter has no live traces.
+    // causality / why_state: derived from the recorded dispatches, never fabricated.
+    $endpoint = $target !== '' ? oumv_parse_endpoint_target($target) : null;
+    $wantedMethod = $endpoint === null || $endpoint['method'] === '' ? null : $endpoint['method'];
+    $wantedPath = $endpoint === null ? null : $endpoint['path'];
+    $matched = [];
+    foreach (TraceStore::all() as $trace) {
+        if ($wantedPath !== null) {
+            $methodOk = $wantedMethod === null || strcasecmp((string) $trace['method'], $wantedMethod) === 0;
+            $pathOk = $trace['path'] === $wantedPath || $trace['path'] === $target;
+            if (!$methodOk || !$pathOk) {
+                continue;
+            }
+        } elseif ($target !== '' && strcasecmp((string) $trace['handler'], $target) !== 0) {
+            continue;
+        }
+        $matched[] = $trace;
+    }
+    if ($matched === []) {
+        return [
+            'query' => 'causality',
+            'target' => $target,
+            'causality' => [
+                'target' => $target,
+                'statusCode' => 0,
+                'rootCause' => 'unknown',
+                'traceChain' => [],
+                'observed' => false,
+                'traceCount' => 0,
+                'latencyMs' => 0,
+                'note' => $appUrl === null || $appUrl === ''
+                    ? 'No runtime trace observed for this target: this sidecar was started without --app-url and runs a '
+                        . 'static php -l verification instead of dispatching HTTP. Start it with --app-url pointing at '
+                        . 'the running application.'
+                    : 'No request has been dispatched for this target yet: oumv/verify it first.',
+                'evidence' => [
+                    'provenance' => 'runtime',
+                    'sourceAdapter' => OUMV_SOURCE_ADAPTER,
+                    'confidence' => 'unknown',
+                ],
+            ],
+        ];
+    }
+    $latest = $matched[count($matched) - 1];
+    $statusCode = (int) ($latest['statusCode'] ?? 0);
+    $rootCause = 'unknown';
+    if ($statusCode >= 500) {
+        $rootCause = 'the route answered HTTP ' . $statusCode . '; no deeper cause was inferred';
+    } elseif ($statusCode === 0) {
+        $rootCause = 'the dispatch failed before a response arrived';
+    }
+    $chain = [$latest['method'] . ' ' . $latest['path']];
+    if (($latest['handler'] ?? '') !== '') {
+        $chain[] = $latest['handler'];
+    }
     return [
         'query' => 'causality',
         'target' => $target,
         'causality' => [
             'target' => $target,
-            'statusCode' => 0,
-            'rootCause' => 'unknown',
-            'traceChain' => [],
-            'observed' => false,
-            'traceCount' => 0,
-            'latencyMs' => 0,
-            'note' => 'No runtime trace observed for this target. This sidecar performs static route/controller analysis and a php -l verification only: it has no live PHP application to instrument, so runtime causality is not claimed.',
+            'statusCode' => $statusCode,
+            'rootCause' => $rootCause,
+            'traceChain' => $chain,
+            'observed' => true,
+            'traceCount' => count($matched),
+            'latencyMs' => (float) ($latest['durationMs'] ?? 0),
+            'note' => 'derived from ' . count($matched) . ' recorded dispatch(es) against ' . (string) $appUrl
+                . '; the sidecar observes the responses it produced, not ambient application traffic',
             'evidence' => [
                 'provenance' => 'runtime',
                 'sourceAdapter' => OUMV_SOURCE_ADAPTER,
-                'confidence' => 'unknown',
+                'confidence' => $statusCode === 0 ? 'inferred' : 'confirmed',
             ],
         ],
     ];
@@ -3269,11 +3490,16 @@ final class SessionRegistry
 }
 
 /** @return array<string,mixed> */
-function oumv_capabilities(bool $readOnly = false, string $transport = 'http'): array
+function oumv_capabilities(bool $readOnly = false, string $transport = 'http', bool $traces = false): array
 {
+    $levels = ['L0', 'L1', 'L2', 'L3'];
+    if ($traces) {
+        $levels[] = 'L4';
+    }
     $capabilities = [
-        'observe' => ['levels' => ['L0', 'L1', 'L2', 'L3'], 'formats' => ['json']],
-        'understand' => ['causality' => false, 'impactAnalysis' => true],
+        'observe' => ['levels' => $levels, 'formats' => ['json']],
+        // Causality is advertised only where a real dispatch can be observed.
+        'understand' => ['causality' => $traces, 'impactAnalysis' => true],
         'index' => ['symbols' => true],
         'sessions' => ['ttlSeconds' => true, 'cancel' => true],
         'transports' => [$transport],
@@ -3286,7 +3512,9 @@ function oumv_capabilities(bool $readOnly = false, string $transport = 'http'): 
         return $capabilities;
     }
     $capabilities['mutate'] = ['occ' => true, 'syntaxGuard' => true, 'multiFile' => true, 'preview' => true];
-    $capabilities['verify'] = ['multiMetric' => false, 'build' => true];
+    // §4.5: the verify answer carries the decomposed timings, durationMs, an honest
+    // scope and ordered steps — that is what multiMetric names.
+    $capabilities['verify'] = ['multiMetric' => true, 'build' => true];
     $capabilities['sessions']['idempotency'] = true;
     return $capabilities;
 }
@@ -3335,13 +3563,17 @@ function oumv_descriptor_path(string $root): string
 function oumv_descriptor_payload(Workspace $workspace, array $options): array
 {
     $transports = $options['transports'] ?? ['stdio'];
+    $levels = ['L0', 'L1', 'L2', 'L3'];
+    if (is_string($options['appUrl'] ?? null) && $options['appUrl'] !== '') {
+        $levels[] = 'L4';
+    }
     $payload = [
         'type' => 'backend',
         'name' => OUMV_ADAPTER_NAME,
         'version' => OUMV_ADAPTER_VERSION,
         'workspace' => $workspace->root,
         'capabilities' => [
-            'observeLevels' => ['L0', 'L1', 'L2', 'L3'],
+            'observeLevels' => $levels,
             'transports' => $transports,
             'framework' => $workspace->catalog()->framework,
         ],
@@ -3401,6 +3633,8 @@ final class Adapter
     public array $options;
     public string $transport;
     public bool $readOnly;
+    /** Base URL of the running application; null means no dispatch and no L4. */
+    public ?string $appUrl;
     /** §3 idempotency: sessionId:key -> the first final result. */
     private array $idempotency = [];
     /** §3 cooperative cancellation: requestId -> requested flag. */
@@ -3415,6 +3649,8 @@ final class Adapter
         $this->options = $options;
         $this->transport = $transport;
         $this->readOnly = (bool) ($options['readOnly'] ?? false);
+        $rawAppUrl = $options['appUrl'] ?? null;
+        $this->appUrl = is_string($rawAppUrl) && $rawAppUrl !== '' ? rtrim($rawAppUrl, '/') : null;
         $this->verifyCommand = (string) ($options['verifyCmd'] ?? (PHP_BINARY . ' -l {file}'));
     }
 
@@ -3497,10 +3733,10 @@ final class Adapter
                 return $this->handshake($params);
 
             case 'oumv/observe':
-                return oumv_versioned(oumv_observe($this->workspace, $params), $this->workspace, $params);
+                return oumv_versioned(oumv_observe($this->workspace, $params, $this->appUrl), $this->workspace, $params);
 
             case 'oumv/understand':
-                return oumv_versioned(oumv_understand($this->workspace, $params), $this->workspace, $params);
+                return oumv_versioned(oumv_understand($this->workspace, $params, $this->appUrl), $this->workspace, $params);
 
             case 'oumv/getSource':
                 return oumv_get_source($this->workspace, $params);
@@ -3521,10 +3757,14 @@ final class Adapter
                 return $this->cancel($params);
 
             case 'oumv/verify':
-                return oumv_verify($this->workspace, $params, $this->verifyCommand);
+                return oumv_verify($this->workspace, $params, $this->verifyCommand, $this->appUrl);
 
             case 'oumv/descriptor':
-                return oumv_descriptor_payload($this->workspace, ['transports' => [$this->transport], 'url' => $this->options['url'] ?? null]);
+                return oumv_descriptor_payload($this->workspace, [
+                    'transports' => [$this->transport],
+                    'url' => $this->options['url'] ?? null,
+                    'appUrl' => $this->appUrl,
+                ]);
 
             case 'oumv/sessions':
                 // Read-only introspection: the registry is stateless, so this is
@@ -3554,7 +3794,7 @@ final class Adapter
             }
         }
 
-        $capabilities = oumv_capabilities($this->readOnly, $this->transport);
+        $capabilities = oumv_capabilities($this->readOnly, $this->transport, $this->appUrl !== null);
         $requestedCapabilities = $params['requestedCapabilities'] ?? null;
         if (is_array($requestedCapabilities)) {
             $capabilities = oumv_narrow_capabilities($capabilities, $requestedCapabilities);
@@ -3567,6 +3807,7 @@ final class Adapter
                 oumv_write_registry($this->workspace, [
                     'transports' => ['http'],
                     'url' => $this->options['url'] ?? null,
+                    'appUrl' => $this->appUrl,
                 ]);
             } catch (OumvError $error) {
                 // Discovery is advisory: a broken registry must not fail a handshake.
@@ -3843,7 +4084,7 @@ function oumv_serve_stdio(Adapter $adapter): int
 function oumv_usage(): string
 {
     return <<<TXT
-oumv-php — dependency-free OUMV backend sidecar for Laravel and Symfony (wire 1.3.0)
+oumv-php — dependency-free OUMV backend sidecar for Laravel and Symfony (wire 1.6.0)
 
 Usage:
   php bin/oumv-php --root <dir> --stdio            newline-delimited JSON-RPC on stdio
@@ -3855,14 +4096,18 @@ Options:
   --token <token>        require X-OUMV-Session-Token / Authorization: Bearer on HTTP
   --verify-cmd <cmd>     command oumv/verify runs; {file} {rel} {root} {target} are substituted
                          (default: "<php binary> -l {file}")
+  --app-url <base>       running application base URL (e.g. http://127.0.0.1:8000):
+                         verify dispatches endpoint targets over HTTP and records each
+                         real response as an L4 trace
   --read-only            do not register the writing methods (applyEdit/verify)
   --register             write the spec §9.2 discovery registry on handshake (HTTP mode)
   --print-descriptor     print the discovery descriptor for this workspace and exit
   --verbose              diagnostics on stderr
   --help                 show this help
 
-Honest level claim: Level 2. L4 traces and runtime causality need a live,
-instrumented PHP application; this sidecar never fabricates request traces.
+Conformance: Level 3 with --app-url (L0-L4 observe, runtime causality from real
+dispatches, batch/preview/index/build, sessions, OCC edits). Without --app-url the
+sidecar dispatches no request, answers L4 with -32006 and never fabricates a trace.
 TXT;
 }
 
@@ -3877,6 +4122,7 @@ function oumv_parse_cli(array $argv): array
         'stdio' => false,
         'token' => null,
         'verifyCmd' => null,
+        'appUrl' => null,
         'readOnly' => false,
         'register' => false,
         'printDescriptor' => false,
@@ -3901,6 +4147,11 @@ function oumv_parse_cli(array $argv): array
             case '--verify-cmd':
                 $options['verifyCmd'] = $argv[++$i] ?? null;
                 break;
+            case '--app-url': {
+                $raw = (string) ($argv[++$i] ?? '');
+                $options['appUrl'] = $raw !== '' ? rtrim($raw, '/') : null;
+                break;
+            }
             case '--read-only':
                 $options['readOnly'] = true;
                 break;
@@ -4001,6 +4252,11 @@ function oumv_env_argv(): array
     if (is_string($envVerify) && $envVerify !== '') {
         $recovered[] = '--verify-cmd';
         $recovered[] = $envVerify;
+    }
+    $envAppUrl = getenv('OUMV_APP_URL');
+    if (is_string($envAppUrl) && $envAppUrl !== '') {
+        $recovered[] = '--app-url';
+        $recovered[] = $envAppUrl;
     }
     if (getenv('OUMV_READ_ONLY') === '1') {
         $recovered[] = '--read-only';
