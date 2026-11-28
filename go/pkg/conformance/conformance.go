@@ -66,7 +66,27 @@ type Spec struct {
 	CapabilityCases []Case `json:"capabilityCases"`
 	// SessionCases issue a short-lived session, wait it out and expect -32011.
 	SessionCases []Case `json:"sessionCases"`
+	// PolicyCases run only when the certifier states the target was built with the
+	// workspace policy off (`Run(..., WithPolicy())`): the refusal shape §3.1 rule 5
+	// reserves for a registered method, not method absence.
+	PolicyCases []Case `json:"policyCases"`
 }
+
+// Options configure a Run. The zero value reproduces the historical behaviour.
+type Options struct {
+	// Policy marks the target as started with a workspace policy that denies a
+	// registered method (permissions.query=false): PolicyCases run, and the query
+	// capability cases — which require the permission this run switches off — are
+	// left out of the report.
+	Policy bool
+}
+
+// Option mutates Options.
+type Option func(*Options)
+
+// WithPolicy runs the fixture file's policyCases and drops the query capability
+// cases (they need the permission the target has switched off).
+func WithPolicy() Option { return func(o *Options) { o.Policy = true } }
 
 // Markers carries the concrete values substituted for ${MARKER} placeholders.
 // Every runner supplies its own language-appropriate content.
@@ -152,7 +172,11 @@ func LoadCases(path string) (Spec, error) {
 }
 
 // Run executes every case against the dispatcher and derives the attained level.
-func Run(dispatcher Dispatcher, spec Spec, markers Markers) Report {
+func Run(dispatcher Dispatcher, spec Spec, markers Markers, opts ...Option) Report {
+	options := Options{}
+	for _, apply := range opts {
+		apply(&options)
+	}
 	report := Report{
 		SpecVersion:    spec.ProtocolVersion,
 		FixtureVersion: spec.FixtureVersion,
@@ -218,6 +242,9 @@ func Run(dispatcher Dispatcher, spec Spec, markers Markers) Report {
 			if !capabilityEnabled(capabilities, tc.RequiresCapability) {
 				continue
 			}
+			if options.Policy && tc.RequiresCapability == "observeQuery.readOnly" {
+				continue
+			}
 			result := CaseResult{ID: tc.ID, Level: tc.Level, Status: "passed"}
 			if referencesWorkspaceVersion(tc.Params) && wireAtLeast(negotiated, "1.6.0") {
 				markers.WorkspaceVersion = probeWorkspaceVersion(dispatcher)
@@ -232,6 +259,22 @@ func Run(dispatcher Dispatcher, spec Spec, markers Markers) Report {
 				if errMsg := check(*tc.FollowUp, follow, markers); errMsg != "" {
 					result.Status, result.Error = "failed", "follow-up: "+errMsg
 				}
+			}
+			report.Cases = append(report.Cases, result)
+		}
+	}
+
+	// Policy cases prove the §14.2 refusal: the method is registered (the capability
+	// is still advertised) and answers -32007 with the registry reason.
+	if options.Policy {
+		for _, tc := range spec.PolicyCases {
+			if !capabilityEnabled(capabilities, tc.RequiresCapability) {
+				continue
+			}
+			result := CaseResult{ID: tc.ID, Level: tc.Level, Status: "passed"}
+			resp := dispatch(dispatcher, tc.ID, tc.Method, markers.substitute(tc.Params))
+			if errMsg := check(tc, resp, markers); errMsg != "" {
+				result.Status, result.Error = "failed", errMsg
 			}
 			report.Cases = append(report.Cases, result)
 		}

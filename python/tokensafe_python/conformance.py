@@ -303,6 +303,8 @@ async def run_conformance(
     markers: Markers,
     adapter_name: str = "tokensafe-python",
     framework: str = "fastapi",
+    *,
+    policy: bool = False,
 ) -> Dict[str, Any]:
     """Runs every fixture case through ``post`` and returns a certification report.
 
@@ -369,6 +371,10 @@ async def run_conformance(
         for case in spec["capabilityCases"]:
             if not _capability_enabled(capabilities, str(case.get("requiresCapability") or "")):
                 continue
+            if policy and str(case.get("requiresCapability") or "") == "observeQuery.readOnly":
+                # A policy-off target has the query permission switched off; the
+                # query capability cases need exactly that permission.
+                continue
             outcome = {"id": case["id"], "level": case["level"], "status": "passed", "error": ""}
             await _cleanup_paths(post, case.get("cleanup"), markers)
             body = await post(case["method"], markers.substitute(case.get("params", {})))
@@ -379,6 +385,20 @@ async def run_conformance(
                 follow_message = _check(follow_up, follow_body, markers)
                 if follow_message:
                     message = f"follow-up: {follow_message}"
+            if message:
+                outcome["status"] = "failed"
+                outcome["error"] = message
+            results.append(outcome)
+
+    # Policy cases prove the §14.2 refusal: the method is registered (the capability
+    # is still advertised) and answers -32007 with the registry reason.
+    if policy:
+        for case in spec.get("policyCases") or []:
+            if not _capability_enabled(capabilities, str(case.get("requiresCapability") or "")):
+                continue
+            outcome = {"id": case["id"], "level": case["level"], "status": "passed", "error": ""}
+            body = await post(case["method"], markers.substitute(case.get("params", {})))
+            message = _check(case, body, markers)
             if message:
                 outcome["status"] = "failed"
                 outcome["error"] = message
