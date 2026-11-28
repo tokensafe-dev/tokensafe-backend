@@ -102,10 +102,13 @@ def render(reports: list[tuple[str, dict]]) -> str:
 
     if source_level:
         lead = (
-            f"**{len(reports)} adapters certified against {total} language-neutral cases** "
+            f"**{len(reports)} adapters certified against the same language-neutral fixtures** "
             f"(`fixtureVersion` {version}): {len(level3)} at Level 3 and {len(source_level)} "
-            "source-level adapter(s) at Level 2, each with its single L3 gap named below. "
-            "A report with 34 cases also ran the sandbox capability case its runtime advertises."
+            "source-level adapter(s) at Level 2 — frozen on the wire 1.5.0 subset they still serve, "
+            "each with its single L3 gap named below. The smallest suite in the table is "
+            f"{total} cases: a runtime that advertises an optional capability also runs the case "
+            "gated on it, and a runtime frozen on an older wire skips the newer-wire cases instead "
+            "of failing them."
         )
     else:
         lead = (

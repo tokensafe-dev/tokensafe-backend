@@ -93,17 +93,20 @@ trap cleanup EXIT
 
 prepare_workspace() {
   WORKSPACE="$(mktemp -d "${TMPDIR:-/tmp}/oumv-dotnet-cert.XXXXXX")"
+# The server log MUST NOT live inside the workspace: it grows on every request, and
+# the adapter's §4.1 digest would then differ between two consecutive calls.
+SERVER_LOG="$(dirname "$WORKSPACE")/$(basename "$WORKSPACE").server.log"
   cp "$SEEDS"/*.cs "$WORKSPACE"/
 }
 
 start_server() {
   ( cd "$HERE/certapp" && TOKENSAFE_CERT_WORKSPACE="$WORKSPACE" ASPNETCORE_ENVIRONMENT=Production \
-      exec "$DOTNET" "$APP_DLL" --urls "http://127.0.0.1:$PORT" ) >"$WORKSPACE/server.log" 2>&1 &
+      exec "$DOTNET" "$APP_DLL" --urls "http://127.0.0.1:$PORT" ) >"$SERVER_LOG" 2>&1 &
   SERVER_PID=$!
   for _ in $(seq 1 160); do
     if ! kill -0 "$SERVER_PID" 2>/dev/null; then
       echo "✗ cert app exited early; log:" >&2
-      tail -40 "$WORKSPACE/server.log" >&2
+      tail -40 "$SERVER_LOG" >&2
       return 1
     fi
     if node -e "const s=require('net').connect($PORT,'127.0.0.1');s.on('connect',()=>process.exit(0));s.on('error',()=>process.exit(1))" >/dev/null 2>&1; then
@@ -112,7 +115,7 @@ start_server() {
     sleep 0.25
   done
   echo "✗ cert app did not start; log:" >&2
-  tail -40 "$WORKSPACE/server.log" >&2
+  tail -40 "$SERVER_LOG" >&2
   return 1
 }
 

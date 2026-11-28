@@ -14,6 +14,7 @@ import (
 	"encoding/json"
 	"fmt"
 	"os"
+	"strconv"
 	"strings"
 	"time"
 
@@ -43,6 +44,9 @@ type Case struct {
 	ExpectVersionMatchesContent string `json:"expectVersionMatchesContent"`
 	// RequiresCapability gates a capabilityCase on the handshake claim.
 	RequiresCapability string `json:"requiresCapability,omitempty"`
+	// MinWireVersion gates a case on the wire version the runtime negotiates:
+	// a runtime frozen on an older wire skips it (and it stays out of the report).
+	MinWireVersion string `json:"minWireVersion,omitempty"`
 	// Cleanup lists paths removed before the case so a leftover from a previous
 	// run cannot turn mode=create into a conflict (wire 1.5.0).
 	Cleanup []string `json:"cleanup,omitempty"`
@@ -99,6 +103,8 @@ type Markers struct {
 	BatchFileA   string
 	BatchFileB   string
 	BatchContent string
+	// Wire 1.6.0: the §4.1 freshness token captured from the runtime's observe.
+	WorkspaceVersion string
 }
 
 // CaseResult is the outcome of one case.
@@ -155,7 +161,19 @@ func Run(dispatcher Dispatcher, spec Spec, markers Markers) Report {
 		GeneratedAt:    time.Now().UTC().Format(time.RFC3339),
 	}
 
+	// §4.1 result versioning (wire 1.6.0): capture the runtime's workspace token
+	// once so the ifVersion cases can assert both the unchanged envelope and
+	// -32010 without a cross-case capture mechanism.
+	negotiated := negotiatedVersion(dispatcher)
 	for _, tc := range spec.Cases {
+		if tc.MinWireVersion != "" && !wireAtLeast(negotiated, tc.MinWireVersion) {
+			continue
+		}
+		// Earlier cases legitimately mutate the workspace, so the §4.1 token is
+		// captured just in time, right before the case that references it.
+		if referencesWorkspaceVersion(tc.Params) && wireAtLeast(negotiated, "1.6.0") {
+			markers.WorkspaceVersion = probeWorkspaceVersion(dispatcher)
+		}
 		result := CaseResult{ID: tc.ID, Level: tc.Level, Status: "passed"}
 
 		// Preconditions establish the runtime evidence a case asserts on.
@@ -195,6 +213,9 @@ func Run(dispatcher Dispatcher, spec Spec, markers Markers) Report {
 				continue
 			}
 			result := CaseResult{ID: tc.ID, Level: tc.Level, Status: "passed"}
+			if referencesWorkspaceVersion(tc.Params) && wireAtLeast(negotiated, "1.6.0") {
+				markers.WorkspaceVersion = probeWorkspaceVersion(dispatcher)
+			}
 			cleanupCasePaths(dispatcher, tc.ID, tc.Cleanup, markers)
 			resp := dispatch(dispatcher, tc.ID, tc.Method, markers.substitute(tc.Params))
 			if errMsg := check(tc, resp, markers); errMsg != "" {
@@ -310,6 +331,98 @@ func advertisedCapabilities(d Dispatcher) map[string]interface{} {
 		return nil
 	}
 	return parsed.Capabilities
+}
+
+// negotiatedVersion reads the wire version the runtime echoes in its handshake.
+func negotiatedVersion(d Dispatcher) string {
+	resp := dispatch(d, "version-handshake", "oumv/handshake", map[string]interface{}{})
+	if resp == nil || resp.Error != nil || resp.Result == nil {
+		return ""
+	}
+	raw, err := json.Marshal(resp.Result)
+	if err != nil {
+		return ""
+	}
+	var parsed struct {
+		ProtocolVersion string `json:"protocolVersion"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return ""
+	}
+	return parsed.ProtocolVersion
+}
+
+// referencesWorkspaceVersion reports whether a case's params need the live token.
+func referencesWorkspaceVersion(params map[string]interface{}) bool {
+	for _, value := range params {
+		switch typed := value.(type) {
+		case string:
+			if strings.Contains(typed, "${WORKSPACE_VERSION}") {
+				return true
+			}
+		case map[string]interface{}:
+			if referencesWorkspaceVersion(typed) {
+				return true
+			}
+		case []interface{}:
+			for _, item := range typed {
+				if nested, ok := item.(map[string]interface{}); ok && referencesWorkspaceVersion(nested) {
+					return true
+				}
+				if text, ok := item.(string); ok && strings.Contains(text, "${WORKSPACE_VERSION}") {
+					return true
+				}
+			}
+		}
+	}
+	return false
+}
+
+// probeWorkspaceVersion captures the §4.1 token; empty when the runtime is older.
+func probeWorkspaceVersion(d Dispatcher) string {
+	resp := dispatch(d, "workspace-version-probe", "oumv/observe", map[string]interface{}{"level": "L0"})
+	if resp == nil || resp.Error != nil || resp.Result == nil {
+		return ""
+	}
+	raw, err := json.Marshal(resp.Result)
+	if err != nil {
+		return ""
+	}
+	var parsed struct {
+		WorkspaceVersion string `json:"workspaceVersion"`
+	}
+	if err := json.Unmarshal(raw, &parsed); err != nil {
+		return ""
+	}
+	return parsed.WorkspaceVersion
+}
+
+// wireAtLeast compares dotted versions numerically; an unknown runtime version
+// never satisfies a floor, so an old runtime skips rather than fails.
+func wireAtLeast(version, floor string) bool {
+	if version == "" {
+		return false
+	}
+	parse := func(value string) [3]int {
+		var out [3]int
+		for i, part := range strings.Split(value, ".") {
+			if i > 2 {
+				break
+			}
+			number, err := strconv.Atoi(strings.TrimSpace(part))
+			if err == nil && number > 0 {
+				out[i] = number
+			}
+		}
+		return out
+	}
+	a, b := parse(version), parse(floor)
+	for i := 0; i < 3; i++ {
+		if a[i] != b[i] {
+			return a[i] > b[i]
+		}
+	}
+	return true
 }
 
 // capabilityEnabled walks a dotted capability path and requires literal true.
@@ -503,6 +616,7 @@ func (m Markers) substitute(params map[string]interface{}) map[string]interface{
 		"${BATCH_FILE_A}":         m.BatchFileA,
 		"${BATCH_FILE_B}":         m.BatchFileB,
 		"${BATCH_CONTENT}":        m.BatchContent,
+		"${WORKSPACE_VERSION}":    m.WorkspaceVersion,
 	}
 	var walk func(value interface{}) interface{}
 	walk = func(value interface{}) interface{} {

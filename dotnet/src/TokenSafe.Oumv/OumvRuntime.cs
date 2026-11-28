@@ -217,11 +217,119 @@ public sealed class OumvRuntime
     private JsonNode Disconnect(JsonObject parameters) =>
         OumvJson.Obj(("closed", Sessions.Delete(OumvJson.Str(parameters["sessionId"]))));
 
+    /* -------------------------------------------------------- result versioning */
+
+    private static readonly HashSet<string> DigestSkipDirectories = new(StringComparer.Ordinal)
+    {
+        ".git", "node_modules", ".venv", "venv", "__pycache__", ".tokensafe", ".oumv",
+        "dist", "build", "bin", "obj", ".pytest_cache", "target", ".vs",
+    };
+
+    // Process-local runtime artifacts, not source. A SQLite database inside the
+    // workspace rewrites its journal on every query, so counting it would make the
+    // §4.1 token flap between two consecutive calls and the handshake useless.
+    private static readonly string[] DigestSkipSuffixes =
+    {
+        ".db", ".db-wal", ".db-shm", ".sqlite", ".sqlite3", ".sqlite-wal", ".sqlite-shm", ".log",
+    };
+
+    /// <summary>
+    /// §4.1 result versioning (wire 1.6.0): a sha256 over the workspace inventory
+    /// (relative path, size, mtime). Any touched file changes it, so an agent learns
+    /// exactly when foreign edits made a cached observe/understand answer stale.
+    /// </summary>
+    public string WorkspaceDigest()
+    {
+        var entries = new List<string>();
+        var root = _editor.Root;
+        if (Directory.Exists(root))
+        {
+            var pending = new Stack<string>();
+            pending.Push(root);
+            while (pending.Count > 0)
+            {
+                var dir = pending.Pop();
+                IEnumerable<string> children;
+                try
+                {
+                    children = Directory.EnumerateFileSystemEntries(dir);
+                }
+                catch (Exception)
+                {
+                    continue;
+                }
+                foreach (var child in children)
+                {
+                    if (Directory.Exists(child))
+                    {
+                        var name = Path.GetFileName(child);
+                        if (!DigestSkipDirectories.Contains(name)) pending.Push(child);
+                        continue;
+                    }
+                    var lowerName = Path.GetFileName(child).ToLowerInvariant();
+                    if (DigestSkipSuffixes.Any(suffix => lowerName.EndsWith(suffix, StringComparison.Ordinal))) continue;
+                    try
+                    {
+                        var info = new FileInfo(child);
+                        var relative = Path.GetRelativePath(root, child).Replace('\\', '/');
+                        entries.Add($"{relative}:{info.Length}:{info.LastWriteTimeUtc.Ticks}");
+                    }
+                    catch (Exception)
+                    {
+                        // An unreadable entry simply does not contribute to the digest.
+                    }
+                }
+            }
+        }
+        entries.Sort(StringComparer.Ordinal);
+        return OumvJson.Sha256(string.Join("\n", entries));
+    }
+
+    /// <summary>
+    /// Applies the §4.1 ifVersion handshake: a matching token answers the short
+    /// envelope through this method's return value; a stale one throws -32010.
+    /// Returns null when the caller sent no token (the caller then serves the full payload).
+    /// </summary>
+    private JsonObject? ShortCircuitIfVersion(JsonObject parameters, Func<string, JsonObject> shortEnvelope)
+    {
+        var token = OumvJson.Str(parameters["ifVersion"])?.Trim();
+        if (string.IsNullOrEmpty(token)) return null;
+        var digest = WorkspaceDigest();
+        if (!string.Equals(token, digest, StringComparison.Ordinal))
+        {
+            throw OumvException.Stale(
+                $"STALE_RESOURCE_VERSION: the workspace changed since the caller's snapshot (expected {token}, current is {digest}) — refetch without ifVersion",
+                new Dictionary<string, object?>
+                {
+                    ["reason"] = "stale_version",
+                    ["current"] = digest,
+                    ["expected"] = token,
+                });
+        }
+        return shortEnvelope(digest);
+    }
+
     /* ----------------------------------------------------------------- observe */
 
     private JsonNode Observe(JsonObject parameters)
     {
         var level = (OumvJson.Str(parameters["level"]) ?? "L0").ToUpperInvariant();
+        if (level is not ("L0" or "L1" or "L2" or "L3" or "L4"))
+            throw OumvException.Unsupported($"UNSUPPORTED_CAPABILITY: unknown observe level {level}",
+                new Dictionary<string, object?> { ["reason"] = "unsupported_level" });
+
+        var shortAnswer = ShortCircuitIfVersion(parameters, digest => OumvJson.Obj(
+            ("level", level), ("format", "json"), ("unchanged", true), ("workspaceVersion", digest)));
+        if (shortAnswer is not null) return shortAnswer;
+
+        var result = ObserveCore(parameters, level);
+        var digestToken = WorkspaceDigest();
+        if (result is JsonObject payload) payload["workspaceVersion"] = digestToken;
+        return result;
+    }
+
+    private JsonNode ObserveCore(JsonObject parameters, string level)
+    {
         switch (level)
         {
             case "L0":
@@ -308,6 +416,22 @@ public sealed class OumvRuntime
     private Task<JsonNode> UnderstandAsync(JsonObject parameters, CancellationToken cancellationToken)
     {
         var query = (OumvJson.Str(parameters["query"]) ?? string.Empty).ToLowerInvariant();
+        if (query is not ("impact" or "causality"))
+            throw OumvException.Unsupported($"UNSUPPORTED_CAPABILITY: unknown understand query {query}",
+                new Dictionary<string, object?> { ["reason"] = "unsupported_query" });
+
+        // §4.1: understand honours the same freshness handshake as observe.
+        var shortAnswer = ShortCircuitIfVersion(parameters, digest => OumvJson.Obj(
+            ("query", query), ("unchanged", true), ("workspaceVersion", digest)));
+        if (shortAnswer is not null) return Task.FromResult<JsonNode>(shortAnswer);
+
+        var result = UnderstandCore(parameters, query);
+        if (result is JsonObject payload) payload["workspaceVersion"] = WorkspaceDigest();
+        return Task.FromResult(result);
+    }
+
+    private JsonNode UnderstandCore(JsonObject parameters, string query)
+    {
         var target = OumvJson.Str(parameters["target"]) ?? string.Empty;
 
         switch (query)
@@ -340,12 +464,12 @@ public sealed class OumvRuntime
                     },
                 };
 
-                return Task.FromResult<JsonNode>(new JsonObject
+                return new JsonObject
                 {
                     ["query"] = "impact",
                     ["target"] = target,
                     ["impact"] = impact,
-                });
+                };
             }
 
             case "causality":
@@ -382,12 +506,12 @@ public sealed class OumvRuntime
                     causality["latencyMs"] = matches[^1].DurationMs;
                 }
 
-                return Task.FromResult<JsonNode>(new JsonObject
+                return new JsonObject
                 {
                     ["query"] = "causality",
                     ["target"] = target,
                     ["causality"] = causality,
-                });
+                };
             }
 
             default:

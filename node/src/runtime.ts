@@ -92,6 +92,8 @@ export interface OumvRuntimeOptions {
   sandbox?: VerifySandboxHook;
   /** §14.3 default build command (wire 1.6.0). */
   buildCommand?: string;
+  /** §14.2 workspace policy: `query: false` turns oumv/query into -32007 (reason query_disabled). */
+  permissions?: { query?: boolean };
 }
 
 export interface VerifyScope {
@@ -179,6 +181,8 @@ export class OumvRuntime {
   private eventSeq = 0;
   private readonly startTime = Date.now();
   private readonly enabled: { observe: boolean; understand: boolean; mutate: boolean; verify: boolean };
+  /** §14.2 workspace policy knobs (wire 1.6.0). */
+  private readonly permissions: { query?: boolean };
   private transports: string[] = ['http'];
   private readonly sandbox?: VerifySandboxHook;
   /** §14.3 default build command; `params.command` overrides per call. */
@@ -217,6 +221,7 @@ export class OumvRuntime {
       mutate: options.capabilities?.mutate ?? true,
       verify: options.capabilities?.verify ?? true,
     };
+    this.permissions = options.permissions ?? {};
   }
 
   /* ---------------------------------------------------------------- registry */
@@ -834,6 +839,12 @@ export class OumvRuntime {
 
   /** §14.2 read-only data access through the adopter's sandbox query hook. */
   async query(params: Record<string, any> = {}): Promise<Record<string, unknown>> {
+    // Policy first: a workspace that disables query answers -32007 even with a hook wired.
+    if (this.permissions.query === false) {
+      throw new OumvError(ERROR_CODES.PERMISSION_DENIED, 'PERMISSION_DENIED: the workspace policy disables read-only query (permissions.query: false)', {
+        reason: 'query_disabled',
+      });
+    }
     const hook = this.sandbox?.db?.query;
     if (!hook) {
       throw unsupported('UNSUPPORTED_CAPABILITY: no read-only database query hook is configured');

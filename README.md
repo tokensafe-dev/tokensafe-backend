@@ -29,17 +29,17 @@
 ## Certification (spec §10)
 
 <!-- certification:start -->
-**9 adapters certified against 33 language-neutral cases** (`fixtureVersion` 11): 7 at Level 3 and 2 source-level adapter(s) at Level 2, each with its single L3 gap named below. A report with 34 cases also ran the sandbox capability case its runtime advertises. Generated from `certification/*.json` by `scripts/render_certification.py`; CI fails when this block no longer matches the reports.
+**9 adapters certified against the same language-neutral fixtures** (`fixtureVersion` 12): 7 at Level 3 and 2 source-level adapter(s) at Level 2 — frozen on the wire 1.5.0 subset they still serve, each with its single L3 gap named below. The smallest suite in the table is 33 cases: a runtime that advertises an optional capability also runs the case gated on it, and a runtime frozen on an older wire skips the newer-wire cases instead of failing them. Generated from `certification/*.json` by `scripts/render_certification.py`; CI fails when this block no longer matches the reports.
 
 | Adapter | Framework | Transport exercised | Level | Cases | Report |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `dotnet-aspnetcore` | aspnetcore | ASP.NET Core `POST /__oumv/rpc` | **3** | 37/37 | [certification/dotnet-aspnetcore.json](certification/dotnet-aspnetcore.json) |
-| `go-chi` | chi | HTTP `POST /__oumv/rpc` | **3** | 42/42 | [certification/go-chi.json](certification/go-chi.json) |
-| `go-gin` | Gin | HTTP `POST /__oumv/rpc` | **3** | 42/42 | [certification/go-gin.json](certification/go-gin.json) |
-| `go-stdhttp` | net/http | HTTP `POST /__oumv/rpc` | **3** | 42/42 | [certification/go-stdhttp.json](certification/go-stdhttp.json) |
-| `node-express` | Express | Node `POST /__oumv/rpc` | **3** | 42/42 | [certification/node-express.json](certification/node-express.json) |
-| `node-fastify` | Fastify | Node `POST /__oumv/rpc` | **3** | 42/42 | [certification/node-fastify.json](certification/node-fastify.json) |
-| `python-fastapi` | FastAPI | ASGI `POST /__oumv/rpc` | **3** | 44/44 | [certification/python-fastapi.json](certification/python-fastapi.json) |
+| `dotnet-aspnetcore` | aspnetcore | ASP.NET Core `POST /__oumv/rpc` | **3** | 41/41 | [certification/dotnet-aspnetcore.json](certification/dotnet-aspnetcore.json) |
+| `go-chi` | chi | HTTP `POST /__oumv/rpc` | **3** | 46/46 | [certification/go-chi.json](certification/go-chi.json) |
+| `go-gin` | Gin | HTTP `POST /__oumv/rpc` | **3** | 46/46 | [certification/go-gin.json](certification/go-gin.json) |
+| `go-stdhttp` | net/http | HTTP `POST /__oumv/rpc` | **3** | 46/46 | [certification/go-stdhttp.json](certification/go-stdhttp.json) |
+| `node-express` | Express | Node `POST /__oumv/rpc` | **3** | 46/46 | [certification/node-express.json](certification/node-express.json) |
+| `node-fastify` | Fastify | Node `POST /__oumv/rpc` | **3** | 46/46 | [certification/node-fastify.json](certification/node-fastify.json) |
+| `python-fastapi` | FastAPI | ASGI `POST /__oumv/rpc` | **3** | 48/48 | [certification/python-fastapi.json](certification/python-fastapi.json) |
 
 Source-level adapters scan the framework's route declarations statically, apply OCC-checked edits and run a real verify command, but they do not boot the application — so they record no live request traces, `observe-l4-returns-recorded-traces` fails, and Level 3 is not claimed:
 
@@ -57,18 +57,18 @@ Transport certificates run the same suite over the optional bindings, plus the f
 
 | Certificate | Adapter | Transport | Cases |
 | :--- | :--- | :--- | :--- |
-| [transports/dotnet-aspnetcore-sse.json](certification/transports/dotnet-aspnetcore-sse.json) | `dotnet-aspnetcore-sse` | sse | 38/38 |
-| [transports/dotnet-aspnetcore-ws.json](certification/transports/dotnet-aspnetcore-ws.json) | `dotnet-aspnetcore-ws` | ws | 38/38 |
-| [transports/go-stdhttp-sse.json](certification/transports/go-stdhttp-sse.json) | `go-stdhttp-sse` | sse | 43/43 |
-| [transports/go-stdhttp-ws.json](certification/transports/go-stdhttp-ws.json) | `go-stdhttp-ws` | ws | 43/43 |
-| [transports/node-express-sse.json](certification/transports/node-express-sse.json) | `node-express-sse` | sse | 43/43 |
-| [transports/node-express-ws.json](certification/transports/node-express-ws.json) | `node-express-ws` | ws | 43/43 |
-| [transports/node-fastify-sse.json](certification/transports/node-fastify-sse.json) | `node-fastify-sse` | sse | 43/43 |
-| [transports/node-fastify-ws.json](certification/transports/node-fastify-ws.json) | `node-fastify-ws` | ws | 43/43 |
-| [transports/node-stdio.json](certification/transports/node-stdio.json) | `node-stdio` | stdio | 33/33 |
-| [transports/python-fastapi-sse.json](certification/transports/python-fastapi-sse.json) | `python-fastapi-sse` | sse | 45/45 |
-| [transports/python-fastapi-ws.json](certification/transports/python-fastapi-ws.json) | `python-fastapi-ws` | ws | 45/45 |
-| [transports/python-stdio.json](certification/transports/python-stdio.json) | `python-stdio` | stdio | 41/41 |
+| [transports/dotnet-aspnetcore-sse.json](certification/transports/dotnet-aspnetcore-sse.json) | `dotnet-aspnetcore-sse` | sse | 42/42 |
+| [transports/dotnet-aspnetcore-ws.json](certification/transports/dotnet-aspnetcore-ws.json) | `dotnet-aspnetcore-ws` | ws | 42/42 |
+| [transports/go-stdhttp-sse.json](certification/transports/go-stdhttp-sse.json) | `go-stdhttp-sse` | sse | 47/47 |
+| [transports/go-stdhttp-ws.json](certification/transports/go-stdhttp-ws.json) | `go-stdhttp-ws` | ws | 47/47 |
+| [transports/node-express-sse.json](certification/transports/node-express-sse.json) | `node-express-sse` | sse | 47/47 |
+| [transports/node-express-ws.json](certification/transports/node-express-ws.json) | `node-express-ws` | ws | 47/47 |
+| [transports/node-fastify-sse.json](certification/transports/node-fastify-sse.json) | `node-fastify-sse` | sse | 47/47 |
+| [transports/node-fastify-ws.json](certification/transports/node-fastify-ws.json) | `node-fastify-ws` | ws | 47/47 |
+| [transports/node-stdio.json](certification/transports/node-stdio.json) | `node-stdio` | stdio | 37/37 |
+| [transports/python-fastapi-sse.json](certification/transports/python-fastapi-sse.json) | `python-fastapi-sse` | sse | 49/49 |
+| [transports/python-fastapi-ws.json](certification/transports/python-fastapi-ws.json) | `python-fastapi-ws` | ws | 49/49 |
+| [transports/python-stdio.json](certification/transports/python-stdio.json) | `python-stdio` | stdio | 45/45 |
 <!-- certification:end -->
 
 Levels are cumulative and a skipped case never counts as a pass — a missing capability caps the claim instead of inflating it. The transport certificates above cover **stdio** (§2.5) plus the optional **SSE** (§2.3) and **WebSocket** (§2.4) bindings for Go net/http, Node Express/Fastify, Python FastAPI and ASP.NET Core; those runs include the push cases (SSE `state` with `Last-Event-ID` replay, WS `notifications/oumv.state`) and are Level 3, 38/38. Regenerate locally:

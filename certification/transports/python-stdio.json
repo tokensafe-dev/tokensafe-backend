@@ -2,9 +2,9 @@
   "adapterName": "python-stdio",
   "framework": "python",
   "specVersion": "1.6.0",
-  "fixtureVersion": 11,
-  "total": 41,
-  "passed": 41,
+  "fixtureVersion": 12,
+  "total": 45,
+  "passed": 45,
   "failed": 0,
   "attainedLevel": 3,
   "levels": {
@@ -212,6 +212,30 @@
       "error": ""
     },
     {
+      "id": "observe-carries-workspace-version",
+      "level": 2,
+      "status": "passed",
+      "error": ""
+    },
+    {
+      "id": "understand-carries-workspace-version",
+      "level": 2,
+      "status": "passed",
+      "error": ""
+    },
+    {
+      "id": "observe-ifversion-match-answers-unchanged",
+      "level": 2,
+      "status": "passed",
+      "error": ""
+    },
+    {
+      "id": "observe-stale-token-rejected",
+      "level": 2,
+      "status": "passed",
+      "error": ""
+    },
+    {
       "id": "apply-edit-batch-applies-all",
       "level": 3,
       "status": "passed",
@@ -260,7 +284,7 @@
       "error": ""
     }
   ],
-  "generatedAt": "2026-11-27T20:10:55Z",
+  "generatedAt": "2026-11-28T01:11:42Z",
   "environment": {
     "transport": "stdio",
     "python": "3.13.5"

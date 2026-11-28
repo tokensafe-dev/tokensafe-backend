@@ -27,6 +27,7 @@ from tokensafe_python.protocol.errors import (
     CONFLICT_DETECTED,
     SYNTAX_ERROR,
     SECURITY_VIOLATION,
+    PERMISSION_DENIED,
     RESOURCE_NOT_FOUND,
     UNSUPPORTED_CAPABILITY,
     VALIDATION_FAILED,
@@ -49,7 +50,8 @@ from tokensafe_python.protocol.types import (
 class OUMVRuntime:
     """Unified runtime coordinator implementing UARP protocol across Python backends."""
 
-    def __init__(self, framework: str = "fastapi", db_engine: Optional[Any] = None, project_root: Optional[str] = None):
+    def __init__(self, framework: str = "fastapi", db_engine: Optional[Any] = None, project_root: Optional[str] = None,
+                 permissions: Optional[Dict[str, Any]] = None):
         self.framework = framework
         self.causality = CausalityGraph()
         self.state = StateManager()
@@ -76,6 +78,8 @@ class OUMVRuntime:
         self._idempotency: Dict[str, Any] = {}
         # §14.3 configured build command (None = honest `skipped`).
         self.build_command: Optional[str] = None
+        # §14.2 workspace policy: permissions.query: False disables read-only query.
+        self.permissions: Dict[str, Any] = dict(permissions or {})
 
         self._bind_rpc_methods()
 
@@ -890,6 +894,13 @@ class OUMVRuntime:
     async def handle_oumv_query(self, sql: str = "", params: Optional[List[Any]] = None,
                                 limit: int = 100, **kwargs) -> Dict[str, Any]:
         """§14.2 runtime-enforced read-only data access (capability observeQuery.readOnly)."""
+        # Policy first: a workspace that disables query answers -32007 even with an engine wired.
+        if self.permissions.get("query") is False:
+            raise OumvError(
+                PERMISSION_DENIED,
+                "PERMISSION_DENIED: the workspace policy disables read-only query (permissions.query: false)",
+                {"reason": "query_disabled"},
+            )
         engine = self.db_sandbox._engine
         if not self.db_sandbox.has_engine():
             raise OumvError(

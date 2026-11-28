@@ -60,6 +60,45 @@ public sealed class RuntimeTests : IDisposable
         response?["error"]?["code"]?.GetValue<int>() ?? 0;
 
     [Fact]
+    public async Task Observe_and_understand_honour_the_ifVersion_freshness_handshake()
+    {
+        Write("app.cs", "class A {}\n");
+        var handshake = await Call("oumv/handshake", new JsonObject { ["protocolVersion"] = "1.6.0" });
+        var sessionId = handshake!["result"]!["sessionId"]!.GetValue<string>();
+
+        var observed = await Call("oumv/observe", new JsonObject { ["level"] = "L0", ["sessionId"] = sessionId });
+        var digest = observed!["result"]!["workspaceVersion"]!.GetValue<string>();
+        Assert.StartsWith("sha256:", digest);
+        Assert.Equal(71, digest.Length);
+
+        // Match: the cached copy is still fresh, so the answer is the short envelope.
+        var shortAnswer = await Call("oumv/observe",
+            new JsonObject { ["level"] = "L1", ["sessionId"] = sessionId, ["ifVersion"] = digest });
+        Assert.True(shortAnswer!["result"]!["unchanged"]!.GetValue<bool>());
+        Assert.Equal(digest, shortAnswer["result"]!["workspaceVersion"]!.GetValue<string>());
+        Assert.Null(shortAnswer["result"]!["data"]);
+
+        // Any touched file invalidates the caller's token with -32010.
+        Write("touched.cs", "class B {}\n");
+        var fresh = await Call("oumv/observe", new JsonObject { ["level"] = "L0", ["sessionId"] = sessionId });
+        var freshDigest = fresh!["result"]!["workspaceVersion"]!.GetValue<string>();
+        Assert.NotEqual(digest, freshDigest);
+
+        var stale = await Call("oumv/observe",
+            new JsonObject { ["level"] = "L0", ["sessionId"] = sessionId, ["ifVersion"] = digest });
+        Assert.Equal(-32010, ErrorCode(stale));
+        Assert.Equal("stale_version", stale!["error"]!["data"]!["reason"]!.GetValue<string>());
+        Assert.Equal(freshDigest, stale["error"]!["data"]!["current"]!.GetValue<string>());
+
+        var understood = await Call("oumv/understand",
+            new JsonObject { ["query"] = "causality", ["target"] = "GET /x", ["sessionId"] = sessionId });
+        Assert.Equal(freshDigest, understood!["result"]!["workspaceVersion"]!.GetValue<string>());
+        var understoodShort = await Call("oumv/understand",
+            new JsonObject { ["query"] = "causality", ["sessionId"] = sessionId, ["ifVersion"] = freshDigest });
+        Assert.True(understoodShort!["result"]!["unchanged"]!.GetValue<bool>());
+    }
+
+    [Fact]
     public async Task Handshake_echoes_granted_ttl_and_rejects_a_foreign_major()
     {
         var ok = await Call("oumv/handshake", new JsonObject { ["protocolVersion"] = "1.5.0", ["sessionTtlSeconds"] = 1 });

@@ -86,7 +86,7 @@ describe('Express transport certificates', () => {
   }
 
   it.runIf(hasConformanceRunner)(
-    'certifies the SSE binding (38 cases + push with Last-Event-ID replay)',
+    'certifies the SSE binding (46 cases + push with Last-Event-ID replay)',
     async () => {
       const live = await startServer();
       const { loadFixtures, runFixtureSuite, httpTransport, sseEventSource } = require(CONFORMANCE_ENTRY);
@@ -109,13 +109,14 @@ describe('Express transport certificates', () => {
             framework: 'express',
             environment: { transport: 'sse', node: process.version },
             capabilities: (handshake.result as any)?.capabilities,
+            negotiatedVersion: (handshake.result as any)?.protocolVersion,
             push: source,
             pushTimeoutMs: 5_000,
           }
         );
         if (report.failed > 0) console.log(report.cases.filter((entry: any) => entry.status !== 'passed'));
         expect(report.failed).toBe(0);
-        expect(report.total).toBe(43);
+        expect(report.total).toBe(47);
         writeReport('transports/node-express-sse.json', report);
       } finally {
         await source.close();
@@ -125,7 +126,7 @@ describe('Express transport certificates', () => {
   );
 
   it.runIf(hasConformanceRunner)(
-    'certifies the WebSocket binding (38 cases + state notification push)',
+    'certifies the WebSocket binding (46 cases + state notification push)',
     async () => {
       const live = await startServer();
       const { loadFixtures, runFixtureSuite, wsTransport } = require(CONFORMANCE_ENTRY);
@@ -142,12 +143,13 @@ describe('Express transport certificates', () => {
           framework: 'express',
           environment: { transport: 'ws', node: process.version },
           capabilities: (handshake.result as any)?.capabilities,
+          negotiatedVersion: (handshake.result as any)?.protocolVersion,
           push: transport,
           pushTimeoutMs: 5_000,
         });
         if (report.failed > 0) console.log(report.cases.filter((entry: any) => entry.status !== 'passed'));
         expect(report.failed).toBe(0);
-        expect(report.total).toBe(43);
+        expect(report.total).toBe(47);
         writeReport('transports/node-express-ws.json', report);
       } finally {
         await transport.close?.();
@@ -208,7 +210,7 @@ describe('Fastify transport certificates', () => {
   }
 
   it.runIf(hasConformanceRunner)(
-    'certifies the SSE binding (38 cases + push with Last-Event-ID replay)',
+    'certifies the SSE binding (46 cases + push with Last-Event-ID replay)',
     async () => {
       const live = await startServer();
       const { loadFixtures, runFixtureSuite, httpTransport, sseEventSource } = require(CONFORMANCE_ENTRY);
@@ -231,13 +233,14 @@ describe('Fastify transport certificates', () => {
             framework: 'fastify',
             environment: { transport: 'sse', node: process.version },
             capabilities: (handshake.result as any)?.capabilities,
+            negotiatedVersion: (handshake.result as any)?.protocolVersion,
             push: source,
             pushTimeoutMs: 5_000,
           }
         );
         if (report.failed > 0) console.log(report.cases.filter((entry: any) => entry.status !== 'passed'));
         expect(report.failed).toBe(0);
-        expect(report.total).toBe(43);
+        expect(report.total).toBe(47);
         writeReport('transports/node-fastify-sse.json', report);
       } finally {
         await source.close();
@@ -247,7 +250,7 @@ describe('Fastify transport certificates', () => {
   );
 
   it.runIf(hasConformanceRunner)(
-    'certifies the WebSocket binding (38 cases + state notification push)',
+    'certifies the WebSocket binding (46 cases + state notification push)',
     async () => {
       const live = await startServer();
       const { loadFixtures, runFixtureSuite, wsTransport } = require(CONFORMANCE_ENTRY);
@@ -264,12 +267,13 @@ describe('Fastify transport certificates', () => {
           framework: 'fastify',
           environment: { transport: 'ws', node: process.version },
           capabilities: (handshake.result as any)?.capabilities,
+          negotiatedVersion: (handshake.result as any)?.protocolVersion,
           push: transport,
           pushTimeoutMs: 5_000,
         });
         if (report.failed > 0) console.log(report.cases.filter((entry: any) => entry.status !== 'passed'));
         expect(report.failed).toBe(0);
-        expect(report.total).toBe(43);
+        expect(report.total).toBe(47);
         writeReport('transports/node-fastify-ws.json', report);
       } finally {
         await transport.close?.();

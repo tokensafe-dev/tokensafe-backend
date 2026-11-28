@@ -2,9 +2,9 @@
   "adapterName": "node-stdio",
   "framework": "node",
   "specVersion": "1.6.0",
-  "fixtureVersion": 11,
-  "total": 33,
-  "passed": 33,
+  "fixtureVersion": 12,
+  "total": 37,
+  "passed": 37,
   "failed": 0,
   "skipped": 0,
   "attainedLevel": 3,
@@ -178,9 +178,29 @@
       "id": "handshake-rejects-unknown-version",
       "level": 1,
       "status": "passed"
+    },
+    {
+      "id": "observe-carries-workspace-version",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "understand-carries-workspace-version",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "observe-ifversion-match-answers-unchanged",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "observe-stale-token-rejected",
+      "level": 2,
+      "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-27T20:47:03.973Z",
+  "generatedAt": "2026-11-28T01:13:24.345Z",
   "environment": {
     "transport": "stdio",
     "node": "v24.14.0"

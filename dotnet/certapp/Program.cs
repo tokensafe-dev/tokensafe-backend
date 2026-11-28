@@ -7,7 +7,9 @@ using TokenSafe.Oumv.CertApp;
 var workspace = Environment.GetEnvironmentVariable("TOKENSAFE_CERT_WORKSPACE")
     ?? Directory.GetCurrentDirectory();
 Directory.CreateDirectory(workspace);
-var databasePath = Path.Combine(workspace, "cert.sqlite");
+// The sqlite file lives OUTSIDE the workspace: a database journal inside it
+// would rewrite its mtime on every query and make the §4.1 digest flap.
+var databasePath = Path.Combine(Path.GetTempPath(), $"oumv-cert-{Environment.ProcessId}.sqlite");
 
 var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddDbContext<CertDbContext>(options => options.UseSqlite($"Data Source={databasePath}"));

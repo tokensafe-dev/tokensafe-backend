@@ -2,9 +2,9 @@
   "adapterName": "node-express-ws",
   "framework": "express",
   "specVersion": "1.6.0",
-  "fixtureVersion": 11,
-  "total": 43,
-  "passed": 43,
+  "fixtureVersion": 12,
+  "total": 47,
+  "passed": 47,
   "failed": 0,
   "skipped": 0,
   "attainedLevel": 3,
@@ -180,6 +180,26 @@
       "status": "passed"
     },
     {
+      "id": "observe-carries-workspace-version",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "understand-carries-workspace-version",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "observe-ifversion-match-answers-unchanged",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "observe-stale-token-rejected",
+      "level": 2,
+      "status": "passed"
+    },
+    {
       "id": "ws-state-notification",
       "level": 2,
       "status": "passed"
@@ -230,7 +250,7 @@
       "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-27T20:47:06.927Z",
+  "generatedAt": "2026-11-28T01:13:27.255Z",
   "environment": {
     "transport": "ws",
     "node": "v24.14.0"

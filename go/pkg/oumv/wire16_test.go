@@ -81,3 +81,64 @@ func TestWorkspaceDigestFreshnessHandshake(t *testing.T) {
 		t.Fatalf("matching ifVersion must answer the short understand envelope, got %+v", uShort)
 	}
 }
+
+// §14.2 workspace policy: `permissions.query: false` turns oumv/query into -32007
+// and is checked before the missing-engine gate, so a policy denial is never
+// misreported as "no engine wired".
+func TestQueryPermissionsPolicy(t *testing.T) {
+	disabled := Config{
+		Name:         "query-policy",
+		WorkspaceDir: t.TempDir(),
+		Runtime: &RuntimeConfig{
+			Enabled:      true,
+			Environment:  EnvDevelopment,
+			Capabilities: CapabilitiesConfig{Observe: true, Understand: true},
+			Permissions:  &PermissionsConfig{QueryDisabled: true},
+		},
+	}
+	rt := NewRuntime(disabled)
+	_, oerr := rt.Query(context.Background(), &protocol.QueryParams{SQL: "SELECT 1"})
+	if oerr == nil || oerr.Code != protocol.ErrPermissionDenied {
+		t.Fatalf("policy denial must answer -32007, got %v", oerr)
+	}
+	if data, _ := oerr.Data.(map[string]interface{}); data == nil || data["reason"] != "query_disabled" {
+		t.Fatalf("policy denial must name reason=query_disabled, got %v", oerr.Data)
+	}
+
+	// No policy + no engine: unchanged -32006 (never a silent empty result).
+	rt = NewRuntime(Config{
+		Name:         "query-no-engine",
+		WorkspaceDir: t.TempDir(),
+		Runtime: &RuntimeConfig{
+			Enabled:      true,
+			Environment:  EnvDevelopment,
+			Capabilities: CapabilitiesConfig{Observe: true, Understand: true},
+		},
+	})
+	_, oerr = rt.Query(context.Background(), &protocol.QueryParams{SQL: "SELECT 1"})
+	if oerr == nil || oerr.Code != protocol.ErrUnsupportedCapability {
+		t.Fatalf("missing engine must answer -32006, got %v", oerr)
+	}
+}
+
+// The env knob mirrors CapabilitiesConfig: TOKENSAFE_OUMV_PERMISSIONS_QUERY=false
+// disables query without touching code.
+func TestPermissionsQueryEnvKnob(t *testing.T) {
+	t.Setenv("TOKENSAFE_OUMV_PERMISSIONS_QUERY", "false")
+	cfg, err := ResolveRuntimeConfig(nil)
+	if err != nil {
+		t.Fatalf("resolve config: %v", err)
+	}
+	if cfg.Permissions == nil || !cfg.Permissions.QueryDisabled {
+		t.Fatalf("TOKENSAFE_OUMV_PERMISSIONS_QUERY=false must disable query, got %+v", cfg.Permissions)
+	}
+
+	t.Setenv("TOKENSAFE_OUMV_PERMISSIONS_QUERY", "true")
+	cfg, err = ResolveRuntimeConfig(nil)
+	if err != nil {
+		t.Fatalf("resolve config: %v", err)
+	}
+	if cfg.Permissions != nil && cfg.Permissions.QueryDisabled {
+		t.Fatalf("TOKENSAFE_OUMV_PERMISSIONS_QUERY=true must keep query enabled, got %+v", cfg.Permissions)
+	}
+}

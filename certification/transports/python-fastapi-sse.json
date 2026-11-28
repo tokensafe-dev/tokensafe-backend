@@ -2,9 +2,9 @@
   "adapterName": "python-fastapi-sse",
   "framework": "fastapi",
   "specVersion": "1.6.0",
-  "fixtureVersion": 11,
-  "total": 45,
-  "passed": 45,
+  "fixtureVersion": 12,
+  "total": 49,
+  "passed": 49,
   "failed": 0,
   "skipped": 0,
   "attainedLevel": 3,
@@ -180,6 +180,26 @@
       "status": "passed"
     },
     {
+      "id": "observe-carries-workspace-version",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "understand-carries-workspace-version",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "observe-ifversion-match-answers-unchanged",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "observe-stale-token-rejected",
+      "level": 2,
+      "status": "passed"
+    },
+    {
       "id": "sse-state-after-edit",
       "level": 2,
       "status": "passed"
@@ -240,7 +260,7 @@
       "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-27T20:45:30.941Z",
+  "generatedAt": "2026-11-28T01:13:48.733Z",
   "environment": {
     "transport": "sse",
     "profile": "backend",

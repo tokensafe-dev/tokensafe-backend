@@ -265,6 +265,49 @@ describe('OumvRuntime core', () => {
     expect(handshake.capabilities.verify.sandboxRollback).toBe(false);
   });
 
+  describe('§14.2 query workspace policy (wire 1.6.0)', () => {
+    const hook = {
+      db: {
+        query: async () => ({ columns: ['1'], rows: [[1]] }),
+      },
+    };
+
+    it('answers columns/rows when no policy disables query', async () => {
+      const runtime = new OumvRuntime({ workspaceDir: process.cwd(), sandbox: hook });
+
+      const result: any = await runtime.query({ sql: 'SELECT 1' });
+
+      expect(result.columns).toEqual(['1']);
+      expect(result.rows).toEqual([[1]]);
+      expect(result.rowCount).toBe(1);
+    });
+
+    it('rejects with -32007 query_disabled when the policy forbids it', async () => {
+      const runtime = new OumvRuntime({
+        workspaceDir: process.cwd(),
+        sandbox: hook,
+        permissions: { query: false },
+      });
+
+      await expect(runtime.query({ sql: 'SELECT 1' })).rejects.toMatchObject({
+        code: -32007,
+        data: { reason: 'query_disabled' },
+      });
+    });
+
+    it('checks the policy before the missing-hook gate', async () => {
+      const runtime = new OumvRuntime({ workspaceDir: process.cwd(), permissions: { query: false } });
+
+      await expect(runtime.query({ sql: 'SELECT 1' })).rejects.toMatchObject({ code: -32007 });
+    });
+
+    it('still answers -32006 when no hook is configured and no policy forbids it', async () => {
+      const runtime = new OumvRuntime({ workspaceDir: process.cwd() });
+
+      await expect(runtime.query({ sql: 'SELECT 1' })).rejects.toMatchObject({ code: -32006 });
+    });
+  });
+
   describe('§8 result versioning (wire 1.6.0)', () => {
     it('carries a workspace digest and answers ifVersion honestly', () => {
       const workspace = createWorkspace();

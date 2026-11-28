@@ -2,9 +2,9 @@
   "adapterName": "dotnet-aspnetcore-ws",
   "framework": "aspnetcore",
   "specVersion": "1.6.0",
-  "fixtureVersion": 11,
-  "total": 38,
-  "passed": 38,
+  "fixtureVersion": 12,
+  "total": 42,
+  "passed": 42,
   "failed": 0,
   "skipped": 0,
   "attainedLevel": 3,
@@ -180,6 +180,26 @@
       "status": "passed"
     },
     {
+      "id": "observe-carries-workspace-version",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "understand-carries-workspace-version",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "observe-ifversion-match-answers-unchanged",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "observe-stale-token-rejected",
+      "level": 2,
+      "status": "passed"
+    },
+    {
       "id": "ws-state-notification",
       "level": 2,
       "status": "passed"
@@ -205,7 +225,7 @@
       "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-27T20:11:44.416Z",
+  "generatedAt": "2026-11-28T01:20:09.491Z",
   "environment": {
     "transport": "ws",
     "profile": "backend",

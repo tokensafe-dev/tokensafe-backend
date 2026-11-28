@@ -102,11 +102,13 @@ export async function runFixtures(
   // Capability cases run only for claims the runtime actually makes.
   const handshake = await transport.request({ jsonrpc: '2.0', id: 'certify-handshake', method: 'oumv/handshake', params: {} });
   const capabilities = (handshake.result as any)?.capabilities;
+  const negotiatedVersion = (handshake.result as any)?.protocolVersion;
   const report = await runFixtureSuite(transport, loadFixtures(FIXTURES), { ...defaultMarkers(), ...markers }, {
     adapterName,
     framework,
     environment: { transport: 'http', node: process.version },
     capabilities,
+    negotiatedVersion,
   });
   const outDir = process.env.CERT_OUT_DIR;
   if (outDir) {

@@ -66,6 +66,10 @@ public sealed class OumvException : Exception
     public static OumvException Unsupported(string message, IDictionary<string, object?>? data = null) =>
         new(OumvErrorCode.UnsupportedCapability, message, data);
 
+    /// <summary>§4.1 freshness mismatch (wire 1.6.0): the caller's workspace token is stale.</summary>
+    public static OumvException Stale(string message, IDictionary<string, object?>? data = null) =>
+        new(OumvErrorCode.StaleResourceVersion, message, data);
+
     public static OumvException Internal(string message, IDictionary<string, object?>? data = null) =>
         new(OumvErrorCode.InternalError, message, data);
 }

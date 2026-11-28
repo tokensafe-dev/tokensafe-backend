@@ -254,6 +254,14 @@ func (r *Runtime) Index(_ context.Context, params *protocol.IndexParams) (*proto
 
 // Query executes a read-only statement over the wired sandbox engine (§14.2).
 func (r *Runtime) Query(ctx context.Context, params *protocol.QueryParams) (*protocol.QueryResult, *protocol.OumvError) {
+	// Policy first (§14.2): a workspace that disables query answers -32007 even with an engine wired.
+	if r.config.Permissions != nil && r.config.Permissions.QueryDisabled {
+		return nil, &protocol.OumvError{
+			Code:    protocol.ErrPermissionDenied,
+			Message: "PERMISSION_DENIED: the workspace policy disables read-only query (permissions.query: false)",
+			Data:    map[string]interface{}{"reason": "query_disabled"},
+		}
+	}
 	if r.dbSandbox == nil || !r.dbSandbox.SupportsReads() {
 		return nil, protocol.NewUnsupportedCapabilityError("no query-capable database engine is wired into this runtime")
 	}

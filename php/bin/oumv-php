@@ -4,7 +4,8 @@
 /**
  * oumv-php — a dependency-free OUMV protocol sidecar for PHP projects.
  *
- * It implements the backend profile of the OUMV specification (wire 1.3.0) for
+ * It implements the backend profile of the OUMV specification (wire 1.5.0,
+ * frozen: the 1.6.0 surface is deliberately not implemented) for
  * Laravel and Symfony projects without Composer, without booting the framework
  * and without any third-party code: routes are read statically from
  * `Route::…` registrations and `#[Route]` attributes, controller handlers are
@@ -28,7 +29,7 @@ declare(strict_types=1);
 ini_set('display_errors', 'stderr');
 error_reporting(E_ALL);
 
-const OUMV_PROTOCOL_VERSION = '1.6.0';
+const OUMV_PROTOCOL_VERSION = '1.5.0';
 const OUMV_ADAPTER_NAME = 'oumv-php';
 const OUMV_ADAPTER_VERSION = '0.1.0';
 const OUMV_SOURCE_ADAPTER = 'php-laravel';

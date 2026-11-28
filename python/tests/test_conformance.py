@@ -105,7 +105,7 @@ async def test_conformance_certification(tmp_path):
 
 def test_fixture_file_has_level_tagged_v6_shape():
     data = json.loads(FIXTURES.read_text(encoding="utf-8"))
-    assert data["fixtureVersion"] == 11
+    assert data["fixtureVersion"] == 12
     assert data["protocolVersion"] == "1.6.0"
     assert sorted(data["levelDefinitions"]) == ["1", "2", "3"]
     # Push cases belong to transport certificates; the native runners assert the
@@ -114,6 +114,10 @@ def test_fixture_file_has_level_tagged_v6_shape():
     # Capability and session cases are gated on the handshake claim.
     assert all(case.get("requiresCapability") for case in data.get("capabilityCases", []))
     assert all(case.get("requiresCapability") for case in data.get("sessionCases", []))
+    # v12: the §4.1 result-versioning cases are gated by minWireVersion, not a capability.
+    etag_cases = [case for case in data["cases"] if case.get("minWireVersion")]
+    assert {case["minWireVersion"] for case in etag_cases} == {"1.6.0"}
+    assert any(case["id"] == "observe-stale-token-rejected" for case in etag_cases)
     assert data["sessionCases"], "fixtures v10 must prove an expired session"
 
     levels = {case["level"] for case in data["cases"]}

@@ -35,10 +35,17 @@ describe('stdio transport certification (§2.5)', () => {
         timeoutMs: 30_000,
       });
       try {
+        const handshake = await transport.request({
+          jsonrpc: '2.0',
+          id: 'stdio-handshake',
+          method: 'oumv/handshake',
+          params: {},
+        });
         const report = await runFixtureSuite(transport, loadFixtures(FIXTURES), workspace.markers, {
           adapterName: 'node-stdio',
           framework: 'node',
           environment: { transport: 'stdio', node: process.version },
+          negotiatedVersion: (handshake.result as any)?.protocolVersion,
         });
         const outDir = process.env.CERT_OUT_DIR;
         if (outDir) {

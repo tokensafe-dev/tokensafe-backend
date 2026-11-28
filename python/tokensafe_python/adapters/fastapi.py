@@ -31,6 +31,7 @@ class TokenSafeFastAPI:
         host: str = "127.0.0.1",
         port: int = 8000,
         project_root: Optional[str] = None,
+        permissions: Optional[Dict[str, Any]] = None,
     ):
         self.app = app
         self.rpc_path = rpc_path
@@ -42,6 +43,7 @@ class TokenSafeFastAPI:
             framework="fastapi",
             db_engine=db_engine,
             project_root=project_root,
+            permissions=permissions,
         )
 
         self._introspect_app()

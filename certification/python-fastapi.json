@@ -2,9 +2,9 @@
   "adapterName": "python-fastapi",
   "framework": "fastapi",
   "specVersion": "1.6.0",
-  "fixtureVersion": 11,
-  "total": 44,
-  "passed": 44,
+  "fixtureVersion": 12,
+  "total": 48,
+  "passed": 48,
   "failed": 0,
   "attainedLevel": 3,
   "levels": {
@@ -212,6 +212,30 @@
       "error": ""
     },
     {
+      "id": "observe-carries-workspace-version",
+      "level": 2,
+      "status": "passed",
+      "error": ""
+    },
+    {
+      "id": "understand-carries-workspace-version",
+      "level": 2,
+      "status": "passed",
+      "error": ""
+    },
+    {
+      "id": "observe-ifversion-match-answers-unchanged",
+      "level": 2,
+      "status": "passed",
+      "error": ""
+    },
+    {
+      "id": "observe-stale-token-rejected",
+      "level": 2,
+      "status": "passed",
+      "error": ""
+    },
+    {
       "id": "verify-sandbox-rolls-back",
       "level": 2,
       "status": "passed",
@@ -278,5 +302,5 @@
       "error": ""
     }
   ],
-  "generatedAt": "2026-11-27T20:45:24Z"
+  "generatedAt": "2026-11-28T01:11:41Z"
 }

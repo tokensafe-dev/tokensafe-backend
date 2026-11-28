@@ -53,6 +53,13 @@ type CapabilitiesConfig struct {
 	Verify     bool `json:"verify"`
 }
 
+// PermissionsConfig holds workspace-policy switches that can disable otherwise
+// advertised capabilities (spec §14.2): QueryDisabled turns oumv/query into
+// -32007 PERMISSION_DENIED (reason query_disabled) even with an engine wired.
+type PermissionsConfig struct {
+	QueryDisabled bool `json:"queryDisabled"`
+}
+
 // SecurityConfig holds authentication and CORS origin controls.
 type SecurityConfig struct {
 	AuthenticationRequired bool     `json:"authenticationRequired"`
@@ -81,6 +88,8 @@ type RuntimeConfig struct {
 	// BuildCommand is the §14.3 default build/test command (shell-split, run in
 	// the workspace root). Empty = oumv/build answers `skipped` with a reason.
 	BuildCommand string `json:"buildCommand,omitempty"`
+	// Permissions is the §14.2 workspace-policy layer (nil = everything allowed).
+	Permissions *PermissionsConfig `json:"permissions,omitempty"`
 }
 
 // IsLoopbackHost returns true if the host string is a local loopback address.
@@ -183,6 +192,12 @@ func ResolveRuntimeConfig(base *RuntimeConfig) (RuntimeConfig, error) {
 		if base.Capabilities != (CapabilitiesConfig{}) {
 			cfg.Capabilities = base.Capabilities
 		}
+		// §14.2 policy is copied, not aliased, so a caller mutating its own
+		// struct cannot flip a live runtime's policy behind its back.
+		if base.Permissions != nil {
+			permissions := *base.Permissions
+			cfg.Permissions = &permissions
+		}
 	}
 
 	// Override with TOKENSAFE_OUMV_ENABLED if set
@@ -252,6 +267,16 @@ func ResolveRuntimeConfig(base *RuntimeConfig) (RuntimeConfig, error) {
 	if val, exists := os.LookupEnv("TOKENSAFE_OUMV_VERIFY"); exists {
 		if b, err := strconv.ParseBool(strings.TrimSpace(val)); err == nil {
 			cfg.Capabilities.Verify = b
+		}
+	}
+
+	// §14.2 workspace policy: TOKENSAFE_OUMV_PERMISSIONS_QUERY=false disables oumv/query.
+	if val, exists := os.LookupEnv("TOKENSAFE_OUMV_PERMISSIONS_QUERY"); exists {
+		if b, err := strconv.ParseBool(strings.TrimSpace(val)); err == nil && !b {
+			if cfg.Permissions == nil {
+				cfg.Permissions = &PermissionsConfig{}
+			}
+			cfg.Permissions.QueryDisabled = true
 		}
 	}
 

@@ -53,6 +53,8 @@ class Markers:
     batch_file_a: str = "__oumv_conformance_batch_a.py"
     batch_file_b: str = "__oumv_conformance_batch_b.py"
     batch_content: str = "value = 7\n"
+    # Fixtures v12: the §4.1 freshness token captured from the runtime's observe.
+    workspace_version: str = ""
 
     def substitute(self, params: Dict[str, Any]) -> Dict[str, Any]:
         replacements = {
@@ -82,6 +84,7 @@ class Markers:
             "${BATCH_FILE_A}": self.batch_file_a,
             "${BATCH_FILE_B}": self.batch_file_b,
             "${BATCH_CONTENT}": self.batch_content,
+            "${WORKSPACE_VERSION}": self.workspace_version,
         }
         def walk(value: Any) -> Any:
             if isinstance(value, str):
@@ -260,6 +263,40 @@ async def _cleanup_paths(
             await post("oumv/applyEdit", {"path": path, "mode": "delete", "expectedVersion": version})
 
 
+def _references_workspace_version(value: Any) -> bool:
+    """True when a case's params need the runtime's live §4.1 token."""
+
+    if isinstance(value, str):
+        return "${WORKSPACE_VERSION}" in value
+    if isinstance(value, list):
+        return any(_references_workspace_version(item) for item in value)
+    if isinstance(value, dict):
+        return any(_references_workspace_version(item) for item in value.values())
+    return False
+
+
+def _wire_at_least(version: str, floor: str) -> bool:
+    """Numeric dotted-version compare; an unknown version never satisfies a floor."""
+
+    if not version:
+        return False
+
+    def parse(value: str) -> List[int]:
+        parts: List[int] = []
+        for chunk in value.split("."):
+            try:
+                parts.append(int(chunk.strip()))
+            except ValueError:
+                parts.append(0)
+        return (parts + [0, 0, 0])[:3]
+
+    left, right = parse(version), parse(floor)
+    for index in range(3):
+        if left[index] != right[index]:
+            return left[index] > right[index]
+    return True
+
+
 async def run_conformance(
     post: Callable[[str, Dict[str, Any]], Awaitable[Dict[str, Any]]],
     spec_path: str | Path,
@@ -274,7 +311,27 @@ async def run_conformance(
     spec = load_cases(spec_path)
     results: List[Dict[str, Any]] = []
 
+    handshake_result: Dict[str, Any] = {}
+    handshake = await post("oumv/handshake", {})
+    if not handshake.get("error"):
+        handshake_result = handshake.get("result") or {}
+    negotiated_version = str(handshake_result.get("protocolVersion") or "")
+
+    async def refresh_workspace_version() -> None:
+        # Earlier cases legitimately mutate the workspace, so the §4.1 token is
+        # captured just in time, right before the case that references it.
+        if not _wire_at_least(negotiated_version, "1.6.0"):
+            return
+        probe = await post("oumv/observe", {"level": "L0"})
+        if not probe.get("error"):
+            markers.workspace_version = str((probe.get("result") or {}).get("workspaceVersion") or "")
+
     for case in spec["cases"]:
+        minimum = str(case.get("minWireVersion") or "")
+        if minimum and not _wire_at_least(negotiated_version, minimum):
+            continue
+        if _references_workspace_version(case.get("params") or {}):
+            await refresh_workspace_version()
         outcome = {"id": case["id"], "level": case["level"], "status": "passed", "error": ""}
 
         for precondition in case.get("preconditions", []):
@@ -300,11 +357,7 @@ async def run_conformance(
 
     # Capability cases prove an advertised claim; a runtime that does not make the
     # claim is not penalised, the case simply is not part of its report.
-    capabilities: Dict[str, Any] = {}
-    if spec.get("capabilityCases") or spec.get("sessionCases"):
-        handshake = await post("oumv/handshake", {})
-        if not handshake.get("error"):
-            capabilities = (handshake.get("result") or {}).get("capabilities") or {}
+    capabilities: Dict[str, Any] = handshake_result.get("capabilities") or {}
 
     if spec.get("capabilityCases"):
         for case in spec["capabilityCases"]:
