@@ -280,7 +280,10 @@ jobs:
       # not merely a case that exists in the fixture file. Unproven claims are
       # listed with a reason in agent-oumv/scripts/claim-evidence-baseline.json.
       - name: Cross-check adapter claims against the fresh certificates
-        run: node "${{ github.workspace }}/vendor/oumv/scripts/check_adapter_capabilities.mjs" --reports "${{ github.workspace }}/cert-fresh"
+        run: >-
+          node "${{ github.workspace }}/vendor/oumv/scripts/check_adapter_capabilities.mjs"
+          --reports "${{ github.workspace }}/cert-fresh"
+          --reports "${{ github.workspace }}/certification"
 
       - name: README certification block is current
         run: python3 scripts/render_certification.py --check
