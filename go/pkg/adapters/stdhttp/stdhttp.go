@@ -2,6 +2,7 @@ package stdhttp
 
 import (
 	"bufio"
+	"database/sql"
 	"fmt"
 	"net"
 	"net/http"
@@ -9,6 +10,7 @@ import (
 	"sync"
 	"time"
 
+	"github.com/tokensafe-dev/tokensafe-backend/go/pkg/db"
 	"github.com/tokensafe-dev/tokensafe-backend/go/pkg/oumv"
 	"github.com/tokensafe-dev/tokensafe-backend/go/pkg/transport"
 )
@@ -28,6 +30,14 @@ func NewServeMux(rt *oumv.Runtime) *ServeMux {
 		ServeMux: http.NewServeMux(),
 		runtime:  rt,
 		routes:   make([]string, 0),
+	}
+}
+
+// SetDB wires the database/sql rollback sandbox (spec §4 verify.sandbox and
+// §14.2 oumv/query) without changing NewServeMux's signature.
+func (m *ServeMux) SetDB(sqlDB *sql.DB) {
+	if m.runtime != nil && sqlDB != nil {
+		m.runtime.SetDBSandbox(db.NewSandbox(sqlDB))
 	}
 }
 

@@ -1,6 +1,7 @@
 package chi
 
 import (
+	"database/sql"
 	"fmt"
 	"net/http"
 	"reflect"
@@ -8,6 +9,7 @@ import (
 	"strings"
 
 	"github.com/go-chi/chi/v5"
+	"github.com/tokensafe-dev/tokensafe-backend/go/pkg/db"
 	"github.com/tokensafe-dev/tokensafe-backend/go/pkg/oumv"
 	"github.com/tokensafe-dev/tokensafe-backend/go/pkg/transport"
 )
@@ -15,6 +17,9 @@ import (
 // Options defines configuration for the Chi OUMV adapter.
 type Options struct {
 	RPCPath string // Default: "/__oumv/rpc"
+	// DB, when set, wires the database/sql rollback sandbox (spec §4 verify.sandbox
+	// and §14.2 oumv/query).
+	DB *sql.DB
 }
 
 // Mount auto-discovers all routes in the Chi router and mounts the OUMV JSON-RPC endpoint if enabled.
@@ -63,6 +68,9 @@ func Mount(r chi.Router, rt *oumv.Runtime, opts ...Options) error {
 
 	// 2. Wire the router for in-memory oumv/verify (no extra configuration needed).
 	rt.SetHandler(r)
+	if len(opts) > 0 && opts[0].DB != nil {
+		rt.SetDBSandbox(db.NewSandbox(opts[0].DB))
+	}
 
 	// 3. Mount OUMV JSON-RPC endpoint.
 	// NOTE: chi requires all middlewares before route registration, so Mount

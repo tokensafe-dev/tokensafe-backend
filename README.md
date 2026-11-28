@@ -29,7 +29,7 @@
 ## Certification (spec §10)
 
 <!-- certification:start -->
-**9 adapters certified against the same language-neutral fixtures** (`fixtureVersion` 13): 7 at Level 3 and 2 source-level adapter(s) at Level 2 — frozen on the wire 1.5.0 subset they still serve, each with its single L3 gap named below. The smallest suite in the table is 33 cases: a runtime that advertises an optional capability also runs the case gated on it, and a runtime frozen on an older wire skips the newer-wire cases instead of failing them. Generated from `certification/*.json` by `scripts/render_certification.py`; CI fails when this block no longer matches the reports.
+**10 adapters certified against the same language-neutral fixtures** (`fixtureVersion` 13): 8 at Level 3 and 2 source-level adapter(s) at Level 2 — frozen on the wire 1.5.0 subset they still serve, each with its single L3 gap named below. The smallest suite in the table is 33 cases: a runtime that advertises an optional capability also runs the case gated on it, and a runtime frozen on an older wire skips the newer-wire cases instead of failing them. Generated from `certification/*.json` by `scripts/render_certification.py`; CI fails when this block no longer matches the reports.
 
 | Adapter | Framework | Transport exercised | Level | Cases | Report |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -37,6 +37,7 @@
 | `go-chi` | chi | HTTP `POST /__oumv/rpc` | **3** | 46/46 | [certification/go-chi.json](certification/go-chi.json) |
 | `go-gin` | Gin | HTTP `POST /__oumv/rpc` | **3** | 46/46 | [certification/go-gin.json](certification/go-gin.json) |
 | `go-stdhttp` | net/http | HTTP `POST /__oumv/rpc` | **3** | 46/46 | [certification/go-stdhttp.json](certification/go-stdhttp.json) |
+| `next-app-router` | nextjs | — | **3** | 48/48 | [certification/next-app-router.json](certification/next-app-router.json) |
 | `node-express` | Express | Node `POST /__oumv/rpc` | **3** | 46/46 | [certification/node-express.json](certification/node-express.json) |
 | `node-fastify` | Fastify | Node `POST /__oumv/rpc` | **3** | 46/46 | [certification/node-fastify.json](certification/node-fastify.json) |
 | `python-fastapi` | FastAPI | ASGI `POST /__oumv/rpc` | **3** | 48/48 | [certification/python-fastapi.json](certification/python-fastapi.json) |

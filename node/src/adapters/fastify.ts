@@ -3,6 +3,7 @@ import { deleteDescriptor, writeDescriptor } from '../descriptor.js';
 import { OumvRuntime, type OumvRuntimeOptions } from '../runtime.js';
 import { createHttpHandler } from '../transport/http.js';
 import { createSseHandler } from '../transport/sse.js';
+import { withDetectedSandbox } from '../sandbox-detect.js';
 import { attachWebSocket, type WsAttachment } from '../transport/ws.js';
 
 export interface FastifyAdapterOptions extends OumvRuntimeOptions {
@@ -31,7 +32,8 @@ export async function registerTokensafe(
   const runtime =
     options.runtime ??
     new OumvRuntime({
-      ...options,
+      // Explicit sandbox wiring wins; otherwise adopt a db/prisma decoration.
+      ...withDetectedSandbox(fastify, options),
       workspaceDir: options.workspaceDir ?? process.cwd(),
     });
 

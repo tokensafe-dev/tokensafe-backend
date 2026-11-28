@@ -5,6 +5,7 @@ import { deleteDescriptor, writeDescriptor } from '../descriptor.js';
 import { OumvRuntime, type OumvRuntimeOptions } from '../runtime.js';
 import { createHttpHandler } from '../transport/http.js';
 import { createSseHandler } from '../transport/sse.js';
+import { withDetectedSandbox } from '../sandbox-detect.js';
 import { attachWebSocket, type WsAttachment } from '../transport/ws.js';
 
 export interface ExpressAdapterOptions extends OumvRuntimeOptions {
@@ -71,7 +72,8 @@ export function mountTokensafe(app: Express, options: ExpressAdapterOptions = {}
   const runtime =
     options.runtime ??
     new OumvRuntime({
-      ...options,
+      // Explicit sandbox wiring wins; otherwise adopt the db/prisma the app holds.
+      ...withDetectedSandbox(app, options),
       workspaceDir: options.workspaceDir ?? process.cwd(),
       handler: (app as unknown) as ExpressAdapterOptions['handler'],
     });

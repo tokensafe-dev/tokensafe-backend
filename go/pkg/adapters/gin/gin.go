@@ -1,12 +1,14 @@
 package gin
 
 import (
+	"database/sql"
 	"reflect"
 	stdruntime "runtime"
 	"strings"
 	"time"
 
 	"github.com/gin-gonic/gin"
+	"github.com/tokensafe-dev/tokensafe-backend/go/pkg/db"
 	"github.com/tokensafe-dev/tokensafe-backend/go/pkg/oumv"
 	"github.com/tokensafe-dev/tokensafe-backend/go/pkg/transport"
 )
@@ -14,6 +16,9 @@ import (
 // Options defines configuration for the Gin OUMV adapter.
 type Options struct {
 	RPCPath string // Default: "/__oumv/rpc"
+	// DB, when set, wires the database/sql rollback sandbox (spec §4 verify.sandbox
+	// and §14.2 oumv/query) — the explicit equivalent of the .NET AddDbContext scan.
+	DB *sql.DB
 }
 
 // Mount auto-discovers all routes in the Gin engine and mounts the OUMV JSON-RPC endpoint if enabled.
@@ -78,6 +83,9 @@ func Mount(r *gin.Engine, rt *oumv.Runtime, opts ...Options) {
 
 	// 3. Wire the engine for in-memory oumv/verify (no extra configuration needed).
 	rt.SetHandler(r)
+	if len(opts) > 0 && opts[0].DB != nil {
+		rt.SetDBSandbox(db.NewSandbox(opts[0].DB))
+	}
 
 	// 4. Mount OUMV JSON-RPC endpoint
 	dispatcher := transport.NewDispatcher(rt)

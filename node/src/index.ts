@@ -27,4 +27,7 @@ export type { StdioAttachment, StdioOptions } from './transport/stdio.js';
 export { mountTokensafe, tracingMiddleware } from './adapters/express.js';
 export type { ExpressAdapter, ExpressAdapterOptions } from './adapters/express.js';
 export { registerTokensafe } from './adapters/fastify.js';
+export { createNextRouteHandlers, scanAppRouterRoutes } from './adapters/next.js';
+export { detectSandbox, prismaSandbox, withDetectedSandbox } from './sandbox-detect.js';
+export type { NextAdapterOptions, NextRouteHandlers } from './adapters/next.js';
 export type { FastifyAdapter, FastifyAdapterOptions } from './adapters/fastify.js';
