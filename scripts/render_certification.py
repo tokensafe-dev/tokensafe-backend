@@ -58,9 +58,13 @@ TRANSPORT = {
 
 
 def load_reports() -> list[tuple[str, dict]]:
+    # `*-sim.json` files are profile evidence, not adapters: the Next browser
+    # bridge certificate (spec §7.4) exercises the same adapter with a page
+    # attached and is reproduced in CI, but it is not a twelfth stack.
     reports = [
         (path.name, json.loads(path.read_text(encoding="utf-8")))
         for path in sorted(REPORTS.glob("*.json"))
+        if not path.name.endswith("-sim.json")
     ]
     if not reports:
         raise SystemExit(f"no committed reports in {REPORTS}")

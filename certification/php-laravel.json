@@ -2,7 +2,7 @@
   "adapterName": "php-laravel",
   "framework": "laravel",
   "specVersion": "1.6.0",
-  "fixtureVersion": 14,
+  "fixtureVersion": 15,
   "total": 29,
   "passed": 29,
   "failed": 0,

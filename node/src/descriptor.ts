@@ -16,6 +16,11 @@ export interface RuntimeDescriptor {
   sessionToken?: string;
   workspace?: string;
   capabilities: { observeLevels: string[]; transports: string[] };
+  /**
+   * Spec §7.4: a server runtime with a browser bridge tells agents where the page
+   * side lives, so discovery does not need a second convention.
+   */
+  frontend?: { bridge: boolean; clientPath?: string };
   startedAt?: string;
 }
 

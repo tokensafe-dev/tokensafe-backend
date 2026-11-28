@@ -3,6 +3,8 @@ import path from 'node:path';
 import { OumvRuntime, type OumvRuntimeOptions } from '../runtime.js';
 import { deleteDescriptor, writeDescriptor } from '../descriptor.js';
 import { createFetchHandlers, webHandlerToNode } from '../transport/fetch.js';
+import { getOrCreateBridgeBroker } from '../browser/bridge.js';
+import { createNextBridgeHandlers, type NextBridgeHandlers } from '../browser/handlers.js';
 
 /**
  * Next.js App Router adapter (server profile).
@@ -20,15 +22,16 @@ import { createFetchHandlers, webHandlerToNode } from '../transport/fetch.js';
  *   export const POST = handlers.POST;
  *   export const GET = handlers.GET;
  *
- * The browser-side bridge is a separate piece of work: this adapter certifies the
- * server profile (observe/understand/verify/mutate over JSON-RPC), not DOM
- * mutation of client components.
+ * The browser-side bridge (spec §7.4) is opt-in: `bridge: true` mounts the
+ * Bridge Route Handlers and binds the runtime to the page broker, so client
+ * components become observable and DOM-target verify works. It stays a
+ * development tool — the handlers answer 404 in a production build.
  */
 
 export interface NextAdapterOptions extends OumvRuntimeOptions {
   /** Workspace root the path jail and route scan are anchored to (default: cwd). */
   workspaceDir?: string;
-  /** Next app directory (default: `<workspaceDir>/app`). */
+  /** Next app directory (default: `<workspaceDir>/app`, then `<workspaceDir>/src/app`). */
   appDir?: string;
   /** Public JSON-RPC URL; when set, the discovery descriptor is written. */
   publicUrl?: string;
@@ -36,6 +39,12 @@ export interface NextAdapterOptions extends OumvRuntimeOptions {
   descriptor?: boolean;
   /** Reuse an existing runtime instead of creating one. */
   runtime?: OumvRuntime;
+  /**
+   * Spec §7.4: mount the browser bridge for client components. Returns `BRIDGE`
+   * (export it from `app/api/tokensafe/bridge/route.ts`) and advertises
+   * `mutate.ephemeralDispatch` + `verify.surfaceDiff` while a page is attached.
+   */
+  bridge?: boolean;
   /**
    * In-process dispatcher for `oumv/verify` and causality traces. Next has no
    * application object to call, so the adopter supplies one Web handler that
@@ -51,11 +60,24 @@ export interface NextRouteHandlers {
   POST: (request: Request) => Promise<Response>;
   /** SSE event stream (spec §2.3) with `Last-Event-ID` replay. */
   GET: (request: Request) => Response;
+  /** Present with `bridge: true`; export `GET`/`POST` from the bridge route file. */
+  BRIDGE?: NextBridgeHandlers;
   dispose: () => Promise<void>;
 }
 
 const ROUTE_FILE = /^route\.(ts|tsx|js|jsx)$/;
 const HTTP_METHODS = ['GET', 'POST', 'PUT', 'PATCH', 'DELETE', 'HEAD', 'OPTIONS'] as const;
+
+/**
+ * Next projects keep their App Router either at `app/` or at `src/app/`; both are
+ * first-class, so the adapter probes instead of assuming.
+ */
+export function resolveAppDir(workspaceDir: string, explicit?: string): string {
+  if (explicit) return explicit;
+  const srcApp = path.join(workspaceDir, 'src', 'app');
+  if (fs.existsSync(srcApp)) return srcApp;
+  return path.join(workspaceDir, 'app');
+}
 
 /** Reads the exported method handlers out of the app directory. */
 export function scanAppRouterRoutes(appDir: string): Array<{ method: string; path: string }> {
@@ -113,11 +135,20 @@ export function createNextRouteHandlers(options: NextAdapterOptions = {}): NextR
     cors: false,
   });
 
-  for (const route of scanAppRouterRoutes(options.appDir ?? path.join(workspaceDir, 'app'))) {
+  for (const route of scanAppRouterRoutes(resolveAppDir(workspaceDir, options.appDir))) {
     runtime.registerRoute(route.method, route.path, 'route');
   }
   if (options.verifyFetch) runtime.setHandler(webHandlerToNode(options.verifyFetch));
   runtime.setTransports(['http', 'sse']);
+
+  let bridge: NextBridgeHandlers | undefined;
+  if (options.bridge) {
+    // One broker per workspace per process: the bridge route compiles into its own
+    // bundle, so this must be a process-global lookup, not a module singleton.
+    const broker = getOrCreateBridgeBroker(workspaceDir, runtime);
+    runtime.setBrowserBridge(broker);
+    bridge = createNextBridgeHandlers({ workspaceDir, broker, runtime });
+  }
 
   if (options.publicUrl && options.descriptor !== false) {
     writeDescriptor(workspaceDir, {
@@ -128,6 +159,7 @@ export function createNextRouteHandlers(options: NextAdapterOptions = {}): NextR
       ...(token ? { sessionToken: token } : {}),
       workspace: workspaceDir,
       capabilities: { observeLevels: ['L0', 'L1', 'L2', 'L3', 'L4'], transports: ['http', 'sse'] },
+      ...(bridge ? { frontend: { bridge: true, clientPath: '/api/tokensafe/bridge?client=1' } } : {}),
       startedAt: new Date().toISOString(),
     });
   }
@@ -136,6 +168,7 @@ export function createNextRouteHandlers(options: NextAdapterOptions = {}): NextR
     runtime,
     POST: handlers.POST,
     GET: handlers.GET,
+    ...(bridge ? { BRIDGE: bridge } : {}),
     dispose: async () => {
       deleteDescriptor(workspaceDir);
       await runtime.dispose();

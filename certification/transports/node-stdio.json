@@ -2,7 +2,7 @@
   "adapterName": "node-stdio",
   "framework": "node",
   "specVersion": "1.6.0",
-  "fixtureVersion": 14,
+  "fixtureVersion": 15,
   "total": 45,
   "passed": 45,
   "failed": 0,

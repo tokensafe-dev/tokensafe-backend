@@ -1,6 +1,6 @@
 {
   "name": "tokensafe-backend-node",
-  "version": "0.11.0",
+  "version": "0.12.0",
   "description": "OUMV adapter for Node.js and Bun backends (Express, Fastify, Next.js, Elysia): observe, understand, mutate with OCC, verify — over HTTP, SSE, WebSocket and stdio",
   "license": "Apache-2.0",
   "type": "module",
@@ -32,6 +32,11 @@
       "types": "./dist/elysia.d.ts",
       "import": "./dist/elysia.js",
       "require": "./dist/elysia.cjs"
+    },
+    "./next-bridge": {
+      "types": "./dist/next-bridge.d.ts",
+      "import": "./dist/next-bridge.js",
+      "require": "./dist/next-bridge.cjs"
     }
   },
   "peerDependencies": {

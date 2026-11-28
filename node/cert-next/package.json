@@ -1,0 +1,16 @@
+{
+  "name": "oumv-next-bridge-certification-app",
+  "private": true,
+  "version": "0.0.0",
+  "description": "Minimal Next.js App Router app used to certify the browser bridge in a real Chrome (instrumentation-client + Bridge Route Handler).",
+  "scripts": {
+    "dev": "next dev"
+  },
+  "dependencies": {
+    "next": "15.5.29",
+    "playwright-core": "^1.65.1",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tokensafe-backend-node": "file:.."
+  }
+}

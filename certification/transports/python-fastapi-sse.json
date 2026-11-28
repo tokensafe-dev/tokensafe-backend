@@ -2,7 +2,7 @@
   "adapterName": "python-fastapi-sse",
   "framework": "fastapi",
   "specVersion": "1.6.0",
-  "fixtureVersion": 14,
+  "fixtureVersion": 15,
   "total": 52,
   "passed": 52,
   "failed": 0,

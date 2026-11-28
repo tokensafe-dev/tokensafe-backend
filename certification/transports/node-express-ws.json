@@ -2,7 +2,7 @@
   "adapterName": "node-express-ws",
   "framework": "express",
   "specVersion": "1.6.0",
-  "fixtureVersion": 14,
+  "fixtureVersion": 15,
   "total": 47,
   "passed": 47,
   "failed": 0,

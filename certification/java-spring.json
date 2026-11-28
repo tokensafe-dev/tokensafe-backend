@@ -2,7 +2,7 @@
   "adapterName": "java-spring",
   "framework": "spring",
   "specVersion": "1.6.0",
-  "fixtureVersion": 14,
+  "fixtureVersion": 15,
   "total": 33,
   "passed": 32,
   "failed": 1,

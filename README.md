@@ -29,7 +29,7 @@
 ## Certification (spec §10)
 
 <!-- certification:start -->
-**11 adapters certified against the same language-neutral fixtures** (`fixtureVersion` 14): 9 at Level 3 and 2 source-level adapter(s) at Level 2 — frozen on the wire 1.5.0 subset they still serve, each with its single L3 gap named below. The smallest suite in the table is 29 cases: a runtime that advertises an optional capability also runs the case gated on it, and a runtime frozen on an older wire skips the newer-wire cases instead of failing them. Generated from `certification/*.json` by `scripts/render_certification.py`; CI fails when this block no longer matches the reports.
+**11 adapters certified against the same language-neutral fixtures** (`fixtureVersion` 15): 9 at Level 3 and 2 source-level adapter(s) at Level 2 — frozen on the wire 1.5.0 subset they still serve, each with its single L3 gap named below. The smallest suite in the table is 29 cases: a runtime that advertises an optional capability also runs the case gated on it, and a runtime frozen on an older wire skips the newer-wire cases instead of failing them. Generated from `certification/*.json` by `scripts/render_certification.py`; CI fails when this block no longer matches the reports.
 
 | Adapter | Framework | Transport exercised | Level | Cases | Report |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -282,6 +282,51 @@ reverts byte for byte on failure.
 ```bash
 npm install tokensafe-backend-node
 ```
+
+#### Next.js App Router: server profile and client components
+
+The Route Handler pair certifies the server profile on its own:
+
+```ts
+// app/api/tokensafe/route.ts
+import { createNextRouteHandlers } from 'tokensafe-backend-node';
+const handlers = createNextRouteHandlers({ verifyFetch: (request) => dispatchMyRoutes(request) });
+export const POST = handlers.POST;
+export const GET = handlers.GET;
+```
+
+Client components need the browser bridge (spec §7.4). Pass `bridge: true`, add the
+bridge route, and load the installer from `instrumentation-client` (Next >= 15.3):
+
+```ts
+// app/api/tokensafe/route.ts
+const handlers = createNextRouteHandlers({ bridge: true, verifyFetch: ... });
+export const POST = handlers.POST;
+export const GET = handlers.GET;
+
+// app/api/tokensafe/bridge/route.ts
+import { createNextBridgeHandlers } from 'tokensafe-backend-node';
+const bridge = createNextBridgeHandlers();
+export const GET = bridge.GET;
+export const POST = bridge.POST;
+
+// instrumentation-client.ts
+import { installNextBridge } from 'tokensafe-backend-node/next-bridge';
+installNextBridge();
+```
+
+While a page is attached, `oumv/observe` L0/L1/L2/L4 read the live surface and the
+runtime advertises `mutate.ephemeralDispatch` + `verify.surfaceDiff`, so
+`oumv/verify` can dispatch a synthetic DOM event or a registered action and return the
+resulting `surfaceDiff`. With no page attached, a DOM target answers `-32008`. The
+bridge is a development tool: both Route Handlers answer `404` when
+`NODE_ENV=production`.
+
+Certified two ways on fixtures v15: the scripted-page certificate
+(`certification/next-app-router-bridge-sim.json`, 51/51 incl. browser + auth cases,
+reproduced in CI) and a real headless-Chrome session through `next dev`
+(`certification/browser/next-app-router-browser.json`, 48/48, run by
+`node/certify-next-browser.sh`).
 
 ---
 

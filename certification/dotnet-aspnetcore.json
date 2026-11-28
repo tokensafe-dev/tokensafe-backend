@@ -2,7 +2,7 @@
   "adapterName": "dotnet-aspnetcore",
   "framework": "aspnetcore",
   "specVersion": "1.6.0",
-  "fixtureVersion": 14,
+  "fixtureVersion": 15,
   "total": 50,
   "passed": 50,
   "failed": 0,

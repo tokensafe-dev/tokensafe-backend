@@ -1,0 +1,12 @@
+node_modules/
+.next/
+# The harness rewrites these on every certification run.
+fixture.js
+edit_target.js
+symbol_target.js
+delete_target.js
+rename_source.js
+rename_target.js
+created_new_file.js
+batch_a.js
+batch_b.js

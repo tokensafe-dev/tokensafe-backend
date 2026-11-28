@@ -105,7 +105,7 @@ async def test_conformance_certification(tmp_path):
 
 def test_fixture_file_has_level_tagged_v6_shape():
     data = json.loads(FIXTURES.read_text(encoding="utf-8"))
-    assert data["fixtureVersion"] == 14
+    assert data["fixtureVersion"] == 15
     assert data["protocolVersion"] == "1.6.0"
     assert sorted(data["levelDefinitions"]) == ["1", "2", "3"]
     # Push cases belong to transport certificates; the native runners assert the

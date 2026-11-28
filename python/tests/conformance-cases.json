@@ -1001,7 +1001,64 @@
       }
     }
   ],
-  "fixtureVersion": 14,
+  "fixtureVersion": 15,
+  "browserCases": [
+    {
+      "id": "browser-observe-l1-lists-elements",
+      "level": 2,
+      "requiresCapability": "mutate.ephemeralDispatch",
+      "method": "oumv/observe",
+      "params": {
+        "level": "L1",
+        "format": "json",
+        "target": "${BROWSER_TARGET}"
+      },
+      "expectResultFields": [
+        "level",
+        "data.elements"
+      ],
+      "expectArrayField": "data.elements",
+      "expectValues": {
+        "data.elements.0.id": "${BROWSER_TARGET}"
+      }
+    },
+    {
+      "id": "browser-verify-dispatches-a-dom-action",
+      "level": 2,
+      "requiresCapability": "verify.surfaceDiff",
+      "method": "oumv/verify",
+      "params": {
+        "target": "${BROWSER_TARGET}",
+        "action": "${BROWSER_ACTION}"
+      },
+      "expectResultFields": [
+        "status",
+        "surfaceDiff",
+        "timings.t_total_ms",
+        "scope.checked"
+      ],
+      "expectValues": {
+        "status": "passed"
+      }
+    },
+    {
+      "id": "browser-l4-records-dom-traces",
+      "level": 3,
+      "requiresCapability": "mutate.ephemeralDispatch",
+      "method": "oumv/observe",
+      "params": {
+        "level": "L4"
+      },
+      "expectResultFields": [
+        "data.traces",
+        "data.browserConnected"
+      ],
+      "expectArrayField": "data.traces",
+      "expectValues": {
+        "data.browserConnected": true
+      }
+    }
+  ],
   "levelDefinitions": {
     "1": "Handshake, L0-L1 observe, action verification",
     "2": "L2-L3 observe, impact analysis, OCC mutations, surface diffs",

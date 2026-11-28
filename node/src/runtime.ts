@@ -17,6 +17,7 @@ import {
 } from './errors.js';
 import { resolveWorkspacePath, splitSourceTarget } from './paths.js';
 import { SessionRegistry } from './sessions.js';
+import type { BrowserBridge, BrowserSnapshot } from './browser/types.js';
 
 export const PROTOCOL_VERSION = '1.6.0';
 export const OBSERVE_LEVELS = ['L0', 'L1', 'L2', 'L3', 'L4'] as const;
@@ -45,7 +46,7 @@ export interface RuntimeCapabilities {
   readOnly?: boolean;
   observe: { levels: string[]; formats: string[] };
   understand: { causality: boolean; signalsGraph: boolean; impactAnalysis: boolean };
-  mutate: { occ: boolean; syntaxGuard: boolean; multiFile?: boolean; preview?: boolean };
+  mutate: { occ: boolean; syntaxGuard: boolean; multiFile?: boolean; preview?: boolean; ephemeralDispatch?: boolean };
   verify: { multiMetric: boolean; surfaceDiff: boolean; sandboxRollback?: boolean; build?: boolean };
   /** §3 session lifecycle (wire 1.5.0/1.6.0). */
   sessions?: { ttlSeconds?: boolean; cancel?: boolean; idempotency?: boolean };
@@ -194,10 +195,12 @@ export class OumvRuntime {
   private handler?: http.RequestListener;
   private dispatchServer?: http.Server;
   private dispatchPort = 0;
+  /** §7.4 browser bridge: gives a server runtime the live page (Next instrumentation client). */
+  private browserBridge?: BrowserBridge;
 
   constructor(options: OumvRuntimeOptions = {}) {
     this.name = options.name || 'tokensafe-node';
-    this.version = options.version || '0.11.0';
+    this.version = options.version || '0.12.0';
     // Canonical root: `resolveWorkspacePath` realpaths the target, so a symlinked
     // root (macOS /var → /private/var) would otherwise leak `../../..` into every
     // reported `path`/`backupPath`.
@@ -325,6 +328,20 @@ export class OumvRuntime {
     this.handler = handler;
   }
 
+  /**
+   * Attaches a browser bridge (spec §7.4). While one is set, handshake advertises
+   * `mutate.ephemeralDispatch` / `verify.surfaceDiff`, observe merges the page's
+   * snapshot, and verify dispatches DOM targets into the attached tab.
+   */
+  setBrowserBridge(bridge: BrowserBridge | undefined): void {
+    this.browserBridge = bridge;
+  }
+
+  /** True while a page is attached and has published a snapshot. */
+  get browserConnected(): boolean {
+    return Boolean(this.browserBridge?.connected);
+  }
+
   setTransports(transports: string[]): void {
     this.transports = transports;
   }
@@ -361,6 +378,12 @@ export class OumvRuntime {
     };
     if (!this.enabled.understand) {
       capabilities.understand = { causality: false, signalsGraph: false, impactAnalysis: false };
+    }
+    // §7.4: both bridge capabilities exist only while a page can answer. A runtime
+    // without a bridge keeps the exact capability set it had before.
+    if (this.browserBridge) {
+      if (this.enabled.mutate) capabilities.mutate.ephemeralDispatch = true;
+      if (this.enabled.verify) capabilities.verify.surfaceDiff = true;
     }
     // §8.5 (revision v1.11): a capability that is off is absent, not a block of
     // falses, and the methods that serve it are not in the registry. When both
@@ -478,6 +501,7 @@ export class OumvRuntime {
     switch (level) {
       case 'L0': {
         const memory = process.memoryUsage().rss / (1024 * 1024);
+        const snapshot = this.browserBridge?.latestSnapshot() ?? null;
         return {
           level,
           format: 'json',
@@ -487,6 +511,26 @@ export class OumvRuntime {
             activeRoutes: this.routes.size,
             errorCount1m: 0,
             memoryAllocMB: Math.round(memory),
+            // §7.4: page data rides on L0 only while a page is attached, and it is
+            // runtime evidence — never a static guess about what the app renders.
+            ...(this.browserBridge
+              ? {
+                  browserConnected: Boolean(snapshot),
+                  ...(snapshot
+                    ? {
+                        route: snapshot.route ?? '/',
+                        mountedComponents: (snapshot.mountedComponents ?? [])
+                          .map((component) => component.name)
+                          .filter((name): name is string => Boolean(name))
+                          .slice(0, 15),
+                        mountedCount: (snapshot.mountedComponents ?? []).length,
+                        elements: snapshot.elementCount ?? 0,
+                        interactiveCount: (snapshot.interactiveSurface ?? []).length,
+                        errorsCount: snapshot.errorsCount ?? 0,
+                      }
+                    : {}),
+                }
+              : {}),
           },
           tokenEstimate: 30,
         };
@@ -494,17 +538,78 @@ export class OumvRuntime {
 
       case 'L1': {
         const paged = paginate(this.listRoutes(), params);
+        const snapshot = this.browserBridge?.latestSnapshot() ?? null;
+        const filter = String(params.target ?? '').trim().toLowerCase();
+        const surface = (snapshot?.interactiveSurface ?? []).filter(
+          (item) =>
+            !filter ||
+            item.id.toLowerCase().includes(filter) ||
+            (item.label ?? '').toLowerCase().includes(filter) ||
+            (item.component ?? '').toLowerCase().includes(filter)
+        );
+        const itemLimit = Number.isFinite(Number(params.limit)) && Number(params.limit) > 0 ? Math.min(Number(params.limit), 100) : 50;
         return {
           level,
           format: 'json',
-          data: { endpoints: paged.page, ...(paged.hasMore !== undefined ? { hasMore: paged.hasMore } : {}), ...(paged.nextCursor ? { nextCursor: paged.nextCursor } : {}) },
-          tokenEstimate: 30 + paged.page.length * 15,
+          data: {
+            endpoints: paged.page,
+            ...(paged.hasMore !== undefined ? { hasMore: paged.hasMore } : {}),
+            ...(paged.nextCursor ? { nextCursor: paged.nextCursor } : {}),
+            ...(this.browserBridge
+              ? {
+                  browserConnected: Boolean(snapshot),
+                  ...(snapshot
+                    ? {
+                        elements: surface.slice(0, itemLimit).map((item) => ({
+                          id: item.id,
+                          tag: item.tag,
+                          ...(item.role ? { role: item.role } : {}),
+                          ...(item.label ? { label: item.label } : {}),
+                          ...(item.action ? { action: item.action } : {}),
+                          ...(item.component ? { component: item.component } : {}),
+                        })),
+                        elementCount: surface.length,
+                      }
+                    : {}),
+                }
+              : {}),
+          },
+          tokenEstimate: 30 + paged.page.length * 15 + surface.length * 10,
         };
       }
 
       case 'L2': {
         const target = String(params.target || '').trim();
         if (!target) throw invalidParams('INVALID_PARAMS: target is required for L2');
+        const snapshot = this.browserBridge?.latestSnapshot() ?? null;
+        if (snapshot) {
+          const key = target.replace(/^frontend\.component:/, '').replace(/^component:/, '');
+          const component = (snapshot.mountedComponents ?? []).find(
+            (item) => item.id === target || item.id === `frontend.component:${key}` || item.name === key
+          );
+          if (component) {
+            return {
+              level,
+              format: 'json',
+              data: {
+                target,
+                componentId: component.name ?? key,
+                propsKeys: component.propsKeys ?? [],
+                hooksCount: component.hooksCount ?? null,
+                instances: component.instances ?? 1,
+                ...(component.source ? { source: component.source } : {}),
+                contracts: (snapshot.contracts ?? []).filter(
+                  (contract) =>
+                    typeof contract === 'object' &&
+                    contract !== null &&
+                    String((contract as Record<string, unknown>).componentId ?? '') === (component.name ?? key)
+                ),
+                evidence: { provenance: 'runtime', sourceAdapter: this.name, confidence: 'confirmed' },
+              },
+              tokenEstimate: 60,
+            };
+          }
+        }
         const route = this.findRoute(target);
         if (!route) throw resourceNotFound(`RESOURCE_NOT_FOUND: no route matches ${JSON.stringify(target)}`);
         return {
@@ -547,6 +652,7 @@ export class OumvRuntime {
           format: 'json',
           data: {
             ...(target ? { target } : {}),
+            ...(this.browserBridge ? { browserConnected: Boolean(this.browserBridge.latestSnapshot()) } : {}),
             traces: paged.page,
             traceCount: traces.length,
             ...(paged.hasMore !== undefined ? { hasMore: paged.hasMore } : {}),
@@ -1445,9 +1551,18 @@ export class OumvRuntime {
     const topTarget = String(params.target ?? '').trim();
     const steps = Array.isArray(params.steps) ? params.steps : [];
     if (!topTarget && steps.length === 0) throw invalidParams('INVALID_PARAMS: target ("METHOD /path") is required');
-    if (!this.handler) throw resourceUnavailable('RUNTIME_UNAVAILABLE: no application handler is mounted for verification');
+    // §7.4: a DOM target is answered by the attached page, not by the loopback
+    // dispatcher, so its absence is only fatal when the whole request is loopback.
+    const stepTargets = steps.map((step: any) => String(step?.target ?? '').trim());
+    const wantsBrowser = this.isBrowserTarget(topTarget) || stepTargets.some((target: string) => this.isBrowserTarget(target));
+    if (wantsBrowser && !this.browserBridge) {
+      throw resourceUnavailable(
+        'RUNTIME_UNAVAILABLE: this target is a DOM/component target but no browser bridge is configured — mount the Next bridge route and load the instrumentation client'
+      );
+    }
+    if (!this.handler && !wantsBrowser) throw resourceUnavailable('RUNTIME_UNAVAILABLE: no application handler is mounted for verification');
 
-    await this.ensureDispatchServer();
+    if (this.handler) await this.ensureDispatchServer();
 
     const dispatch = async (stepTarget: string, payload: unknown, headers?: Record<string, string>) => {
       const { method, url } = parseVerifyTarget(stepTarget);
@@ -1491,11 +1606,28 @@ export class OumvRuntime {
     };
 
     if (steps.length > 0) {
-      const results: Array<{ target: string; statusCode: number; status: string; responseBody: string }> = [];
+      const results: Array<{ target: string; statusCode: number; status: string; responseBody: unknown }> = [];
       let total = 0;
       for (const step of steps) {
         const stepTarget = String(step?.target ?? '').trim();
         if (!stepTarget) throw invalidParams('INVALID_PARAMS: every verify step needs a target');
+        if (this.isBrowserTarget(stepTarget)) {
+          const outcome = await this.browserBridge!.requestVerify({
+            target: stepTarget,
+            action: String(step?.action ?? 'click'),
+            payload: step?.payload,
+          });
+          const stepMs = Number(outcome.durationMs ?? 0);
+          total += stepMs;
+          results.push({
+            target: stepTarget,
+            statusCode: outcome.status === 'failed' ? 500 : 200,
+            status: outcome.status,
+            responseBody: outcome.diff ?? {},
+          });
+          continue;
+        }
+        if (!this.handler) throw resourceUnavailable('RUNTIME_UNAVAILABLE: no application handler is mounted for verification');
         const dispatched = await dispatch(stepTarget, step?.payload, step?.headers);
         total += dispatched.durationMs;
         results.push({
@@ -1516,11 +1648,15 @@ export class OumvRuntime {
         timings: { t_action_ms: total, t_total_ms: total },
         durationMs: total,
         scope: {
-          checked: ['ordered multi-step loopback dispatch against one handler'],
+          checked: ['ordered multi-step dispatch against one handler'],
           notExecuted: ['external processes', 'persistent database state'],
-          notSupported: ['browser/DOM assertions'],
+          notSupported: this.browserBridge ? [] : ['browser/DOM assertions'],
         } satisfies VerifyScope,
       };
+    }
+
+    if (this.isBrowserTarget(topTarget)) {
+      return this.browserVerifyResult(topTarget, String(params.action ?? 'click'), params.payload);
     }
 
     const dispatched = await dispatch(topTarget, params.payload, params.headers);
@@ -1535,7 +1671,59 @@ export class OumvRuntime {
       scope: {
         checked: ['loopback HTTP dispatch against the live handler'],
         notExecuted: ['external processes', 'persistent database state'],
-        notSupported: ['browser/DOM assertions'],
+        notSupported: this.browserBridge ? [] : ['browser/DOM assertions'],
+      } satisfies VerifyScope,
+    };
+  }
+
+  /**
+   * A browser target is a selector, an element id the page reported, or the
+   * `component:` reference frontend runtimes use. `METHOD /path` never matches,
+   * so a route named like an id cannot hijack the loopback path.
+   */
+  private isBrowserTarget(target: string): boolean {
+    const trimmed = target.trim();
+    if (!trimmed) return false;
+    if (/^(<|#|\[|component:|frontend\.component:)/.test(trimmed)) return true;
+    if (/^[A-Za-z]+\s+\//.test(trimmed)) return false;
+    return Boolean(this.browserBridge?.hasSurfaceId(trimmed));
+  }
+
+  /** Dispatches one action into the attached page and maps its reply to §4.5. */
+  private async browserVerifyResult(
+    target: string,
+    action: string,
+    payload: unknown
+  ): Promise<Record<string, unknown>> {
+    const bridge = this.browserBridge;
+    if (!bridge) {
+      throw resourceUnavailable('RUNTIME_UNAVAILABLE: no browser bridge is configured for DOM targets');
+    }
+    const outcome = await bridge.requestVerify({ target, action, payload });
+    if (outcome.status === 'failed') {
+      throw new OumvError(
+        (outcome.errorCode ?? ERROR_CODES.ACTION_NOT_FOUND) as any,
+        outcome.error ?? `verify failed on ${target}`
+      );
+    }
+    const totalMs = Number(outcome.durationMs ?? outcome.latency?.totalMs ?? 0);
+    const actionMs = Number(outcome.latency?.actionMs ?? 0);
+    return {
+      status: 'passed',
+      target: outcome.target ?? target,
+      action: outcome.action ?? action,
+      diff: outcome.diff ?? {},
+      surfaceDiff: outcome.surfaceDiff ?? [],
+      timings: {
+        t_action_ms: actionMs,
+        t_dom_ms: Math.max(0, Number((totalMs - actionMs).toFixed(2))),
+        t_total_ms: totalMs,
+      },
+      durationMs: totalMs,
+      scope: {
+        checked: ['browser bridge dispatch (synthetic DOM events)'],
+        notExecuted: ['native OS events', 'real network'],
+        notSupported: [],
       } satisfies VerifyScope,
     };
   }

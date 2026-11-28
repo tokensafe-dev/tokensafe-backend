@@ -33,7 +33,23 @@ export type { StdioAttachment, StdioOptions } from './transport/stdio.js';
 export { mountTokensafe, tracingMiddleware } from './adapters/express.js';
 export type { ExpressAdapter, ExpressAdapterOptions } from './adapters/express.js';
 export { registerTokensafe } from './adapters/fastify.js';
-export { createNextRouteHandlers, scanAppRouterRoutes } from './adapters/next.js';
+export { createNextRouteHandlers, scanAppRouterRoutes, resolveAppDir } from './adapters/next.js';
 export { detectSandbox, prismaSandbox, withDetectedSandbox } from './sandbox-detect.js';
 export type { NextAdapterOptions, NextRouteHandlers } from './adapters/next.js';
 export type { FastifyAdapter, FastifyAdapterOptions } from './adapters/fastify.js';
+// Spec §7.4: the browser bridge (client components for server runtimes).
+export { BridgeBroker, getOrCreateBridgeBroker, peekBridgeBroker } from './browser/bridge.js';
+export type { BridgeBrokerOptions, BridgeRegistration, BridgeSessionInfo } from './browser/bridge.js';
+export { createNextBridgeHandlers, resolveBridgeWorkspace } from './browser/handlers.js';
+export type { NextBridgeHandlerOptions, NextBridgeHandlers } from './browser/handlers.js';
+export { installNextBridge, NEXT_BRIDGE_DEFAULT_ENDPOINT } from './browser/install.js';
+export type { InstallNextBridgeOptions } from './browser/install.js';
+export type {
+  BrowserBridge,
+  BrowserComponent,
+  BrowserSnapshot,
+  BrowserSurfaceItem,
+  BrowserTrace,
+  BrowserVerifyOutcome,
+  BrowserVerifyRequest,
+} from './browser/types.js';
