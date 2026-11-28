@@ -1,0 +1,56 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!--
+  The runnable Spring Boot app the JDK sidecar is certified against.
+
+  The adapter itself stays dependency-free (one .java file, no Maven, no Spring on
+  its classpath). This build only exists so `java/certify.sh` can start a REAL
+  Spring application and let oumv/verify dispatch to it: that request is what makes
+  the L4 trace evidence honest instead of fabricated.
+
+  The version is pinned; `java/certify.sh` pins the Maven distribution with its own
+  SHA-256 and caches both under ~/.tokensafe/cache.
+-->
+<project xmlns="http://maven.apache.org/POM/4.0.0"
+         xmlns:xsi="http://www.w3.org/2001/XMLSchema-instance"
+         xsi:schemaLocation="http://maven.apache.org/POM/4.0.0 https://maven.apache.org/xsd/maven-4.0.0.xsd">
+  <modelVersion>4.0.0</modelVersion>
+
+  <parent>
+    <groupId>org.springframework.boot</groupId>
+    <artifactId>spring-boot-starter-parent</artifactId>
+    <version>3.3.5</version>
+    <relativePath/>
+  </parent>
+
+  <groupId>com.example</groupId>
+  <artifactId>oumv-spring-fixture</artifactId>
+  <version>1.0.0</version>
+  <name>OUMV Spring fixture app</name>
+  <description>Certification app: real Spring Boot application behind the OUMV sidecar</description>
+
+  <properties>
+    <java.version>17</java.version>
+  </properties>
+
+  <dependencies>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-web</artifactId>
+    </dependency>
+    <dependency>
+      <groupId>org.springframework.boot</groupId>
+      <artifactId>spring-boot-starter-test</artifactId>
+      <scope>test</scope>
+    </dependency>
+  </dependencies>
+
+  <build>
+    <finalName>oumv-spring-fixture</finalName>
+    <plugins>
+      <plugin>
+        <groupId>org.springframework.boot</groupId>
+        <artifactId>spring-boot-maven-plugin</artifactId>
+      </plugin>
+    </plugins>
+  </build>
+</project>

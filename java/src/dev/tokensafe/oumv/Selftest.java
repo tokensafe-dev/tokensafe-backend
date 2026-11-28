@@ -72,9 +72,9 @@ public final class Selftest {
         check(handshakeResult.get("sessionId") instanceof String, "handshake issues a sessionId");
         String sessionId = String.valueOf(handshakeResult.get("sessionId"));
         checkEquals(deep(handshakeResult, "capabilities", "observe", "levels"), List.of("L0", "L1", "L2", "L3"),
-                "handshake advertises L0-L3 (no L4)");
+                "without --app-url the handshake advertises L0-L3 (no L4)");
         checkEquals(deep(handshakeResult, "capabilities", "understand", "causality"), Boolean.FALSE,
-                "handshake does not claim causality");
+                "without --app-url the handshake does not claim causality");
 
         // ---- observe L0/L1 ---------------------------------------------
         Map<String, Object> l0 = result(client.call("oumv/observe", OumvSpring.map("level", "L0")), "observe L0");
@@ -293,7 +293,8 @@ public final class Selftest {
                 OumvSpring.map("query", "causality", "target", "GET /api/products")), "understand causality");
         checkEquals(deep(causality, "causality", "observed"), Boolean.FALSE,
                 "causality is observed=false (no live traces)");
-        check(deep(causality, "causality", "note") instanceof String, "causality explains what evidence is missing");
+        check(deep(causality, "causality", "note") instanceof String,
+                "without --app-url causality explains what evidence is missing");
         expectError(client.call("oumv/understand", OumvSpring.map("query", "signals", "target", "x")), -32006,
                 "unknown understand query is -32006");
 
@@ -301,7 +302,7 @@ public final class Selftest {
         expectError(client.call("oumv/observe", OumvSpring.map("level", "L9")), -32006,
                 "observe unknown level is -32006");
         expectError(client.call("oumv/observe", OumvSpring.map("level", "L4")), -32006,
-                "observe L4 is honestly unsupported");
+                "without --app-url observe L4 is honestly unsupported");
         expectError(client.call("oumv/handshake", OumvSpring.map("protocolVersion", "9.9.9")), -32006,
                 "handshake rejects MAJOR 9");
         Map<String, Object> futureMinor = result(client.call("oumv/handshake",

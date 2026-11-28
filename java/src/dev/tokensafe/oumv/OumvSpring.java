@@ -11,15 +11,17 @@ package dev.tokensafe.oumv;
  *   - The routing surface is derived STATICALLY from Spring annotations
  *     (@RestController/@Controller, @RequestMapping, @GetMapping, ...). There is
  *     no live Spring ApplicationContext: this sidecar never boots the application.
- *   - Because no request ever flows through this process, L4 traces and runtime
- *     causality are NOT implemented and NOT advertised. understand/causality
- *     returns observed=false with an explicit note. Level 3 is not claimed.
+ *   - With `--app-url <base>` the sidecar also dispatches `verify` against the
+ *     running application and records the real request as an L4 trace; without it
+ *     no request flows through this process, so L4 stays `-32006` and causality
+ *     returns observed=false with an explicit note. Nothing is ever fabricated.
  *   - verify runs the real configured command (default `javac {file}`) and reports
  *     its real exit status; it never claims an HTTP dispatch it did not perform.
  *
- * Wire contract: OUMV wire 1.5.0 (spec v1.8), backend profile. Frozen on purpose:
- * the wire 1.6.0 surface (§4.1 result versioning, §3 correlation/cancel, §14
- * extensions) is deliberately not implemented until there is demand.
+ * Wire contract: OUMV wire 1.6.0 (spec v1.14), backend profile, including the
+ * §4.1 result versioning, §3 correlation/cancel, the §4.3 batch/preview/index/build
+ * extensions and — when `--app-url` points at the running application — L4 request
+ * traces from real `verify` dispatches (§4.1, §4.5).
  */
 
 import com.sun.net.httpserver.Headers;
@@ -37,6 +39,10 @@ import java.io.InputStreamReader;
 import java.io.OutputStream;
 import java.io.PrintStream;
 import java.net.InetSocketAddress;
+import java.net.URI;
+import java.net.http.HttpClient;
+import java.net.http.HttpRequest;
+import java.net.http.HttpResponse;
 import java.nio.charset.StandardCharsets;
 import java.nio.file.FileVisitResult;
 import java.nio.file.Files;
@@ -72,13 +78,15 @@ import java.util.regex.Pattern;
 public final class OumvSpring {
 
     static final String NAME = "oumv-java-spring";
-    static final String VERSION = "0.3.0";
+    static final String VERSION = "0.4.0";
     static final String PROTOCOL_VERSION = "1.6.0";
     static final int SUPPORTED_MAJOR = 1;
     static final int SUPPORTED_MINOR_MAX = 6;
     static final String PROFILE = "backend";
     static final String FRAMEWORK = "spring";
     static final String[] OBSERVE_LEVELS = { "L0", "L1", "L2", "L3" };
+    static final String[] OBSERVE_LEVELS_WITH_TRACES = { "L0", "L1", "L2", "L3", "L4" };
+    static final int MAX_REQUEST_TRACES = 128;
     static final int DEFAULT_SESSION_TTL_SECONDS = 3600;
     static final int MAX_BATCH_ITEMS = 16;
     static final int MAX_BODY_BYTES = 8 * 1024 * 1024;
@@ -152,6 +160,13 @@ public final class OumvSpring {
         String verifyCmd = "javac {file}";
         String verifyFile;
         long verifyTimeoutMs = 120_000L;
+        /**
+         * Base URL of the running application (e.g. {@code http://127.0.0.1:8080}).
+         * With it, {@code verify} dispatches endpoint targets over HTTP and every
+         * real response becomes an L4 trace; without it the sidecar runs only the
+         * static verification command and answers L4 with -32006.
+         */
+        String appUrl;
 
         static final String USAGE = String.join("\n",
                 "oumv-java-spring — JDK-only OUMV backend adapter for Spring Boot workspaces",
@@ -170,15 +185,19 @@ public final class OumvSpring {
                 "  --verify-file <path>      file the verification command compiles",
                 "                            (default: resolved from the verify target)",
                 "  --verify-timeout-ms <n>   verification timeout (default 120000)",
+                "  --app-url <base>          running application base URL (e.g. http://127.0.0.1:8080):",
+                "                            verify dispatches endpoint targets over HTTP and records",
+                "                            each real response as an L4 trace",
                 "  --no-descriptor           do not write ~/.tokensafe/runtimes/<hash>.json",
                 "  --read-only               do not register applyEdit/verify (spec §8.5)",
                 "  --scan                    print the statically scanned route table and exit",
                 "  --version                 print the adapter version",
                 "  --help                    print this help",
                 "",
-                "Honest conformance claim: Level 2 (L0-L3 observe, static impact, OCC edits,",
-                "verify). Live request traces (L4) and runtime causality are NOT implemented,",
-                "because this sidecar never runs the Spring application.");
+                "Conformance: Level 3 with --app-url (L0-L4 observe, runtime causality from real",
+                "dispatches, batch/preview/index/build, sessions, OCC edits). Without --app-url",
+                "the sidecar runs no application request, answers L4 with -32006 and does not",
+                "advertise L4 or causality — it never fabricates a trace.");
 
         static Options parse(String[] args) {
             Options o = new Options();
@@ -212,6 +231,14 @@ public final class OumvSpring {
                     case "--verify-timeout-ms":
                         o.verifyTimeoutMs = Long.parseLong(requireValue(args, ++i, arg));
                         break;
+                    case "--app-url": {
+                        String raw = requireValue(args, ++i, arg).trim();
+                        while (raw.endsWith("/")) {
+                            raw = raw.substring(0, raw.length() - 1);
+                        }
+                        o.appUrl = raw;
+                        break;
+                    }
                     case "--no-descriptor":
                         o.descriptor = false;
                         break;
@@ -1989,6 +2016,62 @@ public final class OumvSpring {
         volatile String lastRequestId = "";
         volatile ScanIndex index;
         volatile String descriptorFile;
+        // L4 evidence (§4.1): every real request this sidecar dispatched, bounded to
+        // MAX_REQUEST_TRACES. Empty without --app-url, and never synthesised.
+        final Deque<RequestTrace> traces = new ArrayDeque<>();
+        final Object traceLock = new Object();
+
+        /** One observed request execution; the wire shape of a §4.1 L4 trace. */
+        static final class RequestTrace {
+            final String method;
+            final String path;
+            final String route;
+            final String handler;
+            final int statusCode;
+            final double durationMs;
+            final String timestamp;
+
+            RequestTrace(String method, String path, String route, String handler,
+                         int statusCode, double durationMs, String timestamp) {
+                this.method = method;
+                this.path = path;
+                this.route = route;
+                this.handler = handler;
+                this.statusCode = statusCode;
+                this.durationMs = durationMs;
+                this.timestamp = timestamp;
+            }
+
+            Map<String, Object> toMap() {
+                return map(
+                        "method", method,
+                        "path", path,
+                        "route", route,
+                        "handler", handler,
+                        "statusCode", statusCode,
+                        "durationMs", durationMs,
+                        "timestamp", timestamp);
+            }
+        }
+
+        String[] observeLevels() {
+            return opts.appUrl == null ? OBSERVE_LEVELS : OBSERVE_LEVELS_WITH_TRACES;
+        }
+
+        void recordTrace(RequestTrace trace) {
+            synchronized (traceLock) {
+                traces.addLast(trace);
+                while (traces.size() > MAX_REQUEST_TRACES) {
+                    traces.removeFirst();
+                }
+            }
+        }
+
+        List<RequestTrace> traceSnapshot() {
+            synchronized (traceLock) {
+                return new ArrayList<>(traces);
+            }
+        }
 
         Engine(Options options) throws IOException {
             this.opts = options;
@@ -2197,7 +2280,7 @@ public final class OumvSpring {
                             "protocol version " + clientVersion + " (this runtime serves " + PROTOCOL_VERSION + ")");
                 }
             }
-            List<String> levels = new ArrayList<>(Arrays.asList(OBSERVE_LEVELS));
+            List<String> levels = new ArrayList<>(Arrays.asList(observeLevels()));
             Object requested = params.get("requestedCapabilities");
             if (requested instanceof Map) {
                 Object observe = ((Map<?, ?>) requested).get("observe");
@@ -2217,7 +2300,9 @@ public final class OumvSpring {
             String sessionId = sessions.create(Sessions.clampTtl(intParam(params, "sessionTtlSeconds", 0)));
             Map<String, Object> capabilities = map(
                     "observe", map("levels", levels, "formats", list("json")),
-                    "understand", map("causality", false, "impactAnalysis", true),
+                    // Causality is advertised only when a real dispatch can be observed:
+                    // with --app-url the verify probe feeds the trace ring.
+                    "understand", map("causality", opts.appUrl != null, "impactAnalysis", true),
                     "index", map("symbols", true),
                     "sessions", map("ttlSeconds", true, "cancel", true, "idempotency", !opts.readOnly ? true : null),
                     "transports", list(opts.stdio ? "stdio" : "http"));
@@ -2269,11 +2354,12 @@ public final class OumvSpring {
 
         Map<String, Object> observe(Map<String, Object> params) throws RpcException {
             String level = str(params, "level", "L0").trim().toUpperCase(Locale.ROOT);
-            if (!Arrays.asList(OBSERVE_LEVELS).contains(level)) {
+            if (!Arrays.asList(observeLevels()).contains(level)) {
                 if (level.equals("L4")) {
                     throw RpcException.unsupported("level_not_implemented",
-                            "observe L4 requires live request traces; this JDK-only sidecar does not run the "
-                                    + "Spring application, so it records none");
+                            "observe L4 needs a live request: start the sidecar with --app-url so oumv/verify "
+                                    + "dispatches endpoint targets to the running Spring application, or attach a "
+                                    + "trace-capable adapter to the application. No trace is ever fabricated.");
                 }
                 throw RpcException.unsupported("unsupported_level", "observe level " + level);
             }
@@ -2286,9 +2372,45 @@ public final class OumvSpring {
                     return versioned(observeL2(params), params);
                 case "L3":
                     return versioned(observeL3(params), params);
+                case "L4":
+                    return versioned(observeL4(params), params);
                 default:
                     throw RpcException.unsupported("unsupported_level", "observe level " + level);
             }
+        }
+
+        /**
+         * §4.1 L4: the recorded request executions. The ring only ever holds real
+         * dispatches made by oumv/verify against {@code --app-url}; with no app URL
+         * the level is not advertised and this method is unreachable.
+         */
+        Map<String, Object> observeL4(Map<String, Object> params) {
+            String target = str(params, "target");
+            String[] endpoint = blank(target) ? null : endpointOf(target);
+            String wantedMethod = endpoint == null || endpoint[0].isEmpty() ? null : endpoint[0];
+            String wantedPath = endpoint == null ? null : endpoint[1];
+            List<Object> page = new ArrayList<>();
+            for (RequestTrace trace : traceSnapshot()) {
+                if (wantedPath != null) {
+                    boolean methodOk = wantedMethod == null || trace.method.equalsIgnoreCase(wantedMethod);
+                    boolean pathOk = trace.path.equals(wantedPath) || templateMatches(trace.route, wantedPath);
+                    if (!methodOk || !pathOk) {
+                        continue;
+                    }
+                } else if (!blank(target) && !trace.handler.equals(target.trim())) {
+                    continue;
+                }
+                page.add(trace.toMap());
+            }
+            Map<String, Object> data = map("traces", page, "traceCount", page.size());
+            if (!blank(target)) {
+                data.put("target", target);
+            }
+            if (page.isEmpty()) {
+                data.put("note", "no request has been observed yet: oumv/verify an endpoint target "
+                        + "with --app-url configured, then read L4 again");
+            }
+            return envelope("L4", data, null);
         }
 
         Map<String, Object> observeL0() {
@@ -3794,17 +3916,61 @@ public final class OumvSpring {
 
         Map<String, Object> understandCausality(String query, String target) {
             String normalized = query.equals("why_state") ? "why_state" : "causality";
+            String[] endpoint = blank(target) ? null : endpointOf(target);
+            String wantedMethod = endpoint == null || endpoint[0].isEmpty() ? null : endpoint[0];
+            String wantedPath = endpoint == null ? null : endpoint[1];
+            List<RequestTrace> matched = new ArrayList<>();
+            for (RequestTrace trace : traceSnapshot()) {
+                if (wantedPath != null) {
+                    boolean methodOk = wantedMethod == null || trace.method.equalsIgnoreCase(wantedMethod);
+                    boolean pathOk = trace.path.equals(wantedPath) || templateMatches(trace.route, wantedPath);
+                    if (!methodOk || !pathOk) {
+                        continue;
+                    }
+                } else if (!blank(target) && !trace.handler.equals(target.trim())) {
+                    continue;
+                }
+                matched.add(trace);
+            }
+            if (matched.isEmpty()) {
+                Map<String, Object> causality = map(
+                        "target", target,
+                        "observed", false,
+                        "traceCount", 0,
+                        "traceChain", new ArrayList<>(),
+                        "rootCause", "unknown",
+                        "note", opts.appUrl == null
+                                ? "No live request trace exists: this sidecar was started without --app-url and runs "
+                                        + "the static verification command instead of dispatching HTTP, so it records "
+                                        + "nothing. Start it with --app-url pointing at the running application."
+                                : "No request has been dispatched for this target yet: oumv/verify it first.",
+                        "evidence", map("provenance", "runtime", "sourceAdapter", NAME, "confidence", "unknown"));
+                return map("query", normalized, "target", target, "causality", causality);
+            }
+            RequestTrace latest = matched.get(matched.size() - 1);
+            List<Object> chain = new ArrayList<>();
+            chain.add(latest.method + " " + latest.path);
+            if (!blank(latest.handler)) {
+                chain.add(latest.handler);
+            }
+            String rootCause = "unknown";
+            if (latest.statusCode >= 500) {
+                rootCause = "the route answered HTTP " + latest.statusCode + "; no deeper cause was inferred";
+            } else if (latest.statusCode == 0) {
+                rootCause = "the dispatch failed before a response arrived";
+            }
             Map<String, Object> causality = map(
                     "target", target,
-                    "observed", false,
-                    "traceCount", 0,
-                    "traceChain", new ArrayList<>(),
-                    "rootCause", "unknown",
-                    "note", "No live request trace exists: this JDK-only sidecar scans Spring sources statically "
-                            + "and never boots the application, so oumv/verify compiles a file instead of "
-                            + "dispatching HTTP. Level 3 (L4 traces / runtime causality) is not implemented; run a "
-                            + "trace-capable adapter attached to the running application for causality evidence.",
-                    "evidence", map("provenance", "runtime", "sourceAdapter", NAME, "confidence", "unknown"));
+                    "observed", true,
+                    "traceCount", matched.size(),
+                    "traceChain", chain,
+                    "statusCode", latest.statusCode,
+                    "latencyMs", latest.durationMs,
+                    "rootCause", rootCause,
+                    "note", "derived from " + matched.size() + " recorded dispatch(es) against " + opts.appUrl
+                            + "; the sidecar observes the responses it produced, not ambient application traffic",
+                    "evidence", map("provenance", "runtime", "sourceAdapter", NAME,
+                            "confidence", latest.statusCode == 0 ? "inferred" : "confirmed"));
             return map("query", normalized, "target", target, "causality", causality);
         }
 
@@ -3826,6 +3992,18 @@ public final class OumvSpring {
                     Map<?, ?> step = raw instanceof Map ? (Map<?, ?>) raw : Collections.emptyMap();
                     String stepTarget = step.get("target") instanceof String ? (String) step.get("target") : target;
                     String action = step.get("action") instanceof String ? (String) step.get("action") : "";
+                    ProbeRun probe = dispatchProbe(stepTarget);
+                    if (probe != null) {
+                        total += probe.durationMs;
+                        allPassed = allPassed && probe.passed;
+                        results.add(map(
+                                "target", stepTarget,
+                                "action", action,
+                                "statusCode", probe.statusCode,
+                                "status", probe.passed ? "passed" : "failed",
+                                "responseBody", probe.body));
+                        continue;
+                    }
                     VerifyRun run = runVerify(stepTarget, action);
                     total += run.durationMs;
                     allPassed = allPassed && run.passed;
@@ -3844,14 +4022,38 @@ public final class OumvSpring {
                         "target", target,
                         "statusCode", 0,
                         "steps", results,
-                        "diff", map("stepCount", results.size(), "dispatch", "none",
-                                "note", "each step ran the static verification command independently; "
-                                        + "no application instance was shared because none exists"),
+                        "diff", map("stepCount", results.size(), "dispatch", opts.appUrl == null ? "none" : "http",
+                                "note", opts.appUrl == null
+                                        ? "each step ran the static verification command independently; "
+                                                + "no application instance exists"
+                                        : "each endpoint step dispatched to " + opts.appUrl + " and was recorded as an L4 trace"),
                         "timings", timings,
                         "durationMs", total,
-                        "scope", verifyScope(results.size()));
+                        "scope", verifyScope(results.size(), opts.appUrl != null));
             }
             String action = str(params, "action", "");
+            ProbeRun probe = dispatchProbe(target);
+            if (probe != null) {
+                Map<String, Object> diff = map(
+                        "dispatch", "http",
+                        "url", probe.url,
+                        "route", probe.route,
+                        "handler", probe.handler,
+                        "statusCode", probe.statusCode,
+                        "output", probe.body);
+                Map<String, Object> timings = map(
+                        "t_action_ms", probe.durationMs, "t_schema_ms", 0.0, "t_propagation_ms", 0.0,
+                        "t_dom_ms", 0.0, "t_total_ms", probe.durationMs);
+                return map(
+                        "status", probe.passed ? "passed" : "failed",
+                        "target", target,
+                        "action", action,
+                        "statusCode", probe.statusCode,
+                        "diff", diff,
+                        "timings", timings,
+                        "durationMs", probe.durationMs,
+                        "scope", verifyScope(1, true));
+            }
             VerifyRun run = runVerify(target, action);
             Map<String, Object> diff = map(
                     "verifiedFile", run.file == null ? "" : run.file,
@@ -3873,26 +4075,93 @@ public final class OumvSpring {
                     "diff", diff,
                     "timings", timings,
                     "durationMs", run.durationMs,
-                    "scope", verifyScope(1));
+                    "scope", verifyScope(1, false));
         }
 
-        Map<String, Object> verifyScope(int steps) {
+        Map<String, Object> verifyScope(int steps, boolean dispatched) {
             List<Object> checked = new ArrayList<>();
-            checked.add("static verification command executed with the JDK (default: javac {file})");
+            checked.add(dispatched
+                    ? "HTTP dispatch of the requested route target to " + opts.appUrl
+                    : "static verification command executed with the JDK (default: javac {file})");
             if (steps > 1) {
-                checked.add("ordered multi-step run of the static verification command (" + steps + " steps)");
+                checked.add("ordered multi-step run (" + steps + " steps)");
             }
             List<Object> notExecuted = new ArrayList<>(Arrays.asList(
-                    "HTTP dispatch of the requested route target",
-                    "Spring ApplicationContext startup",
-                    "real network calls",
-                    "persistent database state",
+                    dispatched ? "Spring ApplicationContext startup (the sidecar talks to the running app)"
+                               : "HTTP dispatch of the requested route target",
+                    "real network calls beyond the configured app URL",
+                    dispatched ? "persistent database state written by the probe" : "persistent database state",
                     "shared state between multi-step calls (no application instance exists)"));
             List<Object> notSupported = new ArrayList<>(Arrays.asList(
                     "browser/DOM assertions",
-                    "in-process handler execution",
+                    dispatched ? "in-process handler execution" : "in-process handler execution",
                     "rollback"));
             return map("checked", checked, "notExecuted", notExecuted, "notSupported", notSupported);
+        }
+
+        /** One real HTTP dispatch against the running application (the L4 evidence). */
+        static final class ProbeRun {
+            boolean passed;
+            int statusCode;
+            double durationMs;
+            String body = "";
+            String url = "";
+            String route = "";
+            String handler = "";
+        }
+
+        /**
+         * §4.5 dispatch: when {@code --app-url} is configured and the target resolves
+         * to an endpoint, the request really executes against the application and the
+         * response is recorded as an L4 trace. Returns null for a symbol/file target,
+         * which keeps the static verification command.
+         */
+        ProbeRun dispatchProbe(String target) {
+            if (opts.appUrl == null || blank(target)) {
+                return null;
+            }
+            String[] endpoint = endpointOf(target);
+            if (endpoint == null) {
+                return null;
+            }
+            String method = endpoint[0] == null || endpoint[0].isEmpty()
+                    ? "GET" : endpoint[0].toUpperCase(Locale.ROOT);
+            String path = endpoint[1] == null || endpoint[1].isEmpty() ? "/" : endpoint[1];
+            Route route = findRoute(target);
+            ProbeRun run = new ProbeRun();
+            run.route = route == null ? path : route.path;
+            run.handler = route == null ? "" : route.handler;
+            run.url = opts.appUrl + path;
+            long started = System.nanoTime();
+            try {
+                HttpClient client = HttpClient.newBuilder()
+                        .connectTimeout(java.time.Duration.ofSeconds(10))
+                        .build();
+                HttpRequest.Builder builder = HttpRequest.newBuilder(URI.create(run.url))
+                        .timeout(java.time.Duration.ofMillis(opts.verifyTimeoutMs))
+                        .header("Accept", "application/json")
+                        .header("X-TokenSafe-Probe", "oumv-verify");
+                if (method.equals("GET") || method.equals("HEAD") || method.equals("DELETE")) {
+                    builder.method(method, HttpRequest.BodyPublishers.noBody());
+                } else {
+                    builder.method(method, HttpRequest.BodyPublishers.ofString("{}"))
+                            .header("Content-Type", "application/json");
+                }
+                HttpResponse<String> response = client.send(builder.build(), HttpResponse.BodyHandlers.ofString());
+                run.statusCode = response.statusCode();
+                run.body = truncate(response.body() == null ? "" : response.body(), 4000);
+                run.passed = run.statusCode >= 200 && run.statusCode < 400;
+            } catch (InterruptedException err) {
+                Thread.currentThread().interrupt();
+                run.body = "dispatch interrupted: " + err.getMessage();
+            } catch (Exception err) {
+                run.body = err.getClass().getSimpleName() + ": " + err.getMessage();
+            } finally {
+                run.durationMs = (System.nanoTime() - started) / 1_000_000.0;
+            }
+            recordTrace(new RequestTrace(method, path, run.route, run.handler, run.statusCode,
+                    run.durationMs, DateTimeFormatter.ISO_INSTANT.format(Instant.now())));
+            return run;
         }
 
         static final class VerifyRun {
@@ -4173,7 +4442,7 @@ public final class OumvSpring {
 
         void runStdio() {
             System.err.println("[" + NAME + "] " + VERSION + " stdio root=" + ws.root
-                    + " levels=" + String.join(",", OBSERVE_LEVELS) + " (no descriptor in stdio mode)");
+                    + " levels=" + String.join(",", observeLevels()) + " (no descriptor in stdio mode)");
             BufferedReader reader = new BufferedReader(
                     new InputStreamReader(System.in, StandardCharsets.UTF_8));
             PrintStream out = new PrintStream(
@@ -4213,7 +4482,8 @@ public final class OumvSpring {
             String publicHost = opts.host.equals("0.0.0.0") || opts.host.equals("::") ? "127.0.0.1" : opts.host;
             String url = "http://" + publicHost + ":" + port + "/__oumv/rpc";
             System.err.println("[" + NAME + "] " + VERSION + " root=" + ws.root + " url=" + url
-                    + " levels=" + String.join(",", OBSERVE_LEVELS));
+                    + " levels=" + String.join(",", observeLevels())
+                    + (opts.appUrl == null ? "" : " app=" + opts.appUrl));
             if (opts.descriptor) {
                 try {
                     descriptorFile = writeDescriptor(url);
@@ -4327,7 +4597,7 @@ public final class OumvSpring {
                     "profile", PROFILE,
                     "protocolVersion", PROTOCOL_VERSION,
                     "framework", FRAMEWORK,
-                    "observeLevels", Arrays.asList(OBSERVE_LEVELS),
+                    "observeLevels", Arrays.asList(observeLevels()),
                     "transports", list("http", "stdio"),
                     "routes", index().routes.size(),
                     "uptimeSeconds", Math.max(0, Instant.now().getEpochSecond() - startedAt.getEpochSecond()));
@@ -4376,7 +4646,7 @@ public final class OumvSpring {
                     "url", url,
                     "workspace", ws.root.toString(),
                     "capabilities", map(
-                            "observeLevels", Arrays.asList(OBSERVE_LEVELS),
+                            "observeLevels", Arrays.asList(observeLevels()),
                             "transports", list("http"),
                             "causality", false,
                             "occ", !opts.readOnly,

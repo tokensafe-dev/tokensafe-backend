@@ -7,24 +7,28 @@ performs OCC-guarded source mutations with a workspace jail.
 
 * **No Maven, no Gradle, no Spring jars.** The adapter is launched with the JDK
   single-file source launcher and uses only JDK classes
-  (`com.sun.net.httpserver.HttpServer`, `java.nio`, `java.security`, ...).
-* **No modification of the project.** It never boots the application and never writes
-  into it except through `oumv/applyEdit` (plus `.tokensafe/backups/` and the
-  out-of-repository discovery descriptor).
-* **Honest conformance claim: Level 2** (fixtures v11 / wire `1.6.0`), certified report
-  in [`../certification/java-spring.json`](../certification/java-spring.json).
-  Level 3 is *not* claimed: L4 request traces and runtime causality require a live
-  application, and this sidecar deliberately does not fake them.
+  (`com.sun.net.httpserver.HttpServer`, `java.net.http.HttpClient`, `java.nio`,
+  `java.security`, ...).
+* **No modification of the project.** It never boots the application itself and
+  never writes into it except through `oumv/applyEdit` (plus `.tokensafe/backups/`
+  and the out-of-repository discovery descriptor).
+* **Conformance claim: Level 3** (fixtures v17 / wire `1.6.0`, 45/45) when started
+  with `--app-url` pointing at the running Spring application: `oumv/verify`
+  dispatches endpoint targets to it over HTTP and the real responses become L4
+  traces. Without `--app-url` no request exists to observe, so L4 answers
+  `-32006` and the sidecar attains Level 2 instead of fabricating a trace.
+  Report: [`../certification/java-spring.json`](../certification/java-spring.json);
+  read-only profile: [`../certification/java-spring-readonly.json`](../certification/java-spring-readonly.json).
 
 ```
 java/src/dev/tokensafe/oumv/
   OumvSpring.java       the adapter (scan + wire + transports + descriptor)
   Selftest.java         JDK-only behavioural tests (no Node required)
 testdata/
-  spring-app/           Spring-style fixture project (sources only, never compiled)
+  spring-app/           fixture project: a real Spring Boot app for certification
   plain/Probe.java      compilable JDK-only file used by oumv/verify
   markers-spring.json   conformance markers for this fixture
-certify.sh              reproducible certification (temp copy of the fixture)
+certify.sh              reproducible certification (boots the Spring app, then certifies)
 selftest.sh             builds and runs Selftest against a temp copy
 ```
 
@@ -32,7 +36,8 @@ selftest.sh             builds and runs Selftest against a temp copy
 
 * JDK **17+** (developed and certified on OpenJDK 21/Temurin).
 * Nothing else for the adapter. Node is only needed for the OUMV conformance CLI and
-  for manifest linting.
+  for manifest linting. The *certification harness* additionally needs Maven (a
+  pinned distribution is downloaded and SHA-256 verified when `mvn` is not on PATH).
 
 ## Quick start
 

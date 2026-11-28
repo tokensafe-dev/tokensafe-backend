@@ -4,14 +4,14 @@
   "specVersion": "1.6.0",
   "fixtureVersion": 17,
   "total": 45,
-  "passed": 44,
-  "failed": 1,
+  "passed": 45,
+  "failed": 0,
   "skipped": 0,
-  "attainedLevel": 2,
+  "attainedLevel": 3,
   "levels": {
     "1": "passed",
     "2": "passed",
-    "3": "failed"
+    "3": "passed"
   },
   "cases": [
     {
@@ -57,8 +57,7 @@
     {
       "id": "observe-l4-returns-recorded-traces",
       "level": 3,
-      "status": "failed",
-      "error": "expected success, got error -32006: UNSUPPORTED_CAPABILITY: observe L4 requires live request traces; this JDK-only sidecar does not run the Spring application, so it records none"
+      "status": "passed"
     },
     {
       "id": "understand-impact-resolves-target",
@@ -241,7 +240,7 @@
       "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-28T17:10:46.673Z",
+  "generatedAt": "2026-11-28T19:13:11.744Z",
   "environment": {
     "transport": "stdio",
     "profile": "backend",
