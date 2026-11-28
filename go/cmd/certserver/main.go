@@ -17,6 +17,9 @@ import (
 func main() {
 	addr := flag.String("addr", "127.0.0.1:8090", "listen address")
 	workspace := flag.String("workspace", "", "workspace directory the fixtures edit")
+	// §12: the harness starts the certserver with a token so the auth refusal
+	// cases are certified against the real binding.
+	token := flag.String("token", "", "session token the adapter must require")
 	flag.Parse()
 
 	if *workspace == "" {
@@ -27,11 +30,16 @@ func main() {
 		*workspace = wd
 	}
 
+	cfg := oumv.DefaultDevelopmentRuntimeConfig()
+	if *token != "" {
+		cfg.Security.AuthToken = *token
+		cfg.Security.AuthenticationRequired = true
+	}
 	rt := oumv.NewRuntime(oumv.Config{
 		Name:         "tokensafe-stdhttp-cert",
 		Version:      "cert",
 		WorkspaceDir: *workspace,
-		Runtime:      oumv.DefaultDevelopmentRuntimeConfig(),
+		Runtime:      cfg,
 	})
 	rt.SetDBSandbox(db.NewMemorySandbox())
 

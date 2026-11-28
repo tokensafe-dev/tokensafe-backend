@@ -17,6 +17,9 @@ import {
 
 const require = createRequire(import.meta.url);
 
+// §12: the certificates prove the refusal, so every live binding runs token-guarded.
+const CERT_TOKEN = 'oumv-cert-token';
+
 /**
  * Transport certificates (spec §2.3/§2.4): the same fixture suite over the SSE
  * and WebSocket bindings, plus the fixture v8 push cases. A transport claim is
@@ -56,6 +59,7 @@ describe('Express transport certificates', () => {
     });
     const runtime = new OumvRuntime({
       workspaceDir: workspace.dir,
+      authToken: CERT_TOKEN,
       sandbox: { db: { run: async (fn) => ({ result: await fn(), rolledBack: true, queries: 1 }) } },
     });
     const adapter = mountTokensafe(app, { runtime });
@@ -90,10 +94,10 @@ describe('Express transport certificates', () => {
     async () => {
       const live = await startServer();
       const { loadFixtures, runFixtureSuite, httpTransport, sseEventSource } = require(CONFORMANCE_ENTRY);
-      const source = sseEventSource({ url: live.eventsUrl });
+      const source = sseEventSource({ url: live.eventsUrl, token: CERT_TOKEN });
       try {
         await source.start();
-        const http = httpTransport({ url: live.rpcUrl });
+        const http = httpTransport({ url: live.rpcUrl, token: CERT_TOKEN });
         const handshake = await http.request({
           jsonrpc: '2.0',
           id: 'certify-handshake',
@@ -107,7 +111,8 @@ describe('Express transport certificates', () => {
           {
             adapterName: 'node-express-sse',
             framework: 'express',
-            environment: { transport: 'sse', node: process.version },
+            environment: { transport: 'sse', auth: 'required', node: process.version },
+            auth: true,
             capabilities: (handshake.result as any)?.capabilities,
             negotiatedVersion: (handshake.result as any)?.protocolVersion,
             push: source,
@@ -116,7 +121,7 @@ describe('Express transport certificates', () => {
         );
         if (report.failed > 0) console.log(report.cases.filter((entry: any) => entry.status !== 'passed'));
         expect(report.failed).toBe(0);
-        expect(report.total).toBe(47);
+        expect(report.total).toBe(50);
         writeReport('transports/node-express-sse.json', report);
       } finally {
         await source.close();
@@ -130,7 +135,7 @@ describe('Express transport certificates', () => {
     async () => {
       const live = await startServer();
       const { loadFixtures, runFixtureSuite, wsTransport } = require(CONFORMANCE_ENTRY);
-      const transport = wsTransport({ url: live.wsUrl });
+      const transport = wsTransport({ url: live.wsUrl, token: CERT_TOKEN });
       try {
         const handshake = await transport.request({
           jsonrpc: '2.0',
@@ -171,6 +176,7 @@ describe('Fastify transport certificates', () => {
     const app = Fastify({ logger: false });
     const runtime = new OumvRuntime({
       workspaceDir: workspace.dir,
+      authToken: CERT_TOKEN,
       sandbox: { db: { run: async (fn) => ({ result: await fn(), rolledBack: true, queries: 1 }) } },
     });
     const adapter = await registerTokensafe(app, { runtime });
@@ -214,10 +220,10 @@ describe('Fastify transport certificates', () => {
     async () => {
       const live = await startServer();
       const { loadFixtures, runFixtureSuite, httpTransport, sseEventSource } = require(CONFORMANCE_ENTRY);
-      const source = sseEventSource({ url: live.eventsUrl });
+      const source = sseEventSource({ url: live.eventsUrl, token: CERT_TOKEN });
       try {
         await source.start();
-        const http = httpTransport({ url: live.rpcUrl });
+        const http = httpTransport({ url: live.rpcUrl, token: CERT_TOKEN });
         const handshake = await http.request({
           jsonrpc: '2.0',
           id: 'certify-handshake',
@@ -231,7 +237,8 @@ describe('Fastify transport certificates', () => {
           {
             adapterName: 'node-fastify-sse',
             framework: 'fastify',
-            environment: { transport: 'sse', node: process.version },
+            environment: { transport: 'sse', auth: 'required', node: process.version },
+            auth: true,
             capabilities: (handshake.result as any)?.capabilities,
             negotiatedVersion: (handshake.result as any)?.protocolVersion,
             push: source,
@@ -240,7 +247,7 @@ describe('Fastify transport certificates', () => {
         );
         if (report.failed > 0) console.log(report.cases.filter((entry: any) => entry.status !== 'passed'));
         expect(report.failed).toBe(0);
-        expect(report.total).toBe(47);
+        expect(report.total).toBe(50);
         writeReport('transports/node-fastify-sse.json', report);
       } finally {
         await source.close();
@@ -254,7 +261,7 @@ describe('Fastify transport certificates', () => {
     async () => {
       const live = await startServer();
       const { loadFixtures, runFixtureSuite, wsTransport } = require(CONFORMANCE_ENTRY);
-      const transport = wsTransport({ url: live.wsUrl });
+      const transport = wsTransport({ url: live.wsUrl, token: CERT_TOKEN });
       try {
         const handshake = await transport.request({
           jsonrpc: '2.0',

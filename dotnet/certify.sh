@@ -51,6 +51,9 @@ command -v node >/dev/null 2>&1 || { echo "node is required for oumv-certify" >&
 
 PORT="${PORT:-18120}"
 APP_DLL="$HERE/certapp/bin/Release/net10.0/TokenSafe.Oumv.CertApp.dll"
+# §12: the app is started with a token so the auth refusal cases run in the
+# certificate; the CLI authenticates with the same value.
+CERT_TOKEN="${OUMV_CERT_TOKEN:-oumv-cert-token}"
 WORKSPACE=""
 SERVER_PID=""
 
@@ -100,7 +103,8 @@ SERVER_LOG="$(dirname "$WORKSPACE")/$(basename "$WORKSPACE").server.log"
 }
 
 start_server() {
-  ( cd "$HERE/certapp" && TOKENSAFE_CERT_WORKSPACE="$WORKSPACE" ASPNETCORE_ENVIRONMENT=Production \
+  ( cd "$HERE/certapp" && TOKENSAFE_CERT_WORKSPACE="$WORKSPACE" TOKENSAFE_OUMV_AUTH_TOKEN="$CERT_TOKEN" \
+      ASPNETCORE_ENVIRONMENT=Production \
       exec "$DOTNET" "$APP_DLL" --urls "http://127.0.0.1:$PORT" ) >"$SERVER_LOG" 2>&1 &
   SERVER_PID=$!
   for _ in $(seq 1 160); do
@@ -129,7 +133,8 @@ choose_port
 prepare_workspace
 start_server
 node "$CERTIFY" --adapter dotnet-aspnetcore --framework aspnetcore --profile backend \
-  --url "http://127.0.0.1:$PORT/__oumv/rpc" --markers "@$MARKERS" --fixtures "$FIXTURES" \
+  --url "http://127.0.0.1:$PORT/__oumv/rpc" --token "$CERT_TOKEN" --auth \
+  --markers "@$MARKERS" --fixtures "$FIXTURES" \
   --report "$REPORT" --min-level "$MIN_LEVEL"
 stop_server
 rm -rf "$WORKSPACE"
@@ -141,6 +146,7 @@ prepare_workspace
 start_server
 node "$CERTIFY" --adapter dotnet-aspnetcore-sse --framework aspnetcore --profile backend \
   --url "http://127.0.0.1:$PORT/__oumv/rpc" --sse "http://127.0.0.1:$PORT/__oumv/events" \
+  --token "$CERT_TOKEN" --auth \
   --markers "@$MARKERS" --fixtures "$FIXTURES" \
   --report "$TRANSPORT_DIR/dotnet-aspnetcore-sse.json" --min-level "$MIN_LEVEL"
 stop_server
@@ -153,6 +159,7 @@ prepare_workspace
 start_server
 node "$CERTIFY" --adapter dotnet-aspnetcore-ws --framework aspnetcore --profile backend \
   --ws "ws://127.0.0.1:$PORT/__oumv/rpc" \
+  --token "$CERT_TOKEN" \
   --markers "@$MARKERS" --fixtures "$FIXTURES" \
   --report "$TRANSPORT_DIR/dotnet-aspnetcore-ws.json" --min-level "$MIN_LEVEL"
 stop_server

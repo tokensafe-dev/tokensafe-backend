@@ -3613,6 +3613,14 @@ public final class OumvSpring {
                             map("reason", "unauthorized"))).getBytes(StandardCharsets.UTF_8));
                     return;
                 }
+                if ((opts.token == null || opts.token.isEmpty()) && !isLoopbackHost(opts.host)) {
+                    // §12: a non-loopback bind with no token configured is refused
+                    // before dispatch, exactly like the PHP sidecar.
+                    send(exchange, 403, Json.stringify(errorResponse(null, -32007,
+                            "PERMISSION_DENIED: a non-loopback bind requires --token",
+                            map("reason", "token_required_non_loopback"))).getBytes(StandardCharsets.UTF_8));
+                    return;
+                }
                 byte[] body = readLimited(exchange.getRequestBody(), MAX_BODY_BYTES);
                 if (body == null) {
                     send(exchange, 413, Json.stringify(errorResponse(null, -32600,
@@ -3631,8 +3639,13 @@ public final class OumvSpring {
             }
         }
 
-        boolean authorized(HttpExchange exchange) {
-            String provided = exchange.getRequestHeaders().getFirst("X-OUMV-Session-Token");
+        /** True for the bind addresses that need no token (§12 loopback allowance). */
+        static boolean isLoopbackHost(String host) {
+            String h = host == null ? "" : host.trim().toLowerCase(Locale.ROOT);
+            return h.equals("localhost") || h.equals("127.0.0.1") || h.equals("::1") || h.equals("0:0:0:0:0:0:0:1");
+        }
+
+        boolean authorized(HttpExchange exchange) {            String provided = exchange.getRequestHeaders().getFirst("X-OUMV-Session-Token");
             if (provided == null) {
                 String authorization = exchange.getRequestHeaders().getFirst("Authorization");
                 if (authorization != null && authorization.toLowerCase(Locale.ROOT).startsWith("bearer ")) {

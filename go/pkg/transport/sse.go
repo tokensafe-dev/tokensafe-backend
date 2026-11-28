@@ -20,6 +20,9 @@ type EventStream interface {
 type SSEOptions struct {
 	Heartbeat time.Duration // default 15s; tests use ~20ms
 	Poll      time.Duration // default 300ms
+	// Auth, when enabled, refuses an unauthenticated connection with 401 + -32007
+	// before the stream opens (§12: an authenticated binding protects SSE too).
+	Auth *Authorizer
 }
 
 // NewSSEHandler implements the optional SSE binding from spec §2.3:
@@ -35,6 +38,7 @@ type SSEOptions struct {
 func NewSSEHandler(stream EventStream, opts ...SSEOptions) http.Handler {
 	opt := SSEOptions{Heartbeat: 15 * time.Second, Poll: 300 * time.Millisecond}
 	if len(opts) > 0 {
+		opt.Auth = opts[0].Auth
 		if opts[0].Heartbeat > 0 {
 			opt.Heartbeat = opts[0].Heartbeat
 		}
@@ -46,6 +50,10 @@ func NewSSEHandler(stream EventStream, opts ...SSEOptions) http.Handler {
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
 		if r.Method != http.MethodGet {
 			http.Error(w, "SSE requires GET", http.StatusMethodNotAllowed)
+			return
+		}
+		if opt.Auth != nil && !opt.Auth.Authorized(r) {
+			opt.Auth.Refuse(w)
 			return
 		}
 		flusher, ok := w.(http.Flusher)

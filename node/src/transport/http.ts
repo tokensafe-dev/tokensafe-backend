@@ -21,8 +21,9 @@ export function isAuthorized(req: IncomingMessage, token: string, requireAuth: b
         : '') ??
       ''
   );
-  if (!token) return !requireAuth;
-  if (provided) return provided === token;
+  // A configured token is always required (spec §12): accepting an empty
+  // credential because `requireAuth` was not passed is the classic fail-open.
+  if (token) return Boolean(provided) && provided === token;
   return !requireAuth;
 }
 

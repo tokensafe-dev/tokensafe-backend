@@ -98,6 +98,13 @@ public sealed class OumvOptions
     /// <summary>SSE events path.</summary>
     public string EventsPath { get; set; } = "/__oumv/events";
 
+    /// <summary>
+    /// Spec §12 session token: when set, every RPC/SSE/WS request must carry it
+    /// (X-OUMV-Session-Token or Authorization: Bearer). Empty keeps the loopback
+    /// development allowance; a non-loopback bind without a token is refused.
+    /// </summary>
+    public string? AuthToken { get; set; }
+
     /// <summary>Set false to mount the transports but refuse mutations.</summary>
     public bool EnableMutations { get; set; } = true;
 }

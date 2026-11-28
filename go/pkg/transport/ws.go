@@ -22,12 +22,23 @@ var notificationMethod = map[string]string{
 	"state": "notifications/oumv.state",
 }
 
+// WSOptions configures the optional WebSocket binding.
+type WSOptions struct {
+	// Auth, when enabled, refuses the upgrade with 401 before a socket exists
+	// (§12: an authenticated binding protects WS too).
+	Auth *Authorizer
+}
+
 // NewWSHandler implements the optional WebSocket binding from spec §2.4:
 // frames are JSON-RPC 2.0 objects, one message per frame; notifications (no id)
 // get no response frame. After `oumv/handshake` the connection is bound to that
 // sessionId and receives `notifications/oumv.trace` / `notifications/oumv.state`;
 // closing the socket ends the session.
-func NewWSHandler(dispatcher *Dispatcher, stream EventSubscriber) http.Handler {
+func NewWSHandler(dispatcher *Dispatcher, stream EventSubscriber, opts ...WSOptions) http.Handler {
+	var opt WSOptions
+	if len(opts) > 0 {
+		opt = opts[0]
+	}
 	upgrader := websocket.Upgrader{
 		ReadBufferSize:  4096,
 		WriteBufferSize: 4096,
@@ -38,6 +49,10 @@ func NewWSHandler(dispatcher *Dispatcher, stream EventSubscriber) http.Handler {
 	}
 
 	return http.HandlerFunc(func(w http.ResponseWriter, r *http.Request) {
+		if opt.Auth != nil && !opt.Auth.Authorized(r) {
+			opt.Auth.Refuse(w)
+			return
+		}
 		conn, err := upgrader.Upgrade(w, r, nil)
 		if err != nil {
 			return

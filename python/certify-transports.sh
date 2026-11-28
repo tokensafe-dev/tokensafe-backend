@@ -22,6 +22,9 @@ REPORT_DIR="${REPORT_DIR:-$REPO/certification/transports}"
 MARKERS="$HERE/cert_markers.json"
 CERTIFY="$OUMV/packages/conformance/dist/cli/certify.js"
 PORT="${PY_PORT:-18091}"
+# §12: the app is started with a token so the auth refusal cases run in the
+# certificate; the CLI authenticates with the same value.
+CERT_TOKEN="${OUMV_CERT_TOKEN:-oumv-cert-token}"
 PYTHON="${PYTHON:-$HERE/.venv/bin/python}"
 [ -x "$PYTHON" ] || PYTHON="$(command -v python3 || true)"
 
@@ -72,7 +75,7 @@ start_server() {
     return 1
   fi
   SERVER_LOG="$WORKSPACE/uvicorn.log"
-  ( export TOKENSAFE_CERT_WORKSPACE="$WORKSPACE"; cd "$HERE"; \
+  ( export TOKENSAFE_CERT_WORKSPACE="$WORKSPACE" TOKENSAFE_OUMV_AUTH_TOKEN="$CERT_TOKEN"; cd "$HERE"; \
     exec "$PYTHON" -m uvicorn cert_app:app --host 127.0.0.1 --port "$PORT" --log-level warning ) \
     >"$SERVER_LOG" 2>&1 &
   SERVER_PID=$!
@@ -91,7 +94,7 @@ echo "▸ certifying WebSocket binding"
 prepare_workspace
 start_server
 node "$CERTIFY" --adapter python-fastapi-ws --framework fastapi --profile backend \
-  --ws "ws://127.0.0.1:$PORT/__oumv/rpc" --markers "@$MARKERS" --fixtures "$OUMV/fixtures/conformance-cases.json" \
+  --ws "ws://127.0.0.1:$PORT/__oumv/rpc" --token "$CERT_TOKEN" --markers "@$MARKERS" --fixtures "$OUMV/fixtures/conformance-cases.json" \
   --report "$REPORT_DIR/python-fastapi-ws.json" --min-level 3
 stop_server
 rm -rf "$WORKSPACE"
@@ -102,6 +105,7 @@ prepare_workspace
 start_server
 node "$CERTIFY" --adapter python-fastapi-sse --framework fastapi --profile backend \
   --url "http://127.0.0.1:$PORT/__oumv/rpc" --sse "http://127.0.0.1:$PORT/__oumv/events" \
+  --token "$CERT_TOKEN" --auth \
   --markers "@$MARKERS" --fixtures "$OUMV/fixtures/conformance-cases.json" \
   --report "$REPORT_DIR/python-fastapi-sse.json" --min-level 3
 stop_server

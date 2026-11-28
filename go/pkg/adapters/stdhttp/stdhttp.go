@@ -85,8 +85,10 @@ func (m *ServeMux) Mount(rpcPath string) {
 	m.ServeMux.Handle("POST "+rpcPath, transport.NewHTTPHandler(dispatcher, httpOpts))
 	m.ServeMux.Handle("OPTIONS "+rpcPath, transport.NewHTTPHandler(dispatcher, httpOpts))
 	eventsPath := strings.TrimSuffix(rpcPath, "/rpc") + "/events"
-	m.ServeMux.Handle("GET "+eventsPath, transport.NewSSEHandler(m.runtime))
-	m.ServeMux.Handle("GET "+rpcPath, transport.NewWSHandler(transport.NewDispatcher(m.runtime), m.runtime))
+	// §12: one authorizer for every binding, so SSE/WS cannot be the unguarded door.
+	authorizer := transport.NewAuthorizer(m.runtime.Config().Security.AuthToken, m.runtime.Config().Security.AuthenticationRequired)
+	m.ServeMux.Handle("GET "+eventsPath, transport.NewSSEHandler(m.runtime, transport.SSEOptions{Auth: authorizer}))
+	m.ServeMux.Handle("GET "+rpcPath, transport.NewWSHandler(transport.NewDispatcher(m.runtime), m.runtime, transport.WSOptions{Auth: authorizer}))
 	// Wire the mux for in-memory oumv/verify (no extra configuration needed).
 	m.runtime.SetHandler(m)
 	// Advertise exactly the transports mounted above (spec §2.3/§2.4).

@@ -80,11 +80,15 @@ func Mount(r chi.Router, rt *oumv.Runtime, opts ...Options) error {
 	r.Post(rpcPath, transport.NewHTTPHandler(dispatcher, httpOpts).ServeHTTP)
 	r.Options(rpcPath, transport.NewHTTPHandler(dispatcher, httpOpts).ServeHTTP)
 	eventsPath := strings.TrimSuffix(rpcPath, "/rpc") + "/events"
+	// §12: one authorizer for every binding, so SSE/WS cannot be the unguarded door.
+	authorizer := transport.NewAuthorizer(rt.Config().Security.AuthToken, rt.Config().Security.AuthenticationRequired)
+	sseHandler := transport.NewSSEHandler(rt, transport.SSEOptions{Auth: authorizer})
+	wsHandler := transport.NewWSHandler(transport.NewDispatcher(rt), rt, transport.WSOptions{Auth: authorizer})
 	r.Get(eventsPath, func(w http.ResponseWriter, req *http.Request) {
-		transport.NewSSEHandler(rt).ServeHTTP(w, req)
+		sseHandler.ServeHTTP(w, req)
 	})
 	r.Get(rpcPath, func(w http.ResponseWriter, req *http.Request) {
-		transport.NewWSHandler(transport.NewDispatcher(rt), rt).ServeHTTP(w, req)
+		wsHandler.ServeHTTP(w, req)
 	})
 	rt.SetTransports("http", "sse", "ws")
 

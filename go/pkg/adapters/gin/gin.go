@@ -91,8 +91,10 @@ func Mount(r *gin.Engine, rt *oumv.Runtime, opts ...Options) {
 
 	dispatcherForWS := transport.NewDispatcher(rt)
 	eventsPath := strings.TrimSuffix(rpcPath, "/rpc") + "/events"
-	r.GET(eventsPath, gin.WrapH(transport.NewSSEHandler(rt)))
-	r.GET(rpcPath, gin.WrapH(transport.NewWSHandler(dispatcherForWS, rt)))
+	// §12: one authorizer for every binding, so SSE/WS cannot be the unguarded door.
+	authorizer := transport.NewAuthorizer(rt.Config().Security.AuthToken, rt.Config().Security.AuthenticationRequired)
+	r.GET(eventsPath, gin.WrapH(transport.NewSSEHandler(rt, transport.SSEOptions{Auth: authorizer})))
+	r.GET(rpcPath, gin.WrapH(transport.NewWSHandler(dispatcherForWS, rt, transport.WSOptions{Auth: authorizer})))
 	// POST/OPTIONS only: GET on this path is the WebSocket upgrade.
 	r.POST(rpcPath, gin.WrapH(handler))
 	r.OPTIONS(rpcPath, gin.WrapH(handler))

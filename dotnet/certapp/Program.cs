@@ -15,7 +15,13 @@ var builder = WebApplication.CreateBuilder(args);
 builder.Services.AddDbContext<CertDbContext>(options => options.UseSqlite($"Data Source={databasePath}"));
 builder.Services.AddControllers();
 // One builder line: the adapter discovers the DbContext and enables the rollback sandbox.
-builder.Services.AddTokensafe(options => options.WorkspaceRoot = workspace);
+builder.Services.AddTokensafe(options =>
+{
+    options.WorkspaceRoot = workspace;
+    // §12: the harness starts the app with a token, so the auth refusal cases are
+    // certified against this binding instead of being asserted in prose.
+    options.AuthToken = Environment.GetEnvironmentVariable("TOKENSAFE_OUMV_AUTH_TOKEN");
+});
 
 var app = builder.Build();
 app.UseWebSockets();

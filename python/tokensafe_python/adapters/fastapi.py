@@ -162,6 +162,32 @@ class TokenSafeFastAPI:
 
         self.runtime.set_action_executor(execute_asgi)
 
+    def _expected_auth_token(self) -> str:
+        return os.environ.get("TOKENSAFE_OUMV_AUTH_TOKEN", "").strip()
+
+    @staticmethod
+    def _credential_from_headers(headers) -> str:
+        provided = (headers.get("x-oumv-session-token") or "").strip()
+        auth = headers.get("authorization", "")
+        if auth.lower().startswith("bearer "):
+            provided = auth[7:].strip() or provided
+        return provided
+
+    def _authorized(self, headers) -> bool:
+        """Spec §12: a configured token is always required — never fail open."""
+        expected = self._expected_auth_token()
+        if not expected:
+            return True
+        return self._credential_from_headers(headers) == expected
+
+    @staticmethod
+    def _auth_refusal() -> JSONResponse:
+        return JSONResponse(
+            content={"jsonrpc": "2.0", "id": None,
+                     "error": {"code": -32007, "message": "PERMISSION_DENIED: invalid OUMV auth token"}},
+            status_code=401,
+        )
+
     def _mount_rpc_endpoints(self):
         """Mounts /__oumv/rpc and /__oumv/health onto the FastAPI app."""
 
@@ -169,18 +195,8 @@ class TokenSafeFastAPI:
         async def handle_rpc(request: Request):
             # Spec §2.2: a token, when configured, is required. Loopback development
             # may run without one, so the check is opt-in via env (or explicit token).
-            expected = os.environ.get("TOKENSAFE_OUMV_AUTH_TOKEN", "").strip()
-            if expected:
-                provided = (request.headers.get("x-oumv-session-token") or "").strip()
-                auth = request.headers.get("authorization", "")
-                if auth.lower().startswith("bearer "):
-                    provided = auth[7:].strip() or provided
-                if provided != expected:
-                    return JSONResponse(
-                        content={"jsonrpc": "2.0", "id": None,
-                                 "error": {"code": -32007, "message": "PERMISSION_DENIED: invalid OUMV auth token"}},
-                        status_code=401,
-                    )
+            if not self._authorized(request.headers):
+                return self._auth_refusal()
             try:
                 body = await request.json()
             except Exception as e:
@@ -203,6 +219,9 @@ class TokenSafeFastAPI:
             Every event carries a monotonic `id`; `Last-Event-ID` replays what the
             client missed while it was disconnected.
             """
+            # §12: an authenticated binding protects SSE too, not just the RPC POST.
+            if not self._authorized(request.headers):
+                return self._auth_refusal()
             last_id = 0
             raw_last = (request.headers.get("last-event-id") or "").strip()
             if raw_last.isdigit():
@@ -236,6 +255,11 @@ class TokenSafeFastAPI:
             receives `notifications/oumv.trace` / `notifications/oumv.state`;
             closing the socket ends the session.
             """
+            # §12: refuse the upgrade itself; a rejected WebSocket close before
+            # accept answers HTTP 403, which is the spec's non-dispatch refusal.
+            if not self._authorized(websocket.headers):
+                await websocket.close(code=1008)
+                return
             await websocket.accept()
             queue, unsubscribe = self.runtime.subscribe_events()
             state = {"session": ""}

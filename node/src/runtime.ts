@@ -207,7 +207,7 @@ export class OumvRuntime {
     }
     this.transportPath = options.transportPath || '/__oumv/rpc';
     this.maxBodyBytes = options.maxBodyBytes ?? 8 * 1024 * 1024;
-    this.authToken = options.authToken || '';
+    this.authToken = options.authToken || process.env.TOKENSAFE_OUMV_AUTH_TOKEN || '';
     this.sandbox = options.sandbox;
     // §14.3 configured build command; a params.command override is honoured per call.
     this.buildCommand = options.buildCommand;

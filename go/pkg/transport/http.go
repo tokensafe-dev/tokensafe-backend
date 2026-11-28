@@ -2,7 +2,6 @@ package transport
 
 import (
 	"bytes"
-	"crypto/subtle"
 	"encoding/json"
 	"io"
 	"net/http"
@@ -93,31 +92,10 @@ func (h *HTTPHandler) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// 2. Authentication enforcement
-	if h.opts.AuthenticationRequired || strings.TrimSpace(h.opts.AuthToken) != "" {
-		expected := []byte(strings.TrimSpace(h.opts.AuthToken))
-
-		// Check Authorization: Bearer <token>
-		authHeader := r.Header.Get("Authorization")
-		token := ""
-		if strings.HasPrefix(strings.ToLower(authHeader), "bearer ") {
-			token = strings.TrimSpace(authHeader[7:])
-		} else if authHeader != "" {
-			token = strings.TrimSpace(authHeader)
-		}
-
-		// Fallback check X-OUMV-Session-Token
-		if token == "" {
-			token = strings.TrimSpace(r.Header.Get("X-OUMV-Session-Token"))
-		}
-
-		valid := len(token) > 0 && len(expected) > 0 && subtle.ConstantTimeCompare([]byte(token), expected) == 1
-		if !valid {
-			w.Header().Set("Content-Type", "application/json")
-			w.WriteHeader(http.StatusUnauthorized)
-			_ = json.NewEncoder(w).Encode(protocol.NewErrorResponse(nil, protocol.NewPermissionDeniedError("Unauthorized: valid OUMV authentication token required")))
-			return
-		}
+	// 2. Authentication enforcement (§12: refused before dispatch, 401 + -32007)
+	if authz := NewAuthorizer(h.opts.AuthToken, h.opts.AuthenticationRequired); !authz.Authorized(r) {
+		authz.Refuse(w)
+		return
 	}
 
 	// 3. Process JSON-RPC Request body

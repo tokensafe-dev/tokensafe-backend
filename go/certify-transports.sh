@@ -21,6 +21,9 @@ REPORT_DIR="${REPORT_DIR:-$REPO/certification/transports}"
 MARKERS="$HERE/cmd/certserver/markers.json"
 CERTIFY="$OUMV/packages/conformance/dist/cli/certify.js"
 PORT="${GO_PORT:-18090}"
+# §12: the certserver is started with a token so the auth refusal cases run in
+# the certificate; the CLI authenticates with the same value.
+CERT_TOKEN="${OUMV_CERT_TOKEN:-oumv-cert-token}"
 
 [ -f "$CERTIFY" ] || { echo "oumv-certify not built: $CERTIFY (set OUMV_REPO and build @oumv/conformance)" >&2; exit 2; }
 [ -f "$MARKERS" ] || { echo "markers not found: $MARKERS" >&2; exit 2; }
@@ -69,7 +72,7 @@ MOD
 
 start_server() {
   SERVER_LOG="$WORKSPACE/certserver.log"
-  "$BUILD_DIR/certserver" -addr "127.0.0.1:$PORT" -workspace "$WORKSPACE" >"$SERVER_LOG" 2>&1 &
+  "$BUILD_DIR/certserver" -addr "127.0.0.1:$PORT" -workspace "$WORKSPACE" -token "$CERT_TOKEN" >"$SERVER_LOG" 2>&1 &
   SERVER_PID=$!
   for _ in $(seq 1 120); do
     if node -e "const s=require('net').connect($PORT,'127.0.0.1');s.on('connect',()=>process.exit(0));s.on('error',()=>process.exit(1))" >/dev/null 2>&1; then
@@ -86,7 +89,7 @@ echo "▸ certifying WebSocket binding"
 prepare_workspace
 start_server
 node "$CERTIFY" --adapter go-stdhttp-ws --framework net/http --profile backend \
-  --ws "ws://127.0.0.1:$PORT/__oumv/rpc" --markers "@$MARKERS" --fixtures "$OUMV/fixtures/conformance-cases.json" \
+  --ws "ws://127.0.0.1:$PORT/__oumv/rpc" --token "$CERT_TOKEN" --markers "@$MARKERS" --fixtures "$OUMV/fixtures/conformance-cases.json" \
   --report "$REPORT_DIR/go-stdhttp-ws.json" --min-level 3
 stop_server
 rm -rf "$WORKSPACE"
@@ -97,6 +100,7 @@ prepare_workspace
 start_server
 node "$CERTIFY" --adapter go-stdhttp-sse --framework net/http --profile backend \
   --url "http://127.0.0.1:$PORT/__oumv/rpc" --sse "http://127.0.0.1:$PORT/__oumv/events" \
+  --token "$CERT_TOKEN" --auth \
   --markers "@$MARKERS" --fixtures "$OUMV/fixtures/conformance-cases.json" \
   --report "$REPORT_DIR/go-stdhttp-sse.json" --min-level 3
 stop_server

@@ -863,7 +863,48 @@
       ]
     }
   ],
-  "fixtureVersion": 12,
+  "authCases": [
+    {
+      "id": "auth-missing-token-is-refused",
+      "level": 1,
+      "auth": "missing",
+      "method": "oumv/observe",
+      "params": {
+        "level": "L0"
+      },
+      "expectHttpStatus": 401,
+      "expectError": {
+        "code": -32007
+      }
+    },
+    {
+      "id": "auth-invalid-token-is-refused",
+      "level": 1,
+      "auth": "invalid",
+      "method": "oumv/observe",
+      "params": {
+        "level": "L0"
+      },
+      "expectHttpStatus": 401,
+      "expectError": {
+        "code": -32007
+      }
+    },
+    {
+      "id": "auth-wrong-scheme-is-refused",
+      "level": 1,
+      "auth": "wrong-scheme",
+      "method": "oumv/handshake",
+      "params": {
+        "protocolVersion": "1.6.0"
+      },
+      "expectHttpStatus": 401,
+      "expectError": {
+        "code": -32007
+      }
+    }
+  ],
+  "fixtureVersion": 13,
   "levelDefinitions": {
     "1": "Handshake, L0-L1 observe, action verification",
     "2": "L2-L3 observe, impact analysis, OCC mutations, surface diffs",

@@ -88,6 +88,25 @@ public sealed class OumvMiddleware
         var isRpc = path.Equals(options.RpcPath, StringComparison.OrdinalIgnoreCase);
         var isEvents = path.Equals(options.EventsPath, StringComparison.OrdinalIgnoreCase);
 
+        // §12: the credential is checked before dispatch on every binding, so SSE
+        // and WS cannot become the unguarded door; a tokenless non-loopback bind
+        // is refused outright.
+        if (isRpc || isEvents)
+        {
+            if (!IsAuthorized(context))
+            {
+                await RefuseAsync(context, StatusCodes.Status401Unauthorized,
+                    "PERMISSION_DENIED: invalid OUMV session token", null);
+                return;
+            }
+            if (string.IsNullOrEmpty(options.AuthToken) && !IsLoopbackConnection(context))
+            {
+                await RefuseAsync(context, StatusCodes.Status403Forbidden,
+                    "PERMISSION_DENIED: a non-loopback bind requires AuthToken", "token_required_non_loopback");
+                return;
+            }
+        }
+
         if (isRpc && context.WebSockets.IsWebSocketRequest)
         {
             await HandleWebSocketAsync(context);
@@ -123,6 +142,44 @@ public sealed class OumvMiddleware
     }
 
     /* -------------------------------------------------------------------- HTTP */
+
+    /// <summary>True when the request carries the configured token (spec §12).</summary>
+    private bool IsAuthorized(HttpContext context)
+    {
+        var expected = _runtime.Options.AuthToken;
+        if (string.IsNullOrEmpty(expected)) return true;
+        var provided = context.Request.Headers["X-OUMV-Session-Token"].ToString();
+        if (string.IsNullOrEmpty(provided))
+        {
+            var authorization = context.Request.Headers.Authorization.ToString();
+            if (authorization.StartsWith("Bearer ", StringComparison.OrdinalIgnoreCase))
+                provided = authorization[7..].Trim();
+        }
+        if (string.IsNullOrEmpty(provided)) return false;
+        return System.Security.Cryptography.CryptographicOperations.FixedTimeEquals(
+            Encoding.UTF8.GetBytes(provided), Encoding.UTF8.GetBytes(expected));
+    }
+
+    /// <summary>Loopback (or an unbound/test address) may run tokenless in development.</summary>
+    private static bool IsLoopbackConnection(HttpContext context)
+    {
+        var local = context.Connection.LocalIpAddress;
+        return local is null || System.Net.IPAddress.IsLoopback(local);
+    }
+
+    private static async Task RefuseAsync(HttpContext context, int status, string message, string? reason)
+    {
+        context.Response.StatusCode = status;
+        context.Response.ContentType = "application/json";
+        var error = new JsonObject { ["code"] = OumvErrorCode.PermissionDenied, ["message"] = message };
+        if (reason is not null) error["data"] = new JsonObject { ["reason"] = reason };
+        await context.Response.WriteAsync(new JsonObject
+        {
+            ["jsonrpc"] = "2.0",
+            ["id"] = null,
+            ["error"] = error,
+        }.ToJsonString());
+    }
 
     private async Task HandleRpcAsync(HttpContext context)
     {
