@@ -18,6 +18,56 @@ from fastapi.routing import APIRoute
 from tokensafe_python.core.runtime import OUMVRuntime
 
 
+def _discover_db_engine(app) -> Optional[Any]:
+    """Finds a SQLAlchemy engine the app already owns (§4/§12 DB sandbox).
+
+    .NET discovers `AddDbContext` from the service collection; FastAPI has no
+    container, so the honest equivalent is the state an application actually
+    exposes: `app.state.engine` / `db_engine` (an Engine, AsyncEngine or a
+    sessionmaker bound to one) and FastAPI dependency overrides that close over
+    an engine. Anything not recognised stays None, and the runtime keeps
+    advertising no sandbox capability rather than guessing.
+    """
+    try:
+        from sqlalchemy.engine import Engine
+    except Exception:
+        return None
+    try:
+        # The asyncio module needs greenlet; a sync-only install must still work.
+        from sqlalchemy.ext.asyncio import AsyncEngine
+        engine_types: tuple = (Engine, AsyncEngine)
+    except Exception:
+        AsyncEngine = None  # type: ignore[assignment]
+        engine_types = (Engine,)
+
+    def coerce(candidate):
+        if isinstance(candidate, engine_types):
+            return candidate
+        bind = getattr(candidate, "kw", None)
+        if isinstance(bind, dict):
+            bound = bind.get("bind")
+            if isinstance(bound, engine_types):
+                return bound
+        return None
+
+    state = getattr(app, "state", None)
+    if state is not None:
+        for name in ("db_engine", "engine", "db", "database"):
+            engine = coerce(getattr(state, name, None))
+            if engine is not None:
+                return engine
+
+    for override in getattr(app, "dependency_overrides", {}).values():
+        for cell in getattr(override, "__closure__", None) or ():
+            try:
+                engine = coerce(cell.cell_contents)
+            except Exception:
+                continue
+            if engine is not None:
+                return engine
+    return None
+
+
 class TokenSafeFastAPI:
     """Wrapper that instruments a FastAPI application with UARP runtime capabilities."""
 
@@ -41,7 +91,9 @@ class TokenSafeFastAPI:
         self.sse_heartbeat_seconds = float(os.environ.get("TOKENSAFE_OUMV_SSE_HEARTBEAT", "15"))
         self.runtime = OUMVRuntime(
             framework="fastapi",
-            db_engine=db_engine,
+            # Explicit wiring wins; otherwise adopt the engine the app already holds
+            # (the .NET AddDbContext discovery is the template for this).
+            db_engine=db_engine if db_engine is not None else _discover_db_engine(app),
             project_root=project_root,
             permissions=permissions,
         )

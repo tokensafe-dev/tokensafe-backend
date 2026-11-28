@@ -176,3 +176,24 @@ async def test_verify_sandbox_rejects_unknown_mode():
         await runtime.handle_oumv_verify(target="GET /", sandbox={"mode": "commit"})
     assert excinfo.value.code == -32006
 
+
+
+def test_fastapi_adopts_the_engine_the_app_already_holds(tmp_path):
+    """ORM autodetect: the .NET AddDbContext discovery is the template.
+
+    A FastAPI app that exposes its engine on `app.state` gets the transactional
+    sandbox without a second wiring line; an app that exposes nothing keeps the
+    honest no-sandbox capability.
+    """
+    from fastapi import FastAPI
+    from tokensafe_python.adapters.fastapi import TokenSafeFastAPI
+
+    engine = create_engine(f"sqlite:///{tmp_path / 'auto.sqlite'}")
+    app = FastAPI()
+    app.state.engine = engine
+    mounted = TokenSafeFastAPI(app, auto_discover=False, project_root=str(tmp_path))
+    assert mounted.runtime.db_sandbox.has_engine() is True
+
+    plain = FastAPI()
+    unmounted = TokenSafeFastAPI(plain, auto_discover=False, project_root=str(tmp_path))
+    assert unmounted.runtime.db_sandbox.has_engine() is False
