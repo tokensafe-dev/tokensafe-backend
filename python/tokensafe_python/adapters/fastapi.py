@@ -1,71 +1,42 @@
 """
-FastAPI / Starlette adapter for TokenSafe UARP (Universal Agent-Runtime Protocol).
+FastAPI adapter for TokenSafe UARP (Universal Agent-Runtime Protocol).
 Provides zero-config runtime introspection, /__oumv/rpc JSON-RPC endpoint,
 and safe dry-run mutation simulation.
+
+The wire transport (RPC, SSE, WebSocket, auth, CORS) is shared with the
+Starlette adapter in ``adapters/_http_binding.py``; this module only adds the
+FastAPI-specific route/schema introspection and lifecycle hooks.
 """
 
-import json
-import os
-import time
-from typing import Any, Dict, Optional, Tuple
-import asyncio
-import json as _json
+from typing import Any, Dict, Optional
 
-from fastapi import FastAPI, Request, WebSocket, WebSocketDisconnect
+from fastapi import FastAPI, Request, WebSocket
 from fastapi.responses import JSONResponse, StreamingResponse
 from fastapi.routing import APIRoute
 
 from tokensafe_python.core.runtime import OUMVRuntime
+from tokensafe_python.adapters._http_binding import (
+    HTTPBinding,
+    auth_refusal,
+    credential_from_headers,
+    discover_db_engine,
+    expected_auth_token,
+    is_authorized,
+    make_asgi_action_executor,
+    register_declared_operations,
+)
 
 
 def _discover_db_engine(app) -> Optional[Any]:
-    """Finds a SQLAlchemy engine the app already owns (§4/§12 DB sandbox).
+    """Finds a SQLAlchemy engine the FastAPI app already owns (§4/§12 DB sandbox).
 
-    .NET discovers `AddDbContext` from the service collection; FastAPI has no
-    container, so the honest equivalent is the state an application actually
-    exposes: `app.state.engine` / `db_engine` (an Engine, AsyncEngine or a
-    sessionmaker bound to one) and FastAPI dependency overrides that close over
-    an engine. Anything not recognised stays None, and the runtime keeps
-    advertising no sandbox capability rather than guessing.
+    FastAPI has no container, so the honest equivalent is the state an
+    application actually exposes (``app.state.engine`` / ``db_engine``) plus the
+    dependency overrides that close over an engine. Anything not recognised
+    stays None, and the runtime keeps advertising no sandbox capability rather
+    than guessing.
     """
-    try:
-        from sqlalchemy.engine import Engine
-    except Exception:
-        return None
-    try:
-        # The asyncio module needs greenlet; a sync-only install must still work.
-        from sqlalchemy.ext.asyncio import AsyncEngine
-        engine_types: tuple = (Engine, AsyncEngine)
-    except Exception:
-        AsyncEngine = None  # type: ignore[assignment]
-        engine_types = (Engine,)
-
-    def coerce(candidate):
-        if isinstance(candidate, engine_types):
-            return candidate
-        bind = getattr(candidate, "kw", None)
-        if isinstance(bind, dict):
-            bound = bind.get("bind")
-            if isinstance(bound, engine_types):
-                return bound
-        return None
-
-    state = getattr(app, "state", None)
-    if state is not None:
-        for name in ("db_engine", "engine", "db", "database"):
-            engine = coerce(getattr(state, name, None))
-            if engine is not None:
-                return engine
-
-    for override in getattr(app, "dependency_overrides", {}).values():
-        for cell in getattr(override, "__closure__", None) or ():
-            try:
-                engine = coerce(cell.cell_contents)
-            except Exception:
-                continue
-            if engine is not None:
-                return engine
-    return None
+    return discover_db_engine(app, include_dependency_overrides=True)
 
 
 class TokenSafeFastAPI:
@@ -88,8 +59,6 @@ class TokenSafeFastAPI:
         self.rpc_path = rpc_path
         self.host = host
         self.port = port
-        # SSE heartbeat cadence; tests shrink it to milliseconds.
-        self.sse_heartbeat_seconds = float(os.environ.get("TOKENSAFE_OUMV_SSE_HEARTBEAT", "15"))
         self.runtime = OUMVRuntime(
             framework="fastapi",
             # Explicit wiring wins; otherwise adopt the engine the app already holds
@@ -99,6 +68,10 @@ class TokenSafeFastAPI:
             permissions=permissions,
             read_only=read_only,
         )
+        # One transport implementation for both Python adapters.
+        self._binding = HTTPBinding(self.runtime, rpc_path=rpc_path)
+        # SSE heartbeat cadence; tests shrink it to milliseconds.
+        self.sse_heartbeat_seconds = self._binding.sse_heartbeat_seconds
 
         self._introspect_app()
         self._register_declared_operations()
@@ -110,12 +83,7 @@ class TokenSafeFastAPI:
 
     def _register_declared_operations(self):
         """Wires Level 3 @oumv_operation contracts (core/contracts.py) into the runtime."""
-        try:
-            from tokensafe_python.core.contracts import get_operations
-            for contract in get_operations().values():
-                self.runtime.register_operation(contract)
-        except Exception:
-            pass
+        register_declared_operations(self.runtime)
 
     def _introspect_app(self):
         """Introspects FastAPI routes, path parameters, and Pydantic schemas."""
@@ -179,198 +147,43 @@ class TokenSafeFastAPI:
 
     def _setup_action_executor(self):
         """Sets up ASGI in-memory execution for mutation.simulate and mutation.apply."""
-        import httpx
-
-        async def execute_asgi(
-            path: str,
-            method: str,
-            body: Optional[Any] = None,
-            headers: Optional[Dict[str, str]] = None,
-            query_params: Optional[Dict[str, Any]] = None,
-            dry_run: bool = True,
-        ) -> Tuple[Any, int]:
-            transport = httpx.ASGITransport(app=self.app)
-            req_headers = dict(headers or {})
-            if dry_run:
-                req_headers["X-TokenSafe-Dry-Run"] = "true"
-
-            async with httpx.AsyncClient(transport=transport, base_url="http://testserver") as client:
-                req_kwargs: Dict[str, Any] = {
-                    "headers": req_headers,
-                    "params": query_params,
-                }
-                if body is not None:
-                    if isinstance(body, (dict, list)):
-                        req_kwargs["json"] = body
-                    else:
-                        req_kwargs["content"] = str(body)
-
-                resp = await client.request(method.upper(), path, **req_kwargs)
-
-                try:
-                    res_body = resp.json()
-                except Exception:
-                    res_body = resp.text
-
-                return res_body, resp.status_code
-
-        self.runtime.set_action_executor(execute_asgi)
+        self.runtime.set_action_executor(make_asgi_action_executor(self.app))
 
     def _expected_auth_token(self) -> str:
-        return os.environ.get("TOKENSAFE_OUMV_AUTH_TOKEN", "").strip()
+        return expected_auth_token()
 
     @staticmethod
     def _credential_from_headers(headers) -> str:
-        provided = (headers.get("x-oumv-session-token") or "").strip()
-        auth = headers.get("authorization", "")
-        if auth.lower().startswith("bearer "):
-            provided = auth[7:].strip() or provided
-        return provided
+        return credential_from_headers(headers)
 
     def _authorized(self, headers) -> bool:
         """Spec §12: a configured token is always required — never fail open."""
-        expected = self._expected_auth_token()
-        if not expected:
-            return True
-        return self._credential_from_headers(headers) == expected
+        return is_authorized(headers)
 
     @staticmethod
     def _auth_refusal() -> JSONResponse:
-        return JSONResponse(
-            content={"jsonrpc": "2.0", "id": None,
-                     "error": {"code": -32007, "message": "PERMISSION_DENIED: invalid OUMV auth token"}},
-            status_code=401,
-        )
+        return auth_refusal()
 
     def _mount_rpc_endpoints(self):
         """Mounts /__oumv/rpc and /__oumv/health onto the FastAPI app."""
 
         @self.app.post(self.rpc_path, include_in_schema=False)
         async def handle_rpc(request: Request):
-            # Spec §2.2: a token, when configured, is required. Loopback development
-            # may run without one, so the check is opt-in via env (or explicit token).
-            if not self._authorized(request.headers):
-                return self._auth_refusal()
-            try:
-                body = await request.json()
-            except Exception as e:
-                return JSONResponse(
-                    content={
-                        "jsonrpc": "2.0",
-                        "id": None,
-                        "error": {"code": -32700, "message": f"Parse error: {str(e)}"}
-                    },
-                    status_code=400,
-                )
-
-            res = await self.runtime.rpc.handle_payload(body)
-            return JSONResponse(content=res)
+            return await self._binding.rpc_response(request)
 
         @self.app.get("/__oumv/events", include_in_schema=False)
-        async def handle_events(request: Request):
-            """SSE event stream (spec §2.3): trace/state events plus heartbeats.
-
-            Every event carries a monotonic `id`; `Last-Event-ID` replays what the
-            client missed while it was disconnected.
-            """
-            # §12: an authenticated binding protects SSE too, not just the RPC POST.
-            if not self._authorized(request.headers):
-                return self._auth_refusal()
-            last_id = 0
-            raw_last = (request.headers.get("last-event-id") or "").strip()
-            if raw_last.isdigit():
-                last_id = int(raw_last)
-
-            async def event_stream():
-                nonlocal last_id
-                yield ": connected\n\n"
-                heartbeat_every = max(self.sse_heartbeat_seconds, 0.001)
-                next_heartbeat = time.monotonic() + heartbeat_every
-                while True:
-                    if await request.is_disconnected():
-                        return
-                    for event in self.runtime.events_since(last_id):
-                        payload = _json.dumps(event["data"])
-                        yield f"id: {event['id']}\nevent: {event['type']}\ndata: {payload}\n\n"
-                        last_id = event["id"]
-                    now = time.monotonic()
-                    if now >= next_heartbeat:
-                        yield f"event: heartbeat\ndata: {_json.dumps({'ts': self.runtime.state.to_timestamp()})}\n\n"
-                        next_heartbeat = now + heartbeat_every
-                    await asyncio.sleep(0.2)
-
-            return StreamingResponse(event_stream(), media_type="text/event-stream")
+        async def handle_events(request: Request) -> StreamingResponse:
+            """SSE event stream (spec §2.3) with Last-Event-ID replay."""
+            return await self._binding.sse_response(request)
 
         @self.app.websocket(self.rpc_path)
         async def handle_ws(websocket: WebSocket):
-            """JSON-RPC over WebSocket (spec §2.4) plus server notifications.
-
-            After `oumv/handshake` the connection is bound to that sessionId and
-            receives `notifications/oumv.trace` / `notifications/oumv.state`;
-            closing the socket ends the session.
-            """
-            # §12: refuse the upgrade itself; a rejected WebSocket close before
-            # accept answers HTTP 403, which is the spec's non-dispatch refusal.
-            if not self._authorized(websocket.headers):
-                await websocket.close(code=1008)
-                return
-            await websocket.accept()
-            queue, unsubscribe = self.runtime.subscribe_events()
-            state = {"session": ""}
-            send_lock = asyncio.Lock()
-
-            async def forward_events():
-                while True:
-                    event = await queue.get()
-                    session_id = state["session"]
-                    if not session_id:
-                        continue  # notifications start after handshake
-                    method = {
-                        "state": "notifications/oumv.state",
-                        "diagnostic": "notifications/oumv.diagnostic",
-                    }.get(event["type"], "notifications/oumv.trace")
-                    params = dict(event["data"])
-                    params["sessionId"] = session_id
-                    async with send_lock:
-                        await websocket.send_json(
-                            {"jsonrpc": "2.0", "method": method, "params": params}
-                        )
-
-            forwarder = asyncio.create_task(forward_events())
-            try:
-                while True:
-                    payload = await websocket.receive_json()
-                    result = await self.runtime.rpc.handle_payload(payload)
-                    if isinstance(payload, dict) and payload.get("id") is not None:
-                        async with send_lock:
-                            await websocket.send_json(result)
-                        if payload.get("method") == "oumv/handshake" and isinstance(result, dict):
-                            # A rejected handshake must not unbind a live session:
-                            # only a successful result carrying a sessionId rebinds.
-                            handshake_result = result.get("result")
-                            if isinstance(handshake_result, dict):
-                                session_id = str(handshake_result.get("sessionId") or "")
-                                if session_id:
-                                    state["session"] = session_id
-            except WebSocketDisconnect:
-                return
-            finally:
-                forwarder.cancel()
-                unsubscribe()
-                self.runtime.sessions.delete(state["session"])
+            """JSON-RPC over WebSocket (spec §2.4) plus server notifications."""
+            await self._binding.serve_websocket(websocket)
 
         @self.app.get("/__oumv/health", include_in_schema=False)
         async def handle_health():
-            return {
-                "status": "ok",
-                "runtime": "tokensafe-python",
-                "framework": "fastapi",
-                "protocol": "UARP/1.1",
-                "profile": "backend",
-                "rpc_endpoint": self.rpc_path,
-                "registered_routes": len(self.runtime._routes),
-                "registered_models": len(self.runtime._schemas),
-            }
+            return self._binding.health("fastapi")
 
     def _register_lifecycle_events(self):
         """Hooks into startup and shutdown events for runtime.json registration."""

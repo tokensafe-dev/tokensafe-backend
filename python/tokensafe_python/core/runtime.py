@@ -397,6 +397,12 @@ class OUMVRuntime:
         if self.read_only:
             caps.pop("mutate", None)
             caps.pop("verify", None)
+            # Idempotent replay exists only for mutations (§3): with no write
+            # method registered there is nothing a retry could replay, so the
+            # claim goes away with the methods instead of advertising an
+            # extension the deployment cannot serve.
+            if isinstance(caps.get("sessions"), dict):
+                caps["sessions"]["idempotency"] = False
             caps["readOnly"] = True
         # §3.1: honour the client's request by narrowing the advertised set. Arrays
         # are filters; an empty intersection stays empty ("cannot serve").
