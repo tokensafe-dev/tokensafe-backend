@@ -121,8 +121,14 @@ async def test_stdio_conformance_certification(tmp_path):
             post, FIXTURES, markers, adapter_name="python-stdio", framework="python"
         )
     finally:
+        # A child that ignores SIGTERM (or is blocked in a C call) must not hang
+        # the test: escalate to SIGKILL after a bounded wait.
         proc.terminate()
-        await proc.wait()
+        try:
+            await asyncio.wait_for(proc.wait(), timeout=10)
+        except asyncio.TimeoutError:
+            proc.kill()
+            await asyncio.wait_for(proc.wait(), timeout=10)
 
     report["environment"] = {"transport": "stdio", "python": sys.version.split()[0]}
     out_dir = os.environ.get("CERT_OUT_DIR")

@@ -62,3 +62,7 @@ pythonpath = ["."]
 testpaths = ["tests"]
 asyncio_mode = "auto"
 asyncio_default_fixture_loop_scope = "function"
+# A hung test must fail loudly with its own stack instead of stalling a runner:
+# the 3.10 matrix leg sat in "Run Python tests" for the whole job budget once.
+timeout = 180
+timeout_method = "thread"

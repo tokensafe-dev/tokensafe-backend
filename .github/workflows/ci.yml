@@ -12,6 +12,8 @@ jobs:
   test-go:
     name: Test Go Runtime
     runs-on: ubuntu-latest
+    # A wedged step must fail here instead of consuming the global job budget.
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: go
@@ -34,6 +36,8 @@ jobs:
   test-python:
     name: Test Python Runtime (${{ matrix.python-version }})
     runs-on: ubuntu-latest
+    # A wedged step must fail here instead of consuming the global job budget.
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: python
@@ -53,7 +57,7 @@ jobs:
       - name: Install dependencies
         run: |
           pip install --upgrade pip
-          pip install -e ".[all]" pytest pytest-asyncio anyio
+          pip install -e ".[all]" pytest pytest-asyncio pytest-timeout anyio
 
       - name: Run Python tests
         run: pytest -v
@@ -61,6 +65,8 @@ jobs:
   test-node:
     name: Test Node Runtime
     runs-on: ubuntu-latest
+    # A wedged step must fail here instead of consuming the global job budget.
+    timeout-minutes: 20
     defaults:
       run:
         working-directory: node
@@ -92,6 +98,8 @@ jobs:
   test-dotnet:
     name: Test .NET Runtime
     runs-on: ubuntu-latest
+    # A wedged step must fail here instead of consuming the global job budget.
+    timeout-minutes: 25
     defaults:
       run:
         working-directory: dotnet
@@ -110,6 +118,8 @@ jobs:
   certification:
     name: Certification is reproducible
     runs-on: ubuntu-latest
+    # A wedged step must fail here instead of consuming the global job budget.
+    timeout-minutes: 30
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -164,7 +174,7 @@ jobs:
         working-directory: python
         run: |
           pip install --upgrade pip
-          pip install -e ".[all]" pytest pytest-asyncio anyio
+          pip install -e ".[all]" pytest pytest-asyncio pytest-timeout anyio
 
       - name: Generate Go adapter reports
         working-directory: go
