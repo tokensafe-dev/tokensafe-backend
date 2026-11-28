@@ -20,6 +20,9 @@ public sealed class OumvRuntime
     private readonly IServiceProvider _services;
     private readonly TimeProvider _time;
     private readonly List<OumvTrace> _traces = new();
+    // §3 cooperative cancellation: requestId -> the token its handler observes.
+    private readonly System.Collections.Concurrent.ConcurrentDictionary<string, CancellationTokenSource> _inFlight = new();
+    private volatile string _lastRequestId = string.Empty;
     private readonly object _traceGate = new();
     private readonly DateTimeOffset _started;
 
@@ -123,7 +126,21 @@ public sealed class OumvRuntime
                             new Dictionary<string, object?> { ["reason"] = "session_expired", ["sessionId"] = sessionId });
             }
 
-            var result = method switch
+            var requestId = OumvJson.Str(paramsNode["requestId"])?.Trim();
+            var effectiveToken = cancellationToken;
+            CancellationTokenSource? requestCts = null;
+            if (!string.IsNullOrEmpty(requestId) && method != "oumv/cancel")
+            {
+                requestCts = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+                _inFlight[requestId] = requestCts;
+                _lastRequestId = requestId;
+                effectiveToken = requestCts.Token;
+            }
+
+            JsonNode? result;
+            try
+            {
+            result = method switch
             {
                 "oumv/handshake" => Handshake(paramsNode),
                 "oumv/disconnect" => Disconnect(paramsNode),
@@ -131,9 +148,23 @@ public sealed class OumvRuntime
                 "oumv/understand" => await UnderstandAsync(paramsNode, cancellationToken),
                 "oumv/getSource" => GetSource(paramsNode),
                 "oumv/applyEdit" => ApplyEdit(paramsNode),
-                "oumv/verify" => await VerifyAsync(paramsNode, cancellationToken),
+                "oumv/previewEdit" => PreviewEdit(paramsNode),
+                "oumv/index" => IndexSymbols(paramsNode),
+                "oumv/build" => await BuildAsync(paramsNode, cancellationToken),
+                "oumv/cancel" => Cancel(paramsNode),
+                "oumv/query" => await QueryAsync(paramsNode, cancellationToken),
+                "oumv/verify" => await VerifyAsync(paramsNode, effectiveToken),
                 _ => throw new OumvException(OumvErrorCode.MethodNotFound, $"METHOD_NOT_FOUND: {method}"),
             };
+            }
+            finally
+            {
+                if (requestCts is not null && requestId is not null)
+                {
+                    _inFlight.TryRemove(requestId, out _);
+                    requestCts.Dispose();
+                }
+            }
 
             stopwatch.Stop();
             RecordTrace(method, TargetOf(paramsNode), 200, stopwatch.Elapsed.TotalMilliseconds);
@@ -209,9 +240,12 @@ public sealed class OumvRuntime
     private JsonObject Capabilities() => OumvJson.Obj(
         ("observe", OumvJson.Obj(("levels", new[] { "L0", "L1", "L2", "L3", "L4" }), ("formats", new[] { "json" }))),
         ("understand", OumvJson.Obj(("causality", true), ("impactAnalysis", true))),
-        ("mutate", OumvJson.Obj(("occ", true), ("syntaxGuard", true), ("multiFile", true))),
-        ("verify", OumvJson.Obj(("multiMetric", true), ("sandboxRollback", _sandbox.HasEngine))),
-        ("sessions", OumvJson.Obj(("ttlSeconds", true))),
+        ("mutate", OumvJson.Obj(("occ", true), ("syntaxGuard", true), ("multiFile", true), ("preview", true))),
+        ("verify", OumvJson.Obj(("multiMetric", true), ("sandboxRollback", _sandbox.HasEngine), ("build", true))),
+        ("index", OumvJson.Obj(("symbols", true))),
+        // §14.2 is opt-in per app: without a DbContext there is no read-only door.
+        ("observeQuery", OumvJson.Obj(("readOnly", _sandbox.HasEngine))),
+        ("sessions", OumvJson.Obj(("ttlSeconds", true), ("cancel", true))),
         ("transports", new[] { "http", "sse", "ws" }));
 
     private JsonNode Disconnect(JsonObject parameters) =>
@@ -1001,6 +1035,429 @@ public sealed class OumvRuntime
             ("status", dispatch.StatusCode < 400 ? "passed" : "failed"),
             ("durationMs", Math.Round(stepWatch.Elapsed.TotalMilliseconds, 3)),
             ("responseBody", dispatch.Body.Length > 2000 ? dispatch.Body[..2000] : dispatch.Body));
+    }
+
+    /* ------------------------------------- wire 1.6.0 (§3 cancellation, §4.4/§14) */
+
+    /// <summary>§3 cancellation: best-effort, and an unknown id is a result, not an error.</summary>
+    private JsonNode Cancel(JsonObject parameters)
+    {
+        var requestId = OumvJson.Str(parameters["requestId"])?.Trim();
+        var target = OumvJson.Str(parameters["target"])?.Trim();
+        if (string.IsNullOrEmpty(requestId) && string.Equals(target, "last", StringComparison.OrdinalIgnoreCase))
+            requestId = _lastRequestId;
+        if (string.IsNullOrEmpty(requestId))
+        {
+            throw OumvException.Validation("VALIDATION_FAILED: requestId is required (or target=\"last\")",
+                new Dictionary<string, object?> { ["reason"] = "request_id_required" });
+        }
+
+        if (_inFlight.TryGetValue(requestId, out var source))
+        {
+            try { source.Cancel(); } catch (ObjectDisposedException) { /* finished between lookup and cancel */ }
+            return OumvJson.Obj(("cancelled", true), ("requestId", requestId));
+        }
+        return OumvJson.Obj(("cancelled", false), ("requestId", requestId));
+    }
+
+    /// <summary>§4.4 dry-run: the applyEdit guard chain without a single byte written.</summary>
+    private JsonObject PreviewEdit(JsonObject parameters)
+    {
+        if (!_options.EnableMutations)
+            throw new OumvException(OumvErrorCode.PermissionDenied, "PERMISSION_DENIED: mutate capability is disabled by policy");
+
+        var previews = new JsonArray();
+        if (parameters["edits"] is JsonArray edits)
+        {
+            if (edits.Count == 0 || edits.Count > 16)
+            {
+                throw OumvException.Validation("VALIDATION_FAILED: edits must hold 1..16 items",
+                    new Dictionary<string, object?> { ["reason"] = "edits_size" });
+            }
+            foreach (var item in edits.OfType<JsonObject>()) previews.Add(PreviewSingle(item));
+        }
+        else
+        {
+            previews.Add(PreviewSingle(parameters));
+        }
+
+        return OumvJson.Obj(("status", "PREVIEW"), ("applied", false), ("previews", previews), ("files", previews.Count));
+    }
+
+    private JsonObject PreviewSingle(JsonObject parameters)
+    {
+        var path = OumvJson.Str(parameters["path"]) ?? throw Invalid("path is required");
+        var absolute = _editor.Resolve(path);
+        var relative = _editor.Relative(absolute);
+        var mode = (OumvJson.Str(parameters["mode"]) ?? "replace").ToLowerInvariant();
+        var replacement = OumvJson.Str(parameters["replacement"]);
+        var expectedVersion = OumvJson.Str(parameters["expectedVersion"])?.Trim();
+        var symbol = OumvJson.Str(parameters["symbol"]);
+        var renameTo = OumvJson.Str(parameters["renameTo"]);
+
+        switch (mode)
+        {
+            case "create":
+            {
+                if (string.IsNullOrEmpty(replacement))
+                    throw OumvException.Validation("replacement is required for mode=create",
+                        new Dictionary<string, object?> { ["reason"] = "replacement_required" });
+                if (!string.IsNullOrEmpty(expectedVersion))
+                    throw OumvException.Validation("VALIDATION_FAILED: expectedVersion must be omitted for mode=create",
+                        new Dictionary<string, object?> { ["reason"] = "create_forbids_version" });
+                if (File.Exists(absolute) || Directory.Exists(absolute))
+                    throw OumvException.Conflict("CONFLICT_DETECTED: file already exists; use mode=replace with its version",
+                        new Dictionary<string, object?> { ["reason"] = "file_exists" });
+                var createSyntax = _editor.Check(absolute, replacement);
+                if (createSyntax.Status == "failed") throw SyntaxError(createSyntax);
+                return OumvJson.Obj(
+                    ("path", relative), ("mode", "create"), ("wouldApply", true), ("created", true),
+                    ("newVersion", OumvJson.Sha256(replacement)), ("syntaxCheck", SyntaxJson(createSyntax)));
+            }
+
+            case "delete":
+            {
+                if (!string.IsNullOrEmpty(replacement))
+                    throw OumvException.Validation("VALIDATION_FAILED: replacement must be omitted for mode=delete",
+                        new Dictionary<string, object?> { ["reason"] = "replacement_forbidden" });
+                if (!File.Exists(absolute)) throw OumvException.NotFound($"RESOURCE_NOT_FOUND: {path}");
+                RequireVersion(absolute, expectedVersion, path);
+                return OumvJson.Obj(("path", relative), ("mode", "delete"), ("wouldApply", true), ("deleted", true));
+            }
+
+            case "rename":
+            {
+                if (string.IsNullOrWhiteSpace(renameTo))
+                    throw OumvException.Validation("VALIDATION_FAILED: renameTo is required for mode=rename",
+                        new Dictionary<string, object?> { ["reason"] = "rename_to_required" });
+                var target = _editor.Resolve(renameTo);
+                if (!File.Exists(absolute)) throw OumvException.NotFound($"RESOURCE_NOT_FOUND: {path}");
+                if (File.Exists(target) || Directory.Exists(target))
+                    throw OumvException.Conflict("CONFLICT_DETECTED: rename target already exists",
+                        new Dictionary<string, object?> { ["reason"] = "target_exists", ["renameTo"] = renameTo });
+                RequireVersion(absolute, expectedVersion, path);
+                return OumvJson.Obj(
+                    ("path", relative), ("mode", "rename"), ("wouldApply", true), ("newPath", _editor.Relative(target)));
+            }
+
+            case "symbol":
+            {
+                if (string.IsNullOrWhiteSpace(symbol))
+                    throw OumvException.Validation("VALIDATION_FAILED: symbol is required for mode=symbol",
+                        new Dictionary<string, object?> { ["reason"] = "symbol_required" });
+                if (!File.Exists(absolute)) throw OumvException.NotFound($"RESOURCE_NOT_FOUND: {path}");
+                var current = _editor.ReadText(absolute);
+                RequireVersion(absolute, expectedVersion, path, current);
+                var patched = _editor.ReplaceSymbol(absolute, current, symbol, replacement ?? string.Empty);
+                var syntax = _editor.Check(absolute, patched);
+                if (syntax.Status == "failed") throw SyntaxError(syntax);
+                return OumvJson.Obj(
+                    ("path", relative), ("mode", "symbol"), ("symbol", symbol), ("wouldApply", true),
+                    ("newVersion", OumvJson.Sha256(patched)), ("syntaxCheck", SyntaxJson(syntax)));
+            }
+
+            case "patch":
+            {
+                if (!File.Exists(absolute)) throw OumvException.NotFound($"RESOURCE_NOT_FOUND: {path}");
+                var current = _editor.ReadText(absolute);
+                RequireVersion(absolute, expectedVersion, path, current);
+                var patched = _editor.ApplyHunks(current, parameters["hunks"] as JsonArray);
+                var syntax = _editor.Check(absolute, patched);
+                if (syntax.Status == "failed") throw SyntaxError(syntax);
+                return OumvJson.Obj(
+                    ("path", relative), ("mode", "patch"), ("wouldApply", true),
+                    ("newVersion", OumvJson.Sha256(patched)), ("hunksApplied", (parameters["hunks"] as JsonArray)!.Count),
+                    ("syntaxCheck", SyntaxJson(syntax)));
+            }
+
+            default:
+            {
+                if (mode != "replace")
+                    throw OumvException.Unsupported($"UNSUPPORTED_CAPABILITY: unknown applyEdit mode {mode}",
+                        new Dictionary<string, object?> { ["reason"] = "unknown_mode" });
+                if (string.IsNullOrEmpty(replacement))
+                    throw OumvException.Validation("VALIDATION_FAILED: replacement is required for mode=replace",
+                        new Dictionary<string, object?> { ["reason"] = "replacement_required" });
+                if (!File.Exists(absolute)) throw OumvException.NotFound($"RESOURCE_NOT_FOUND: {path}");
+                RequireVersion(absolute, expectedVersion, path);
+                var syntax = _editor.Check(absolute, replacement);
+                if (syntax.Status == "failed") throw SyntaxError(syntax);
+                return OumvJson.Obj(
+                    ("path", relative), ("mode", "replace"), ("wouldApply", true),
+                    ("newVersion", OumvJson.Sha256(replacement)), ("syntaxCheck", SyntaxJson(syntax)));
+            }
+        }
+    }
+
+    private void RequireVersion(string absolute, string? expectedVersion, string path, string? currentText = null)
+    {
+        var current = currentText is null ? SourceEditor.Version(File.ReadAllBytes(absolute)) : OumvJson.Sha256(currentText);
+        if (string.IsNullOrEmpty(expectedVersion))
+        {
+            throw OumvException.Validation(
+                "VALIDATION_FAILED: expectedVersion is required to edit an existing file — call oumv/getSource (or observe L3) and pass its version",
+                new Dictionary<string, object?> { ["reason"] = "expected_version_required", ["current"] = current });
+        }
+        if (expectedVersion != current)
+        {
+            throw OumvException.Conflict($"version mismatch: expected {expectedVersion}, current is {current}",
+                new Dictionary<string, object?> { ["reason"] = "version_mismatch", ["expected"] = expectedVersion, ["current"] = current });
+        }
+    }
+
+    /* ---------------------------------------------------- §14.1 oumv/index */
+
+    private static readonly HashSet<string> IndexedExtensions = new(StringComparer.OrdinalIgnoreCase)
+    {
+        ".cs", ".fs", ".vb", ".ts", ".tsx", ".js", ".jsx", ".mjs", ".cjs",
+        ".py", ".go", ".java", ".kt", ".php", ".rb", ".rs", ".swift", ".vue", ".svelte",
+    };
+
+    private static readonly System.Text.RegularExpressions.Regex SymbolPattern =
+        new("[A-Za-z_][A-Za-z0-9_]*", System.Text.RegularExpressions.RegexOptions.Compiled);
+
+    /// <summary>
+    /// §14.1 repo-wide symbol search: exact &gt; prefix &gt; qualified-suffix &gt; substring,
+    /// ranked from the files a build would read — no index file, no stale cache.
+    /// </summary>
+    private JsonObject IndexSymbols(JsonObject parameters)
+    {
+        var query = OumvJson.Str(parameters["query"])?.Trim();
+        if (string.IsNullOrEmpty(query))
+            throw OumvException.Validation("VALIDATION_FAILED: query is required", new Dictionary<string, object?> { ["reason"] = "query_required" });
+        var limit = Math.Clamp(OumvJson.Int(parameters["limit"]) ?? 20, 1, 100);
+
+        var matches = new List<(int Rank, string Symbol, string Path, int Line)>();
+        var filesScanned = 0;
+        var truncated = false;
+        var root = _editor.Root;
+        if (Directory.Exists(root))
+        {
+            var pending = new Stack<string>();
+            pending.Push(root);
+            while (pending.Count > 0 && filesScanned < 2000)
+            {
+                var dir = pending.Pop();
+                IEnumerable<string> children;
+                try { children = Directory.EnumerateFileSystemEntries(dir); }
+                catch (Exception) { continue; }
+                foreach (var child in children)
+                {
+                    if (Directory.Exists(child))
+                    {
+                        if (!DigestSkipDirectories.Contains(Path.GetFileName(child))) pending.Push(child);
+                        continue;
+                    }
+                    if (!IndexedExtensions.Contains(Path.GetExtension(child))) continue;
+                    FileInfo info;
+                    try { info = new FileInfo(child); } catch (Exception) { continue; }
+                    if (info.Length == 0 || info.Length > 512 * 1024) continue;
+                    filesScanned++;
+                    string[] lines;
+                    try { lines = File.ReadAllLines(child, Encoding.UTF8); }
+                    catch (Exception) { continue; }
+                    var relative = Path.GetRelativePath(root, child).Replace('\\', '/');
+                    for (var lineIndex = 0; lineIndex < lines.Length; lineIndex++)
+                    {
+                        foreach (System.Text.RegularExpressions.Match match in SymbolPattern.Matches(lines[lineIndex]))
+                        {
+                            var rank = Rank(match.Value, query);
+                            if (rank == 0) continue;
+                            matches.Add((rank, match.Value, relative, lineIndex + 1));
+                        }
+                    }
+                }
+            }
+        }
+
+        var ordered = matches
+            .Where(match => match.Rank > 0)
+            .OrderByDescending(match => match.Rank)
+            .ThenBy(match => match.Symbol.Length)
+            .ThenBy(match => match.Path, StringComparer.Ordinal)
+            .ThenBy(match => match.Line)
+            .ToList();
+        if (ordered.Count > limit) truncated = true;
+
+        var array = new JsonArray();
+        foreach (var match in ordered.Take(limit))
+        {
+            array.Add(OumvJson.Obj(
+                ("symbol", match.Symbol), ("path", match.Path), ("line", match.Line),
+                ("kind", "symbol"), ("rank", match.Rank)));
+        }
+        return OumvJson.Obj(("matches", array), ("truncated", truncated), ("filesScanned", filesScanned));
+    }
+
+    private static int Rank(string candidate, string query)
+    {
+        if (candidate.Equals(query, StringComparison.OrdinalIgnoreCase)) return 4;
+        if (candidate.StartsWith(query, StringComparison.OrdinalIgnoreCase)) return 3;
+        if (candidate.EndsWith(query, StringComparison.OrdinalIgnoreCase)) return 2;
+        if (candidate.Contains(query, StringComparison.OrdinalIgnoreCase)) return 1;
+        return 0;
+    }
+
+    /* ---------------------------------------------------- §14.3 oumv/build */
+
+    private async Task<JsonNode> BuildAsync(JsonObject parameters, CancellationToken cancellationToken)
+    {
+        var command = OumvJson.Str(parameters["command"])?.Trim();
+        if (string.IsNullOrEmpty(command)) command = _options.BuildCommand;
+        var timeoutMs = Math.Clamp(OumvJson.Int(parameters["timeoutMs"]) ?? 120_000, 1_000, 600_000);
+        if (string.IsNullOrEmpty(command))
+        {
+            return OumvJson.Obj(
+                ("status", "skipped"), ("command", "none"), ("diagnostics", new JsonArray()),
+                ("skipReason", "no build command configured: set OumvOptions.BuildCommand or pass params.command"));
+        }
+
+        var isWindows = OperatingSystem.IsWindows();
+        var startInfo = new ProcessStartInfo
+        {
+            FileName = isWindows ? "cmd.exe" : "/bin/sh",
+            WorkingDirectory = _editor.Root,
+            RedirectStandardOutput = true,
+            RedirectStandardError = true,
+            UseShellExecute = false,
+        };
+        if (isWindows) { startInfo.ArgumentList.Add("/c"); startInfo.ArgumentList.Add(command); }
+        else { startInfo.ArgumentList.Add("-c"); startInfo.ArgumentList.Add(command); }
+
+        var stopwatch = Stopwatch.StartNew();
+        using var process = new Process { StartInfo = startInfo };
+        try
+        {
+            process.Start();
+        }
+        catch (Exception error)
+        {
+            return OumvJson.Obj(
+                ("status", "failed"), ("command", command), ("diagnostics", new JsonArray()),
+                ("error", $"could not start the command: {error.Message}"));
+        }
+
+        var stdoutTask = process.StandardOutput.ReadToEndAsync(cancellationToken);
+        var stderrTask = process.StandardError.ReadToEndAsync(cancellationToken);
+        using var timeout = CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        timeout.CancelAfter(timeoutMs);
+        var timedOut = false;
+        try
+        {
+            await process.WaitForExitAsync(timeout.Token);
+        }
+        catch (OperationCanceledException)
+        {
+            timedOut = true;
+            try { process.Kill(entireProcessTree: true); } catch (Exception) { /* already gone */ }
+        }
+        stopwatch.Stop();
+
+        var stdout = await stdoutTask;
+        var stderr = await stderrTask;
+        var diagnostics = ParseDiagnostics(stdout, stderr);
+        var exitCode = timedOut ? -1 : process.ExitCode;
+        return OumvJson.Obj(
+            ("status", timedOut ? "timeout" : exitCode == 0 ? "passed" : "failed"),
+            ("command", command),
+            ("exitCode", exitCode),
+            ("diagnostics", diagnostics),
+            ("durationMs", Math.Round(stopwatch.Elapsed.TotalMilliseconds, 3)),
+            ("truncated", stdout.Length + stderr.Length > 64_000));
+    }
+
+    private static readonly System.Text.RegularExpressions.Regex DiagnosticPattern =
+        new("^(?<file>[^\\r\\n:]+?)\\((?(?:\\d+),(?:\\d+)|:(?:\\d+))\\)?:\\s*(?<severity>error|warning)\\b(?<rest>.*)$",
+            System.Text.RegularExpressions.RegexOptions.Compiled | System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+
+    private static JsonArray ParseDiagnostics(string stdout, string stderr)
+    {
+        var diagnostics = new JsonArray();
+        var lines = (stderr + "\n" + stdout).Split('\n', StringSplitOptions.RemoveEmptyEntries);
+        foreach (var raw in lines)
+        {
+            var line = raw.TrimEnd();
+            if (line.Length == 0) continue;
+            var match = DiagnosticPattern.Match(line);
+            if (match.Success)
+            {
+                diagnostics.Add(OumvJson.Obj(
+                    ("severity", match.Groups["severity"].Value.ToLowerInvariant()),
+                    ("path", match.Groups["file"].Value.Trim()),
+                    ("message", match.Groups["rest"].Value.Trim().TrimStart(':', ' '))));
+            }
+            else if (line.Contains(": error", StringComparison.OrdinalIgnoreCase))
+            {
+                diagnostics.Add(OumvJson.Obj(("severity", "error"), ("message", line)));
+            }
+            else if (line.Contains(": warning", StringComparison.OrdinalIgnoreCase))
+            {
+                diagnostics.Add(OumvJson.Obj(("severity", "warning"), ("message", line)));
+            }
+            if (diagnostics.Count >= 200) break;
+        }
+        return diagnostics;
+    }
+
+    /* ---------------------------------------------------- §14.2 oumv/query */
+
+    private async Task<JsonNode> QueryAsync(JsonObject parameters, CancellationToken cancellationToken)
+    {
+        var sql = OumvJson.Str(parameters["sql"])?.Trim();
+        if (string.IsNullOrEmpty(sql))
+            throw OumvException.Validation("VALIDATION_FAILED: sql is required", new Dictionary<string, object?> { ["reason"] = "sql_required" });
+        if (!IsReadOnlySql(sql))
+        {
+            throw new OumvException(OumvErrorCode.SecurityViolation,
+                "SECURITY_VIOLATION: only read-only statements are allowed",
+                new Dictionary<string, object?> { ["reason"] = "query_forbidden" });
+        }
+        var limit = Math.Clamp(OumvJson.Int(parameters["limit"]) ?? 100, 1, 1000);
+        var outcome = await _sandbox.QueryAsync(_services, sql, limit, cancellationToken);
+
+        var rows = new JsonArray();
+        foreach (var row in outcome.Rows)
+        {
+            var cells = new JsonArray();
+            foreach (var value in row) cells.Add(OumvJson.ToNode(value));
+            rows.Add(cells);
+        }
+        var columns = new JsonArray();
+        foreach (var column in outcome.Columns) columns.Add(JsonValue.Create(column));
+        return OumvJson.Obj(
+            ("columns", columns), ("rows", rows), ("rowCount", outcome.Rows.Count),
+            ("truncated", outcome.Truncated), ("driver", _sandbox.Driver));
+    }
+
+    private static bool IsReadOnlySql(string sql)
+    {
+        var trimmed = sql.TrimStart();
+        while (true)
+        {
+            if (trimmed.StartsWith("--", StringComparison.Ordinal))
+            {
+                var newline = trimmed.IndexOf('\n');
+                if (newline < 0) return false;
+                trimmed = trimmed[(newline + 1)..].TrimStart();
+                continue;
+            }
+            if (trimmed.StartsWith("/*", StringComparison.Ordinal))
+            {
+                var end = trimmed.IndexOf("*/", StringComparison.Ordinal);
+                if (end < 0) return false;
+                trimmed = trimmed[(end + 2)..].TrimStart();
+                continue;
+            }
+            break;
+        }
+
+        var match = System.Text.RegularExpressions.Regex.Match(trimmed, "^[A-Za-z]+");
+        if (!match.Success) return false;
+        var keyword = match.Value.ToUpperInvariant();
+        if (keyword is not ("SELECT" or "EXPLAIN" or "PRAGMA" or "WITH" or "VALUES" or "SHOW" or "DESCRIBE")) return false;
+        // One statement only: a stacked write after a semicolon is a write.
+        var withoutTrailing = trimmed.TrimEnd().TrimEnd(';');
+        return !withoutTrailing.Contains(';');
     }
 
     private static Dictionary<string, string> ReadHeaders(JsonNode? node)

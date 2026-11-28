@@ -84,7 +84,7 @@ public sealed class OumvOptions
     public string Name { get; set; } = "tokensafe-aspnetcore";
 
     /// <summary>Runtime version reported in the handshake.</summary>
-    public string Version { get; set; } = "0.1.0";
+    public string Version { get; set; } = "0.3.0";
 
     /// <summary>Default session lifetime in seconds (spec §3).</summary>
     public int SessionTtlSeconds { get; set; } = 3600;
@@ -104,6 +104,12 @@ public sealed class OumvOptions
     /// development allowance; a non-loopback bind without a token is refused.
     /// </summary>
     public string? AuthToken { get; set; }
+
+    /// <summary>
+    /// §14.3 default build/test command (run in the workspace root). Empty keeps
+    /// `oumv/build` an honest `skipped` with a reason instead of a guessed verdict.
+    /// </summary>
+    public string? BuildCommand { get; set; }
 
     /// <summary>Set false to mount the transports but refuse mutations.</summary>
     public bool EnableMutations { get; set; } = true;

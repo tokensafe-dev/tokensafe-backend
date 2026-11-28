@@ -348,6 +348,98 @@ public sealed class RuntimeTests : IDisposable
         Assert.False(NoDbSandbox.Instance.HasEngine);
     }
 
+    /* --------------------------------------- wire 1.6.0 optional surface */
+
+    [Fact]
+    public async Task Cancel_of_an_unknown_request_is_a_result_not_an_error()
+    {
+        var response = await Call("oumv/cancel", new JsonObject { ["requestId"] = "never-started" });
+        Assert.Null(response?["error"]);
+        Assert.False(response?["result"]?["cancelled"]?.GetValue<bool>() ?? true);
+    }
+
+    [Fact]
+    public async Task Preview_never_writes_and_mirrors_the_create_guards()
+    {
+        var preview = await Call("oumv/previewEdit", new JsonObject
+        {
+            ["path"] = "previewed.cs",
+            ["mode"] = "create",
+            ["replacement"] = "public static class Previewed { }\n",
+        });
+        Assert.Null(preview?["error"]);
+        Assert.Equal("PREVIEW", preview?["result"]?["status"]?.GetValue<string>());
+        Assert.False(preview?["result"]?["applied"]?.GetValue<bool>() ?? true);
+        Assert.True(preview?["result"]?["previews"]?[0]?["wouldApply"]?.GetValue<bool>() ?? false);
+        Assert.False(File.Exists(Path.Combine(_workspace, "previewed.cs")));
+
+        Write("taken.cs", "public static class Taken { }\n");
+        var conflict = await Call("oumv/previewEdit", new JsonObject
+        {
+            ["path"] = "taken.cs",
+            ["mode"] = "create",
+            ["replacement"] = "public static class Other { }\n",
+        });
+        Assert.Equal(OumvErrorCode.ConflictDetected, ErrorCode(conflict));
+    }
+
+    [Fact]
+    public async Task Index_ranks_matches_and_reports_truncation()
+    {
+        Write("orders.cs", "public class OrderService { public void Submit(Order order) { } }\n");
+        var response = await Call("oumv/index", new JsonObject { ["query"] = "Order", ["limit"] = 1 });
+        var matches = response?["result"]?["matches"] as JsonArray;
+        Assert.NotNull(matches);
+        Assert.Single(matches!);
+        Assert.Equal("Order", matches![0]?["symbol"]?.GetValue<string>());
+        Assert.True(response?["result"]?["truncated"]?.GetValue<bool>() ?? false);
+    }
+
+    [Fact]
+    public async Task Query_refuses_a_write_statement_before_touching_an_engine()
+    {
+        var response = await Call("oumv/query", new JsonObject { ["sql"] = "INSERT INTO fixture (id) VALUES (1)" });
+        Assert.Equal(OumvErrorCode.SecurityViolation, ErrorCode(response));
+        Assert.Equal("query_forbidden", response?["error"]?["data"]?["reason"]?.GetValue<string>());
+
+        var stacked = await Call("oumv/query", new JsonObject { ["sql"] = "SELECT 1; DROP TABLE fixture" });
+        Assert.Equal(OumvErrorCode.SecurityViolation, ErrorCode(stacked));
+    }
+
+    [Fact]
+    public async Task Build_without_a_command_is_an_honest_skip()
+    {
+        var response = await Call("oumv/build", new JsonObject());
+        var result = response?["result"];
+        Assert.Equal("skipped", result?["status"]?.GetValue<string>());
+        Assert.NotNull(result?["command"]);
+        Assert.IsType<JsonArray>(result?["diagnostics"]);
+    }
+
+    [Fact]
+    public async Task Build_runs_the_configured_command_and_reports_its_status()
+    {
+        var services = new ServiceCollection().BuildServiceProvider();
+        var runtime = new OumvRuntime(
+            new OumvOptions { WorkspaceRoot = _workspace, Version = "test", BuildCommand = "echo oumv-build-ok" },
+            new SourceEditor(_workspace),
+            new EndpointCatalog(new EmptyEndpointDataSource()),
+            NoDbSandbox.Instance,
+            services,
+            _time);
+        var response = await runtime.HandleAsync(new JsonObject
+        {
+            ["jsonrpc"] = "2.0",
+            ["id"] = 1,
+            ["method"] = "oumv/build",
+            ["params"] = new JsonObject(),
+        });
+        var result = response?["result"];
+        Assert.Equal("passed", result?["status"]?.GetValue<string>());
+        Assert.Equal("echo oumv-build-ok", result?["command"]?.GetValue<string>());
+        Assert.Equal(0, result?["exitCode"]?.GetValue<int>());
+    }
+
     private sealed class ProbeContext(DbContextOptions<ProbeContext> options) : DbContext(options);
 
     private sealed class EmptyEndpointDataSource : EndpointDataSource

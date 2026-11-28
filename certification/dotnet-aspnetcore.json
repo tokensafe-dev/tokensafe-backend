@@ -3,8 +3,8 @@
   "framework": "aspnetcore",
   "specVersion": "1.6.0",
   "fixtureVersion": 13,
-  "total": 44,
-  "passed": 44,
+  "total": 50,
+  "passed": 50,
   "failed": 0,
   "skipped": 0,
   "attainedLevel": 3,
@@ -215,6 +215,36 @@
       "status": "passed"
     },
     {
+      "id": "preview-edit-does-not-write",
+      "level": 3,
+      "status": "passed"
+    },
+    {
+      "id": "cancel-unknown-request-id-is-not-an-error",
+      "level": 1,
+      "status": "passed"
+    },
+    {
+      "id": "index-returns-ranked-matches",
+      "level": 3,
+      "status": "passed"
+    },
+    {
+      "id": "query-read-only-select-answers-columns-rows",
+      "level": 3,
+      "status": "passed"
+    },
+    {
+      "id": "query-rejects-write-statement",
+      "level": 3,
+      "status": "passed"
+    },
+    {
+      "id": "build-returns-status-and-diagnostics",
+      "level": 3,
+      "status": "passed"
+    },
+    {
       "id": "expired-session-is-rejected",
       "level": 3,
       "status": "passed"
@@ -235,7 +265,7 @@
       "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-28T03:35:54.336Z",
+  "generatedAt": "2026-11-28T04:52:24.373Z",
   "environment": {
     "transport": "http",
     "profile": "backend",

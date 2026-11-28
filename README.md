@@ -33,7 +33,7 @@
 
 | Adapter | Framework | Transport exercised | Level | Cases | Report |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `dotnet-aspnetcore` | aspnetcore | ASP.NET Core `POST /__oumv/rpc` | **3** | 44/44 | [certification/dotnet-aspnetcore.json](certification/dotnet-aspnetcore.json) |
+| `dotnet-aspnetcore` | aspnetcore | ASP.NET Core `POST /__oumv/rpc` | **3** | 50/50 | [certification/dotnet-aspnetcore.json](certification/dotnet-aspnetcore.json) |
 | `go-chi` | chi | HTTP `POST /__oumv/rpc` | **3** | 46/46 | [certification/go-chi.json](certification/go-chi.json) |
 | `go-gin` | Gin | HTTP `POST /__oumv/rpc` | **3** | 46/46 | [certification/go-gin.json](certification/go-gin.json) |
 | `go-stdhttp` | net/http | HTTP `POST /__oumv/rpc` | **3** | 46/46 | [certification/go-stdhttp.json](certification/go-stdhttp.json) |
@@ -58,8 +58,8 @@ Transport certificates run the same suite over the optional bindings, plus the f
 
 | Certificate | Adapter | Transport | Cases |
 | :--- | :--- | :--- | :--- |
-| [transports/dotnet-aspnetcore-sse.json](certification/transports/dotnet-aspnetcore-sse.json) | `dotnet-aspnetcore-sse` | sse | 45/45 |
-| [transports/dotnet-aspnetcore-ws.json](certification/transports/dotnet-aspnetcore-ws.json) | `dotnet-aspnetcore-ws` | ws | 42/42 |
+| [transports/dotnet-aspnetcore-sse.json](certification/transports/dotnet-aspnetcore-sse.json) | `dotnet-aspnetcore-sse` | sse | 51/51 |
+| [transports/dotnet-aspnetcore-ws.json](certification/transports/dotnet-aspnetcore-ws.json) | `dotnet-aspnetcore-ws` | ws | 48/48 |
 | [transports/go-stdhttp-sse.json](certification/transports/go-stdhttp-sse.json) | `go-stdhttp-sse` | sse | 50/50 |
 | [transports/go-stdhttp-ws.json](certification/transports/go-stdhttp-ws.json) | `go-stdhttp-ws` | ws | 47/47 |
 | [transports/node-express-sse.json](certification/transports/node-express-sse.json) | `node-express-sse` | sse | 50/50 |
@@ -241,13 +241,19 @@ no network hop. With `AddTokensafe()` present, a sandboxed verify opens one tran
 per discovered `DbContext`, dispatches with `X-TokenSafe-Dry-Run: true`, rolls back, and
 reports `rollbackStatus: "verified"` only when the rollback was observed.
 
+The wire 1.6.0 surface is implemented as well: `oumv/previewEdit` (the same guard chain as
+applyEdit, no bytes written), `oumv/index` (ranked repo-wide symbol search), `oumv/query`
+(read-only SQL over the discovered `DbContext` connection, writes refused with `-32003`),
+`oumv/build` (`OumvOptions.BuildCommand`, honest `skipped` without one) and `oumv/cancel`
+(cooperative, `requestId`-scoped).
+
 ---
 
 ## Installation
 
 ### Go Runtime (`go/`)
 ```bash
-go get github.com/tokensafe-dev/tokensafe-backend/go@v0.10.0
+go get github.com/tokensafe-dev/tokensafe-backend/go@v0.11.0
 ```
 `go/` is a nested module, so it resolves against `go/vX.Y.Z` tags (the release
 workflow creates them alongside every `vX.Y.Z` release tag). A plain `vX.Y.Z`
