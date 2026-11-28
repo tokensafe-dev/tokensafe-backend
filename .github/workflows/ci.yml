@@ -276,6 +276,12 @@ jobs:
       - name: Compare with committed reports
         run: python3 scripts/check_certification.py cert-fresh certification
 
+      # A manifest claim must be a PASSED case in that adapter's own fresh report,
+      # not merely a case that exists in the fixture file. Unproven claims are
+      # listed with a reason in agent-oumv/scripts/claim-evidence-baseline.json.
+      - name: Cross-check adapter claims against the fresh certificates
+        run: node "${{ github.workspace }}/vendor/oumv/scripts/check_adapter_capabilities.mjs" --reports "${{ github.workspace }}/cert-fresh"
+
       - name: README certification block is current
         run: python3 scripts/render_certification.py --check
 
