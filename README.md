@@ -3,7 +3,7 @@
 **The Universal Agent-Runtime Protocol: Observe · Understand · Mutate · Verify**
 
 [![Go Report Card](https://goreportcard.com/badge/github.com/tokensafe-dev/tokensafe-backend/go)](https://goreportcard.com/report/github.com/tokensafe-dev/tokensafe-backend/go)
-[![Protocol Specification](https://img.shields.io/badge/OUMV-v1.8--canonical-orange)](https://github.com/tokensafe-dev/oumv/blob/main/spec/SPEC.md)
+[![Protocol Specification](https://img.shields.io/badge/OUMV-v1.10--canonical-orange)](https://github.com/tokensafe-dev/oumv/blob/main/spec/SPEC.md)
 [![OUMV conformance](https://img.shields.io/badge/OUMV-certified_L3_%C2%B7_7_adapters-10B981)](#certification-spec-10)
 [![License: Apache-2.0](https://img.shields.io/badge/License-Apache_2.0-blue.svg)](LICENSE)
 
@@ -29,11 +29,11 @@
 ## Certification (spec §10)
 
 <!-- certification:start -->
-**9 adapters certified against the same language-neutral fixtures** (`fixtureVersion` 12): 7 at Level 3 and 2 source-level adapter(s) at Level 2 — frozen on the wire 1.5.0 subset they still serve, each with its single L3 gap named below. The smallest suite in the table is 33 cases: a runtime that advertises an optional capability also runs the case gated on it, and a runtime frozen on an older wire skips the newer-wire cases instead of failing them. Generated from `certification/*.json` by `scripts/render_certification.py`; CI fails when this block no longer matches the reports.
+**9 adapters certified against the same language-neutral fixtures** (`fixtureVersion` 13): 7 at Level 3 and 2 source-level adapter(s) at Level 2 — frozen on the wire 1.5.0 subset they still serve, each with its single L3 gap named below. The smallest suite in the table is 33 cases: a runtime that advertises an optional capability also runs the case gated on it, and a runtime frozen on an older wire skips the newer-wire cases instead of failing them. Generated from `certification/*.json` by `scripts/render_certification.py`; CI fails when this block no longer matches the reports.
 
 | Adapter | Framework | Transport exercised | Level | Cases | Report |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `dotnet-aspnetcore` | aspnetcore | ASP.NET Core `POST /__oumv/rpc` | **3** | 41/41 | [certification/dotnet-aspnetcore.json](certification/dotnet-aspnetcore.json) |
+| `dotnet-aspnetcore` | aspnetcore | ASP.NET Core `POST /__oumv/rpc` | **3** | 44/44 | [certification/dotnet-aspnetcore.json](certification/dotnet-aspnetcore.json) |
 | `go-chi` | chi | HTTP `POST /__oumv/rpc` | **3** | 46/46 | [certification/go-chi.json](certification/go-chi.json) |
 | `go-gin` | Gin | HTTP `POST /__oumv/rpc` | **3** | 46/46 | [certification/go-gin.json](certification/go-gin.json) |
 | `go-stdhttp` | net/http | HTTP `POST /__oumv/rpc` | **3** | 46/46 | [certification/go-stdhttp.json](certification/go-stdhttp.json) |
@@ -57,16 +57,16 @@ Transport certificates run the same suite over the optional bindings, plus the f
 
 | Certificate | Adapter | Transport | Cases |
 | :--- | :--- | :--- | :--- |
-| [transports/dotnet-aspnetcore-sse.json](certification/transports/dotnet-aspnetcore-sse.json) | `dotnet-aspnetcore-sse` | sse | 42/42 |
+| [transports/dotnet-aspnetcore-sse.json](certification/transports/dotnet-aspnetcore-sse.json) | `dotnet-aspnetcore-sse` | sse | 45/45 |
 | [transports/dotnet-aspnetcore-ws.json](certification/transports/dotnet-aspnetcore-ws.json) | `dotnet-aspnetcore-ws` | ws | 42/42 |
-| [transports/go-stdhttp-sse.json](certification/transports/go-stdhttp-sse.json) | `go-stdhttp-sse` | sse | 47/47 |
+| [transports/go-stdhttp-sse.json](certification/transports/go-stdhttp-sse.json) | `go-stdhttp-sse` | sse | 50/50 |
 | [transports/go-stdhttp-ws.json](certification/transports/go-stdhttp-ws.json) | `go-stdhttp-ws` | ws | 47/47 |
-| [transports/node-express-sse.json](certification/transports/node-express-sse.json) | `node-express-sse` | sse | 47/47 |
+| [transports/node-express-sse.json](certification/transports/node-express-sse.json) | `node-express-sse` | sse | 50/50 |
 | [transports/node-express-ws.json](certification/transports/node-express-ws.json) | `node-express-ws` | ws | 47/47 |
-| [transports/node-fastify-sse.json](certification/transports/node-fastify-sse.json) | `node-fastify-sse` | sse | 47/47 |
+| [transports/node-fastify-sse.json](certification/transports/node-fastify-sse.json) | `node-fastify-sse` | sse | 50/50 |
 | [transports/node-fastify-ws.json](certification/transports/node-fastify-ws.json) | `node-fastify-ws` | ws | 47/47 |
 | [transports/node-stdio.json](certification/transports/node-stdio.json) | `node-stdio` | stdio | 37/37 |
-| [transports/python-fastapi-sse.json](certification/transports/python-fastapi-sse.json) | `python-fastapi-sse` | sse | 49/49 |
+| [transports/python-fastapi-sse.json](certification/transports/python-fastapi-sse.json) | `python-fastapi-sse` | sse | 52/52 |
 | [transports/python-fastapi-ws.json](certification/transports/python-fastapi-ws.json) | `python-fastapi-ws` | ws | 49/49 |
 | [transports/python-stdio.json](certification/transports/python-stdio.json) | `python-stdio` | stdio | 45/45 |
 <!-- certification:end -->
@@ -246,7 +246,7 @@ reports `rollbackStatus: "verified"` only when the rollback was observed.
 
 ### Go Runtime (`go/`)
 ```bash
-go get github.com/tokensafe-dev/tokensafe-backend/go@v0.8.0
+go get github.com/tokensafe-dev/tokensafe-backend/go@v0.10.0
 ```
 `go/` is a nested module, so it resolves against `go/vX.Y.Z` tags (the release
 workflow creates them alongside every `vX.Y.Z` release tag). A plain `vX.Y.Z`
@@ -423,6 +423,7 @@ export TOKENSAFE_OUMV_MUTATE=false # Mutate disabled by default in staging/prod
 2. **Non-Loopback Protection**: If `TOKENSAFE_OUMV_HOST` is bound to a non-loopback interface (e.g. `0.0.0.0`), startup will immediately fail unless `TOKENSAFE_OUMV_AUTH_TOKEN` is configured.
 3. **No Wildcard CORS with Auth**: Wildcard CORS (`*`) is strictly rejected when authentication is required or in production environments.
 4. **Path Traversal & Credential Redaction**: File inspection (`getSource`) and mutations (`applyEdit`) validate workspace boundaries, blocking path traversal (`../`) and access to sensitive files (`.env`, `.git`, SSH keys).
+5. **Transport auth covers every binding (spec §12)**: a configured token is required on the RPC POST, the SSE stream and the WebSocket upgrade — a missing, invalid or wrong-scheme credential answers HTTP 401 with the `-32007` envelope *before dispatch*, and a non-loopback bind with no token answers 403 (`reason: token_required_non_loopback`). A configured token is never optional: the Node adapter used to accept an empty credential unless `requireAuth` was passed, and now fails closed. The refusal is certified by the fixtures' `authCases` family (`oumv-certify --auth`) and pinned by `python/tests/test_auth.py`, `go/pkg/transport/authz_test.go` and `node/test/auth.test.ts`.
 
 Startup log in production:
 ```text

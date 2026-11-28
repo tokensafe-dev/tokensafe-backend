@@ -2,7 +2,7 @@
   "adapterName": "dotnet-aspnetcore-ws",
   "framework": "aspnetcore",
   "specVersion": "1.6.0",
-  "fixtureVersion": 12,
+  "fixtureVersion": 13,
   "total": 42,
   "passed": 42,
   "failed": 0,
@@ -225,7 +225,7 @@
       "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-28T01:20:09.491Z",
+  "generatedAt": "2026-11-28T03:35:59.245Z",
   "environment": {
     "transport": "ws",
     "profile": "backend",

@@ -2,9 +2,9 @@
   "adapterName": "go-stdhttp-sse",
   "framework": "net/http",
   "specVersion": "1.6.0",
-  "fixtureVersion": 12,
-  "total": 47,
-  "passed": 47,
+  "fixtureVersion": 13,
+  "total": 50,
+  "passed": 50,
   "failed": 0,
   "skipped": 0,
   "attainedLevel": 3,
@@ -248,12 +248,28 @@
       "id": "expired-session-is-rejected",
       "level": 3,
       "status": "passed"
+    },
+    {
+      "id": "auth-missing-token-is-refused",
+      "level": 1,
+      "status": "passed"
+    },
+    {
+      "id": "auth-invalid-token-is-refused",
+      "level": 1,
+      "status": "passed"
+    },
+    {
+      "id": "auth-wrong-scheme-is-refused",
+      "level": 1,
+      "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-28T01:13:42.133Z",
+  "generatedAt": "2026-11-28T03:35:31.940Z",
   "environment": {
     "transport": "sse",
     "profile": "backend",
+    "auth": "required",
     "node": "v24.14.0"
   }
 }

@@ -2,9 +2,9 @@
   "adapterName": "dotnet-aspnetcore-sse",
   "framework": "aspnetcore",
   "specVersion": "1.6.0",
-  "fixtureVersion": 12,
-  "total": 42,
-  "passed": 42,
+  "fixtureVersion": 13,
+  "total": 45,
+  "passed": 45,
   "failed": 0,
   "skipped": 0,
   "attainedLevel": 3,
@@ -223,12 +223,28 @@
       "id": "expired-session-is-rejected",
       "level": 3,
       "status": "passed"
+    },
+    {
+      "id": "auth-missing-token-is-refused",
+      "level": 1,
+      "status": "passed"
+    },
+    {
+      "id": "auth-invalid-token-is-refused",
+      "level": 1,
+      "status": "passed"
+    },
+    {
+      "id": "auth-wrong-scheme-is-refused",
+      "level": 1,
+      "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-28T01:20:07.067Z",
+  "generatedAt": "2026-11-28T03:35:56.811Z",
   "environment": {
     "transport": "sse",
     "profile": "backend",
+    "auth": "required",
     "node": "v24.14.0"
   }
 }

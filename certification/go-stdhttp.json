@@ -2,7 +2,7 @@
   "adapterName": "go-stdhttp",
   "framework": "net/http",
   "specVersion": "1.6.0",
-  "fixtureVersion": 12,
+  "fixtureVersion": 13,
   "total": 46,
   "passed": 46,
   "failed": 0,
@@ -244,5 +244,5 @@
       "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-28T01:36:59Z"
+  "generatedAt": "2026-11-28T03:35:07Z"
 }

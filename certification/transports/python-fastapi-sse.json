@@ -2,9 +2,9 @@
   "adapterName": "python-fastapi-sse",
   "framework": "fastapi",
   "specVersion": "1.6.0",
-  "fixtureVersion": 12,
-  "total": 49,
-  "passed": 49,
+  "fixtureVersion": 13,
+  "total": 52,
+  "passed": 52,
   "failed": 0,
   "skipped": 0,
   "attainedLevel": 3,
@@ -258,12 +258,28 @@
       "id": "expired-session-is-rejected",
       "level": 3,
       "status": "passed"
+    },
+    {
+      "id": "auth-missing-token-is-refused",
+      "level": 1,
+      "status": "passed"
+    },
+    {
+      "id": "auth-invalid-token-is-refused",
+      "level": 1,
+      "status": "passed"
+    },
+    {
+      "id": "auth-wrong-scheme-is-refused",
+      "level": 1,
+      "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-28T01:13:48.733Z",
+  "generatedAt": "2026-11-28T03:35:40.275Z",
   "environment": {
     "transport": "sse",
     "profile": "backend",
+    "auth": "required",
     "node": "v24.14.0"
   }
 }

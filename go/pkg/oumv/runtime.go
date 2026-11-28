@@ -137,7 +137,7 @@ func NewRuntime(cfg Config) *Runtime {
 		if cfg.Runtime != nil && cfg.Runtime.Version != "" {
 			cfg.Version = cfg.Runtime.Version
 		} else {
-			cfg.Version = "0.9.0"
+			cfg.Version = "0.10.0"
 		}
 	}
 	if cfg.WorkspaceDir == "" {
