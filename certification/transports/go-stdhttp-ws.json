@@ -2,7 +2,7 @@
   "adapterName": "go-stdhttp-ws",
   "framework": "net/http",
   "specVersion": "1.6.0",
-  "fixtureVersion": 13,
+  "fixtureVersion": 14,
   "total": 47,
   "passed": 47,
   "failed": 0,
@@ -250,7 +250,7 @@
       "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-28T03:35:30.143Z",
+  "generatedAt": "2026-11-28T05:47:16.970Z",
   "environment": {
     "transport": "ws",
     "profile": "backend",

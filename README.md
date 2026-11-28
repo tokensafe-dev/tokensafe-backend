@@ -29,7 +29,7 @@
 ## Certification (spec §10)
 
 <!-- certification:start -->
-**10 adapters certified against the same language-neutral fixtures** (`fixtureVersion` 13): 8 at Level 3 and 2 source-level adapter(s) at Level 2 — frozen on the wire 1.5.0 subset they still serve, each with its single L3 gap named below. The smallest suite in the table is 33 cases: a runtime that advertises an optional capability also runs the case gated on it, and a runtime frozen on an older wire skips the newer-wire cases instead of failing them. Generated from `certification/*.json` by `scripts/render_certification.py`; CI fails when this block no longer matches the reports.
+**10 adapters certified against the same language-neutral fixtures** (`fixtureVersion` 14): 8 at Level 3 and 2 source-level adapter(s) at Level 2 — frozen on the wire 1.5.0 subset they still serve, each with its single L3 gap named below. The smallest suite in the table is 29 cases: a runtime that advertises an optional capability also runs the case gated on it, and a runtime frozen on an older wire skips the newer-wire cases instead of failing them. Generated from `certification/*.json` by `scripts/render_certification.py`; CI fails when this block no longer matches the reports.
 
 | Adapter | Framework | Transport exercised | Level | Cases | Report |
 | :--- | :--- | :--- | :--- | :--- | :--- |
@@ -47,12 +47,11 @@ Source-level adapters scan the framework's route declarations statically, apply 
 | Adapter | Framework | Transport exercised | Level | Cases | Report |
 | :--- | :--- | :--- | :--- | :--- | :--- |
 | `java-spring` | Spring Boot | JDK `POST /__oumv/rpc` + stdio | **2** | 32/33 | [certification/java-spring.json](certification/java-spring.json) |
-| `php-laravel` | Laravel / Symfony | PHP `POST /__oumv/rpc` + stdio | **2** | 32/33 | [certification/php-laravel.json](certification/php-laravel.json) |
+| `php-laravel` | Laravel / Symfony | PHP `POST /__oumv/rpc` + stdio | **2** | 29/29 | [certification/php-laravel.json](certification/php-laravel.json) |
 
 Named gaps:
 
 - `java-spring` → `observe-l4-returns-recorded-traces`: expected success, got error -32006: UNSUPPORTED_CAPABILITY: observe L4 requires live request traces; this JDK-only sidecar does not run the Spring application, so it records none
-- `php-laravel` → `observe-l4-returns-recorded-traces`: field "data.traces" must be a non-empty array
 
 Transport certificates run the same suite over the optional bindings, plus the fixture v8 push cases (§2.3 `state` with `Last-Event-ID` replay, §2.4 `notifications/oumv.state`):
 
@@ -66,7 +65,7 @@ Transport certificates run the same suite over the optional bindings, plus the f
 | [transports/node-express-ws.json](certification/transports/node-express-ws.json) | `node-express-ws` | ws | 47/47 |
 | [transports/node-fastify-sse.json](certification/transports/node-fastify-sse.json) | `node-fastify-sse` | sse | 50/50 |
 | [transports/node-fastify-ws.json](certification/transports/node-fastify-ws.json) | `node-fastify-ws` | ws | 47/47 |
-| [transports/node-stdio.json](certification/transports/node-stdio.json) | `node-stdio` | stdio | 37/37 |
+| [transports/node-stdio.json](certification/transports/node-stdio.json) | `node-stdio` | stdio | 45/45 |
 | [transports/python-fastapi-sse.json](certification/transports/python-fastapi-sse.json) | `python-fastapi-sse` | sse | 52/52 |
 | [transports/python-fastapi-ws.json](certification/transports/python-fastapi-ws.json) | `python-fastapi-ws` | ws | 49/49 |
 | [transports/python-stdio.json](certification/transports/python-stdio.json) | `python-stdio` | stdio | 45/45 |
@@ -423,6 +422,30 @@ export TOKENSAFE_OUMV_OBSERVE=true
 export TOKENSAFE_OUMV_UNDERSTAND=true
 export TOKENSAFE_OUMV_MUTATE=false # Mutate disabled by default in staging/prod
 ```
+
+### Read-only deployments (spec §8.5, revision v1.11)
+
+A read-only deployment is a **shape of the runtime, not a check inside it**. The
+mutating methods are never registered, so a call cannot be reached at all and answers
+`-32601 METHOD_NOT_FOUND`; `-32007` is reserved for transport auth and for workspace
+policy on a method the runtime does register (`permissions.query: false`). The
+handshake advertises `capabilities.readOnly: true` and omits `mutate`/`verify`, which
+is authoritative for clients: performing the edit through their own tools would
+restore the write path the deployment removed.
+
+| Stack | Switch |
+| :--- | :--- |
+| Go (gin/chi/stdhttp, AutoMount) | `TOKENSAFE_OUMV_READ_ONLY=1`, or `TOKENSAFE_OUMV_MUTATE=false TOKENSAFE_OUMV_VERIFY=false` |
+| Python (FastAPI) | `mount_tokensafe(app, read_only=True)`, or `TOKENSAFE_OUMV_READ_ONLY=1` through `tokensafe inject` + `run-backend` |
+| Node | `TOKENSAFE_OUMV_READ_ONLY=1`, `createReadOnlyRuntime()`, or `capabilities: { mutate: false, verify: false }` |
+| ASP.NET Core | `AddTokensafe(o => o.ReadOnly = true)`, or `TOKENSAFE_OUMV_READ_ONLY=1` |
+| Spring / PHP sidecars | `--read-only` |
+| React / Vue controller | `tokensafeReact({ readOnly: true })` (mutation is already development-only) |
+
+Absent in that mode: `oumv/mutate`, `oumv/applyEdit`, `oumv/previewEdit`, `oumv/verify`,
+`oumv/build`, plus the TokenSafe `mutation.apply`/`mutation.simulate` extensions.
+Everything that only reads stays: `handshake`, `disconnect`, `observe`, `understand`,
+`getSource`, `index`, `cancel`, `query`.
 
 ### Security Rules Enforced at Startup
 

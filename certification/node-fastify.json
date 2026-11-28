@@ -2,7 +2,7 @@
   "adapterName": "node-fastify",
   "framework": "fastify",
   "specVersion": "1.6.0",
-  "fixtureVersion": 13,
+  "fixtureVersion": 14,
   "total": 46,
   "passed": 46,
   "failed": 0,
@@ -245,7 +245,7 @@
       "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-28T03:35:14.435Z",
+  "generatedAt": "2026-11-28T05:46:10.366Z",
   "environment": {
     "transport": "http",
     "node": "v24.14.0"

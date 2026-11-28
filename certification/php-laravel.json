@@ -2,16 +2,16 @@
   "adapterName": "php-laravel",
   "framework": "laravel",
   "specVersion": "1.6.0",
-  "fixtureVersion": 13,
-  "total": 33,
-  "passed": 32,
-  "failed": 1,
+  "fixtureVersion": 14,
+  "total": 29,
+  "passed": 29,
+  "failed": 0,
   "skipped": 0,
   "attainedLevel": 2,
   "levels": {
     "1": "passed",
     "2": "passed",
-    "3": "failed"
+    "3": "skipped"
   },
   "cases": [
     {
@@ -55,23 +55,7 @@
       "status": "passed"
     },
     {
-      "id": "observe-l4-returns-recorded-traces",
-      "level": 3,
-      "status": "failed",
-      "error": "field \"data.traces\" must be a non-empty array"
-    },
-    {
       "id": "understand-impact-resolves-target",
-      "level": 2,
-      "status": "passed"
-    },
-    {
-      "id": "understand-causality-after-execution",
-      "level": 3,
-      "status": "passed"
-    },
-    {
-      "id": "verify-returns-status-timings-and-scope",
       "level": 2,
       "status": "passed"
     },
@@ -126,11 +110,6 @@
       "status": "passed"
     },
     {
-      "id": "verify-multi-step-runs-in-order",
-      "level": 2,
-      "status": "passed"
-    },
-    {
       "id": "apply-edit-replace-symbol",
       "level": 2,
       "status": "passed"
@@ -181,7 +160,7 @@
       "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-28T03:35:47.772Z",
+  "generatedAt": "2026-11-28T05:50:19.187Z",
   "environment": {
     "transport": "stdio",
     "profile": "backend",

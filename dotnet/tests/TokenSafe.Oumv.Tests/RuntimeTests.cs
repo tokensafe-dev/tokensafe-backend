@@ -59,6 +59,57 @@ public sealed class RuntimeTests : IDisposable
     private static int ErrorCode(JsonNode? response) =>
         response?["error"]?["code"]?.GetValue<int>() ?? 0;
 
+    /// <summary>
+    /// Spec §8.5: a read-only deployment removes the writing methods from the registry
+    /// instead of refusing them, so the answer is -32601 and not -32007.
+    /// </summary>
+    [Fact]
+    public async Task Read_only_deployment_does_not_register_writing_methods()
+    {
+        var runtime = new OumvRuntime(
+            new OumvOptions { WorkspaceRoot = _workspace, Version = "test", ReadOnly = true },
+            new SourceEditor(_workspace),
+            new EndpointCatalog(new EmptyEndpointDataSource()),
+            NoDbSandbox.Instance,
+            new ServiceCollection().BuildServiceProvider(),
+            _time);
+
+        async Task<JsonNode?> Send(string method, JsonObject parameters) =>
+            await runtime.HandleAsync(new JsonObject
+            {
+                ["jsonrpc"] = "2.0",
+                ["id"] = 1,
+                ["method"] = method,
+                ["params"] = parameters,
+            });
+
+        var handshake = await Send("oumv/handshake", new JsonObject { ["protocolVersion"] = "1.6.0" });
+        var capabilities = handshake!["result"]!["capabilities"]!;
+        Assert.True(capabilities["readOnly"]!.GetValue<bool>());
+        Assert.Null(capabilities["mutate"]);
+        Assert.Null(capabilities["verify"]);
+
+        foreach (var (method, parameters) in new (string, JsonObject)[]
+        {
+            ("oumv/applyEdit", new JsonObject { ["path"] = "app.cs", ["replacement"] = "x" }),
+            ("oumv/previewEdit", new JsonObject { ["path"] = "app.cs", ["replacement"] = "x" }),
+            ("oumv/verify", new JsonObject { ["target"] = "GET /" }),
+            ("oumv/build", new JsonObject { ["command"] = "echo ok" }),
+        })
+        {
+            // A stale session must not turn absence into -32011: the registry is first.
+            var response = await Send(method, new JsonObject { ["sessionId"] = "sess-unknown", ["path"] = "app.cs" });
+            var exact = await Send(method, parameters);
+            Assert.Equal(-32601, ErrorCode(exact));
+            Assert.Equal(-32601, ErrorCode(response));
+        }
+
+        var observe = await Send("oumv/observe", new JsonObject { ["level"] = "L0" });
+        Assert.Null(observe!["error"]);
+        var source = await Send("oumv/getSource", new JsonObject { ["path"] = "definitely-not-here.cs" });
+        Assert.NotEqual(-32601, ErrorCode(source));
+    }
+
     [Fact]
     public async Task Observe_and_understand_honour_the_ifVersion_freshness_handshake()
     {

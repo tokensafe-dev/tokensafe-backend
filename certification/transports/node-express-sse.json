@@ -2,7 +2,7 @@
   "adapterName": "node-express-sse",
   "framework": "express",
   "specVersion": "1.6.0",
-  "fixtureVersion": 13,
+  "fixtureVersion": 14,
   "total": 50,
   "passed": 50,
   "failed": 0,
@@ -265,7 +265,7 @@
       "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-28T03:35:14.656Z",
+  "generatedAt": "2026-11-28T05:46:10.476Z",
   "environment": {
     "transport": "sse",
     "auth": "required",

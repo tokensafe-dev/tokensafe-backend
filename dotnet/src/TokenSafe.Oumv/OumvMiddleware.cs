@@ -24,6 +24,14 @@ public static class OumvApplicationBuilderExtensions
     {
         var options = new OumvOptions();
         configure?.Invoke(options);
+        // Spec §8.5: the universal read-only switch, the same variable Go, the
+        // FastAPI autoload and the Node runtime read.
+        var envReadOnly = Environment.GetEnvironmentVariable("TOKENSAFE_OUMV_READ_ONLY");
+        if (!string.IsNullOrEmpty(envReadOnly) &&
+            (envReadOnly == "1" || envReadOnly.Equals("true", StringComparison.OrdinalIgnoreCase) ||
+             envReadOnly.Equals("yes", StringComparison.OrdinalIgnoreCase) ||
+             envReadOnly.Equals("on", StringComparison.OrdinalIgnoreCase)))
+            options.ReadOnly = true;
 
         services.TryAddSingleton(options);
         services.TryAddSingleton(TimeProvider.System);

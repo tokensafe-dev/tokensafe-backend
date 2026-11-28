@@ -326,9 +326,17 @@ async def run_conformance(
         if not probe.get("error"):
             markers.workspace_version = str((probe.get("result") or {}).get("workspaceVersion") or "")
 
+    # Capabilities are read once, before any case runs: since revision v1.11 an
+    # ordered case may carry requiresCapability too (a read-only runtime, §8.5,
+    # has no mutating methods, so those cases are not part of its report).
+    capabilities: Dict[str, Any] = handshake_result.get("capabilities") or {}
+
     for case in spec["cases"]:
         minimum = str(case.get("minWireVersion") or "")
         if minimum and not _wire_at_least(negotiated_version, minimum):
+            continue
+        if (case.get("requiresCapability")
+                and not _capability_enabled(capabilities, str(case["requiresCapability"]))):
             continue
         if _references_workspace_version(case.get("params") or {}):
             await refresh_workspace_version()
@@ -357,8 +365,6 @@ async def run_conformance(
 
     # Capability cases prove an advertised claim; a runtime that does not make the
     # claim is not penalised, the case simply is not part of its report.
-    capabilities: Dict[str, Any] = handshake_result.get("capabilities") or {}
-
     if spec.get("capabilityCases"):
         for case in spec["capabilityCases"]:
             if not _capability_enabled(capabilities, str(case.get("requiresCapability") or "")):

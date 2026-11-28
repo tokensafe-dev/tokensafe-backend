@@ -25,6 +25,9 @@ public sealed class OumvRuntime
     private volatile string _lastRequestId = string.Empty;
     private readonly object _traceGate = new();
     private readonly DateTimeOffset _started;
+    // §8.5 closed registry: the writing methods are absent, not guarded. Built once so
+    // no handler can be reached later and no setting can widen it at request time.
+    private readonly HashSet<string> _registeredMethods;
 
     public OumvRuntime(
         OumvOptions options,
@@ -43,7 +46,26 @@ public sealed class OumvRuntime
         _started = _time.GetUtcNow();
         Sessions = new OumvSessions(_time);
         Events = new OumvEventHub();
+        _registeredMethods = new HashSet<string>(StringComparer.Ordinal)
+        {
+            "oumv/handshake", "oumv/disconnect", "oumv/observe", "oumv/understand",
+            "oumv/getSource", "oumv/index", "oumv/cancel", "oumv/query",
+        };
+        if (!IsReadOnly)
+        {
+            _registeredMethods.Add("oumv/applyEdit");
+            _registeredMethods.Add("oumv/previewEdit");
+            _registeredMethods.Add("oumv/verify");
+            _registeredMethods.Add("oumv/build");
+        }
     }
+
+    /// <summary>
+    /// Spec §8.5: a read-only deployment registers no writing method at all. The
+    /// legacy `EnableMutations = false` switch is the same shape, so it also drops
+    /// `verify`/`build`, which execute code and commands.
+    /// </summary>
+    public bool IsReadOnly => _options.ReadOnly || !_options.EnableMutations;
 
     public OumvSessions Sessions { get; }
 
@@ -117,6 +139,12 @@ public sealed class OumvRuntime
 
         try
         {
+            // The registry is consulted first, before session validation: a method the
+            // runtime does not serve is METHOD_NOT_FOUND whatever the session state is
+            // (§3.1 rule 5). Answering -32011 here would leak that the method exists.
+            if (!_registeredMethods.Contains(method))
+                throw new OumvException(OumvErrorCode.MethodNotFound, $"METHOD_NOT_FOUND: {method}");
+
             if (method != "oumv/handshake" && method != "oumv/disconnect")
             {
                 var sessionId = OumvJson.Str(paramsNode["sessionId"]);
@@ -237,16 +265,29 @@ public sealed class OumvRuntime
             ("capabilities", Capabilities()));
     }
 
-    private JsonObject Capabilities() => OumvJson.Obj(
-        ("observe", OumvJson.Obj(("levels", new[] { "L0", "L1", "L2", "L3", "L4" }), ("formats", new[] { "json" }))),
-        ("understand", OumvJson.Obj(("causality", true), ("impactAnalysis", true))),
-        ("mutate", OumvJson.Obj(("occ", true), ("syntaxGuard", true), ("multiFile", true), ("preview", true))),
-        ("verify", OumvJson.Obj(("multiMetric", true), ("sandboxRollback", _sandbox.HasEngine), ("build", true))),
-        ("index", OumvJson.Obj(("symbols", true))),
-        // §14.2 is opt-in per app: without a DbContext there is no read-only door.
-        ("observeQuery", OumvJson.Obj(("readOnly", _sandbox.HasEngine))),
-        ("sessions", OumvJson.Obj(("ttlSeconds", true), ("cancel", true))),
-        ("transports", new[] { "http", "sse", "ws" }));
+    private JsonObject Capabilities()
+    {
+        var capabilities = OumvJson.Obj(
+            ("observe", OumvJson.Obj(("levels", new[] { "L0", "L1", "L2", "L3", "L4" }), ("formats", new[] { "json" }))),
+            ("understand", OumvJson.Obj(("causality", true), ("impactAnalysis", true))),
+            ("index", OumvJson.Obj(("symbols", true))),
+            // §14.2 is opt-in per app: without a DbContext there is no read-only door.
+            ("observeQuery", OumvJson.Obj(("readOnly", _sandbox.HasEngine))),
+            ("sessions", OumvJson.Obj(("ttlSeconds", true), ("cancel", true))),
+            ("transports", new[] { "http", "sse", "ws" }));
+
+        // §8.5: a read-only deployment advertises neither pillar and says so explicitly,
+        // so a client never mistakes absence for an older adapter that lacks the method.
+        if (IsReadOnly)
+        {
+            capabilities["readOnly"] = true;
+            return capabilities;
+        }
+
+        capabilities["mutate"] = OumvJson.Obj(("occ", true), ("syntaxGuard", true), ("multiFile", true), ("preview", true));
+        capabilities["verify"] = OumvJson.Obj(("multiMetric", true), ("sandboxRollback", _sandbox.HasEngine), ("build", true));
+        return capabilities;
+    }
 
     private JsonNode Disconnect(JsonObject parameters) =>
         OumvJson.Obj(("closed", Sessions.Delete(OumvJson.Str(parameters["sessionId"]))));

@@ -292,6 +292,16 @@ func ResolveRuntimeConfig(base *RuntimeConfig) (RuntimeConfig, error) {
 		}
 	}
 
+	// §8.5 read-only deployment: one switch that removes the whole writing surface
+	// (mutate, verify and build) instead of refusing it per handler. Applied last so
+	// it always tightens, never widens.
+	if val, exists := os.LookupEnv("TOKENSAFE_OUMV_READ_ONLY"); exists {
+		if readOnly, err := strconv.ParseBool(strings.TrimSpace(val)); err == nil && readOnly {
+			cfg.Capabilities.Mutate = false
+			cfg.Capabilities.Verify = false
+		}
+	}
+
 	// Validate resulting configuration
 	if err := cfg.Validate(); err != nil {
 		return cfg, err
@@ -355,7 +365,7 @@ func DefaultDevelopmentRuntimeConfig() *RuntimeConfig {
 	if err != nil {
 		workspace = "."
 	}
-	return &RuntimeConfig{
+	cfg := &RuntimeConfig{
 		Enabled:      true,
 		Environment:  DetectEnvironment(),
 		Name:         "tokensafe-backend",
@@ -374,4 +384,12 @@ func DefaultDevelopmentRuntimeConfig() *RuntimeConfig {
 			Verify:     true,
 		},
 	}
+	// Spec §8.5: the AutoMount helpers read the config verbatim, so the universal
+	// read-only switch has to be applied here too — `tokensafe inject` and
+	// `tokensafe run-backend` set it for every stack.
+	if readOnly, err := strconv.ParseBool(strings.TrimSpace(os.Getenv("TOKENSAFE_OUMV_READ_ONLY"))); err == nil && readOnly {
+		cfg.Capabilities.Mutate = false
+		cfg.Capabilities.Verify = false
+	}
+	return cfg
 }

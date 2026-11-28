@@ -2,7 +2,7 @@
   "adapterName": "node-express-ws",
   "framework": "express",
   "specVersion": "1.6.0",
-  "fixtureVersion": 13,
+  "fixtureVersion": 14,
   "total": 47,
   "passed": 47,
   "failed": 0,
@@ -250,7 +250,7 @@
       "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-28T03:35:16.008Z",
+  "generatedAt": "2026-11-28T05:46:11.817Z",
   "environment": {
     "transport": "ws",
     "node": "v24.14.0"

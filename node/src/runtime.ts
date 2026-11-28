@@ -41,6 +41,8 @@ export interface TraceEntry {
 }
 
 export interface RuntimeCapabilities {
+  /** §8.5 read-only deployment: the writing methods are absent and cannot be bypassed. */
+  readOnly?: boolean;
   observe: { levels: string[]; formats: string[] };
   understand: { causality: boolean; signalsGraph: boolean; impactAnalysis: boolean };
   mutate: { occ: boolean; syntaxGuard: boolean; multiFile?: boolean; preview?: boolean };
@@ -215,16 +217,45 @@ export class OumvRuntime {
     this.idempotency = new Map<string, Record<string, unknown>>();
     this.sessions = new SessionRegistry(options.sessionTtlSeconds ?? 3600);
     this.handler = options.handler;
+    // Spec §8.5: the universal read-only switch. Go, the FastAPI autoload and this
+    // runtime all read the same variable, so one deployment setting means the same
+    // thing on every stack: no writing method is registered.
+    const envReadOnly = /^(1|true|yes|on)$/i.test(process.env.TOKENSAFE_OUMV_READ_ONLY ?? '');
     this.enabled = {
       observe: options.capabilities?.observe ?? true,
       understand: options.capabilities?.understand ?? true,
-      mutate: options.capabilities?.mutate ?? true,
-      verify: options.capabilities?.verify ?? true,
+      mutate: options.capabilities?.mutate ?? !envReadOnly,
+      verify: options.capabilities?.verify ?? !envReadOnly,
     };
     this.permissions = options.permissions ?? {};
   }
 
   /* ---------------------------------------------------------------- registry */
+
+  /**
+   * The closed dispatch registry (spec §3.1 rule 5 / §8.5): a capability that is off
+   * contributes no method, so the dispatcher answers -32601 before session validation
+   * and no handler runs. `readOnly` is exactly "no mutating method is in this list".
+   */
+  registeredMethods(): string[] {
+    const methods = [
+      'oumv/handshake',
+      'handshake',
+      'oumv/disconnect',
+      'oumv/cancel',
+      'oumv/index',
+      'oumv/query',
+    ];
+    if (this.enabled.observe) methods.push('oumv/observe');
+    if (this.enabled.understand) methods.push('oumv/understand');
+    // Source read is an observation capability: a read-only agent must be able to
+    // inspect code, so getSource survives either pillar being on.
+    if (this.enabled.observe || this.enabled.mutate) methods.push('oumv/getSource');
+    if (this.enabled.mutate) methods.push('oumv/applyEdit', 'oumv/previewEdit');
+    // Build executes a command, so it belongs to the writing surface.
+    if (this.enabled.verify) methods.push('oumv/verify', 'oumv/build');
+    return methods;
+  }
 
   registerRoute(method: string, routePath: string, handlerName = 'handler', middlewares: string[] = []): void {
     // Paths are case-sensitive (`/api/orders` !== `/API/ORDERS`); only the method is normalised.
@@ -331,13 +362,13 @@ export class OumvRuntime {
     if (!this.enabled.understand) {
       capabilities.understand = { causality: false, signalsGraph: false, impactAnalysis: false };
     }
-    if (!this.enabled.mutate) capabilities.mutate = { occ: false, syntaxGuard: false, multiFile: false, preview: false };
-    if (!this.enabled.verify) {
-      capabilities.verify = { multiMetric: false, surfaceDiff: false, sandboxRollback: false, build: false };
-      capabilities.index = { symbols: false };
-      capabilities.observeQuery = { readOnly: false };
-      capabilities.sessions = { ttlSeconds: false, cancel: false, idempotency: false };
-    }
+    // §8.5 (revision v1.11): a capability that is off is absent, not a block of
+    // falses, and the methods that serve it are not in the registry. When both
+    // writing pillars are off the deployment is read-only and says so explicitly.
+    const advertised = capabilities as unknown as Record<string, unknown>;
+    if (!this.enabled.mutate) delete advertised.mutate;
+    if (!this.enabled.verify) delete advertised.verify;
+    if (!this.enabled.mutate && !this.enabled.verify) advertised.readOnly = true;
 
     // §3.1: narrow to the client's request; an empty intersection stays empty.
     const requested = params.requestedCapabilities;

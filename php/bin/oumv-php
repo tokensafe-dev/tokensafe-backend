@@ -2800,14 +2800,21 @@ final class SessionRegistry
 }
 
 /** @return array<string,mixed> */
-function oumv_capabilities(): array
+function oumv_capabilities(bool $readOnly = false): array
 {
-    return [
+    $capabilities = [
         'observe' => ['levels' => ['L0', 'L1', 'L2', 'L3'], 'formats' => ['json']],
         'understand' => ['causality' => false, 'impactAnalysis' => true],
-        'mutate' => ['occ' => true, 'syntaxGuard' => true],
-        'verify' => ['multiMetric' => false],
     ];
+    if ($readOnly) {
+        // §8.5 (revision v1.11): a read-only deployment registers no writing method,
+        // so it advertises neither pillar and says readOnly explicitly.
+        $capabilities['readOnly'] = true;
+        return $capabilities;
+    }
+    $capabilities['mutate'] = ['occ' => true, 'syntaxGuard' => true];
+    $capabilities['verify'] = ['multiMetric' => false];
+    return $capabilities;
 }
 
 /** @return array<string,mixed> */
@@ -2964,6 +2971,13 @@ final class Adapter
                 return $isNotification ? null : oumv_success_envelope($id, $result);
             }
 
+            // §8.5 (revision v1.11): a read-only deployment has no handler for the
+            // writing surface. Checked before the session so a stale id cannot turn
+            // absence into -32011 — the method simply does not exist.
+            if ($this->readOnly && in_array($method, ['oumv/applyEdit', 'oumv/verify'], true)) {
+                throw new OumvError(-32601, 'Method "' . $method . '" not found', ['reason' => 'method_not_found', 'method' => $method]);
+            }
+
             if ($method !== 'oumv/handshake') {
                 $sessionId = oumv_str($params, 'sessionId');
                 if (!$this->sessions->validate($sessionId)) {
@@ -2991,11 +3005,8 @@ final class Adapter
     /** @return array<string,mixed> */
     private function dispatch(string $method, array $params): array
     {
-        $wantsMutation = in_array($method, ['oumv/applyEdit'], true);
-        if ($wantsMutation && $this->readOnly) {
-            throw new OumvError(-32007, 'PERMISSION_DENIED: this runtime was started with --read-only', ['reason' => 'read_only']);
-        }
-
+        // §8.5: the read-only absence check runs in handle(), before the session, so
+        // dispatch() only sees methods this deployment actually serves.
         switch ($method) {
             case 'oumv/handshake':
                 return $this->handshake($params);
@@ -3046,7 +3057,7 @@ final class Adapter
             }
         }
 
-        $capabilities = oumv_capabilities();
+        $capabilities = oumv_capabilities($this->readOnly);
         $requestedCapabilities = $params['requestedCapabilities'] ?? null;
         if (is_array($requestedCapabilities)) {
             $capabilities = oumv_narrow_capabilities($capabilities, $requestedCapabilities);
@@ -3307,7 +3318,7 @@ Options:
   --token <token>        require X-OUMV-Session-Token / Authorization: Bearer on HTTP
   --verify-cmd <cmd>     command oumv/verify runs; {file} {rel} {root} {target} are substituted
                          (default: "<php binary> -l {file}")
-  --read-only            refuse oumv/applyEdit with PERMISSION_DENIED
+  --read-only            do not register the writing methods (applyEdit/verify)
   --register             write the spec §9.2 discovery registry on handshake (HTTP mode)
   --print-descriptor     print the discovery descriptor for this workspace and exit
   --verbose              diagnostics on stderr

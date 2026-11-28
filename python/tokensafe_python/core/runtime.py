@@ -47,11 +47,25 @@ from tokensafe_python.protocol.types import (
 )
 
 
+# §8.5 (revision v1.11): the writing surface of a read-only deployment. These methods
+# are never registered when `read_only` is set — absence, not a -32007 refusal.
+READ_ONLY_ABSENT_METHODS = frozenset({
+    "oumv/mutate",
+    "oumv/applyEdit",
+    "oumv/previewEdit",
+    "oumv/verify",
+    "oumv/build",
+    # Extended TokenSafe APIs that dispatch a live in-process request.
+    "mutation.apply",
+    "mutation.simulate",
+})
+
+
 class OUMVRuntime:
     """Unified runtime coordinator implementing UARP protocol across Python backends."""
 
     def __init__(self, framework: str = "fastapi", db_engine: Optional[Any] = None, project_root: Optional[str] = None,
-                 permissions: Optional[Dict[str, Any]] = None):
+                 permissions: Optional[Dict[str, Any]] = None, read_only: bool = False):
         self.framework = framework
         self.causality = CausalityGraph()
         self.state = StateManager()
@@ -80,6 +94,10 @@ class OUMVRuntime:
         self.build_command: Optional[str] = None
         # §14.2 workspace policy: permissions.query: False disables read-only query.
         self.permissions: Dict[str, Any] = dict(permissions or {})
+        # §8.5 (revision v1.11): a read-only deployment does not register the writing
+        # methods at all. The registry is closed at construction, so no handler can be
+        # reached later — the router answers -32601 before session validation.
+        self.read_only = bool(read_only)
 
         self._bind_rpc_methods()
 
@@ -146,6 +164,8 @@ class OUMVRuntime:
             ("verification.assert", self.handle_verification_assert),
         ]
         for method, handler in bindings:
+            if self.read_only and method in READ_ONLY_ABSENT_METHODS:
+                continue
             self.rpc.register(method, self._recorded(method, handler))
 
     def _recorded(self, method: str, handler: Callable):
@@ -369,6 +389,12 @@ class OUMVRuntime:
             # Wire 1.5.0/1.6.0: lifetime negotiation, best-effort cancel, idempotent retries.
             "sessions": {"ttlSeconds": True, "cancel": True, "idempotency": True},
         }
+        # §8.5: a read-only runtime must not advertise what it does not register, and
+        # says so explicitly so a client never mistakes absence for an old adapter.
+        if self.read_only:
+            caps.pop("mutate", None)
+            caps.pop("verify", None)
+            caps["readOnly"] = True
         # §3.1: honour the client's request by narrowing the advertised set. Arrays
         # are filters; an empty intersection stays empty ("cannot serve").
         requested = kwargs.get("requestedCapabilities") or {}

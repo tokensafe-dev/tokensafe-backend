@@ -84,12 +84,19 @@ def main(argv: Optional[list[str]] = None) -> int:
     parser = argparse.ArgumentParser(prog="tokensafe-oumv-stdio")
     parser.add_argument("--app", help="import path of a FastAPI app, e.g. 'myapp.main:app'")
     parser.add_argument("--workspace", default=None, help="workspace root for the path jail")
+    parser.add_argument(
+        "--read-only",
+        action="store_true",
+        help="spec §8.5: do not register the writing methods (applyEdit/previewEdit/verify/build)",
+    )
     args = parser.parse_args(argv)
 
     if args.app:
-        runtime = mount_tokensafe(_load_app(args.app), project_root=args.workspace).runtime
+        runtime = mount_tokensafe(
+            _load_app(args.app), project_root=args.workspace, read_only=args.read_only
+        ).runtime
     else:
-        runtime = OUMVRuntime(project_root=args.workspace)
+        runtime = OUMVRuntime(project_root=args.workspace, read_only=args.read_only)
 
     try:
         asyncio.run(serve(runtime))

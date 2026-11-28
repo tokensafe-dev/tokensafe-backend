@@ -2,7 +2,7 @@
   "adapterName": "next-app-router",
   "framework": "nextjs",
   "specVersion": "1.6.0",
-  "fixtureVersion": 13,
+  "fixtureVersion": 14,
   "total": 48,
   "passed": 48,
   "failed": 0,
@@ -255,7 +255,7 @@
       "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-28T03:51:14.300Z",
+  "generatedAt": "2026-11-28T05:46:10.313Z",
   "environment": {
     "transport": "http",
     "auth": "required",

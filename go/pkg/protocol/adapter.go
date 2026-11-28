@@ -71,3 +71,13 @@ type (
 		Build(ctx context.Context, params *BuildParams) (*BuildResult, *OumvError)
 	}
 )
+
+// MethodRegistry is implemented by runtimes that can state, at boot, the exact set
+// of JSON-RPC methods they serve (spec §3.1 rule 5 / §8.5, revision v1.11). The
+// dispatcher reads it once: a method that is not in the registry is not reachable at
+// all and answers -32601 METHOD_NOT_FOUND, before session validation and before any
+// handler runs. That is what makes a read-only deployment a shape of the runtime
+// instead of a check inside each handler.
+type MethodRegistry interface {
+	RegisteredMethods() []string
+}

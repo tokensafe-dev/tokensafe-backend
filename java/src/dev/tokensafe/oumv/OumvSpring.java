@@ -71,7 +71,7 @@ import java.util.regex.Pattern;
 public final class OumvSpring {
 
     static final String NAME = "oumv-java-spring";
-    static final String VERSION = "0.1.0";
+    static final String VERSION = "0.2.0";
     static final String PROTOCOL_VERSION = "1.5.0";
     static final int SUPPORTED_MAJOR = 1;
     static final int SUPPORTED_MINOR_MAX = 6;
@@ -143,6 +143,7 @@ public final class OumvSpring {
         boolean help;
         boolean version;
         boolean descriptor = true;
+        boolean readOnly;
         String host = "127.0.0.1";
         int port = 7331;
         String token;
@@ -168,6 +169,7 @@ public final class OumvSpring {
                 "                            (default: resolved from the verify target)",
                 "  --verify-timeout-ms <n>   verification timeout (default 120000)",
                 "  --no-descriptor           do not write ~/.tokensafe/runtimes/<hash>.json",
+                "  --read-only               do not register applyEdit/verify (spec §8.5)",
                 "  --scan                    print the statically scanned route table and exit",
                 "  --version                 print the adapter version",
                 "  --help                    print this help",
@@ -210,6 +212,9 @@ public final class OumvSpring {
                         break;
                     case "--no-descriptor":
                         o.descriptor = false;
+                        break;
+                    case "--read-only":
+                        o.readOnly = true;
                         break;
                     case "--version":
                         o.version = true;
@@ -2129,9 +2134,14 @@ public final class OumvSpring {
             String sessionId = sessions.create();
             Map<String, Object> capabilities = map(
                     "observe", map("levels", levels, "formats", list("json")),
-                    "understand", map("causality", false, "impactAnalysis", true),
-                    "mutate", map("occ", true, "syntaxGuard", true),
-                    "verify", map("multiMetric", true));
+                    "understand", map("causality", false, "impactAnalysis", true));
+            if (opts.readOnly) {
+                // §8.5: no writing pillar is advertised because none is registered.
+                capabilities.put("readOnly", true);
+            } else {
+                capabilities.put("mutate", map("occ", true, "syntaxGuard", true));
+                capabilities.put("verify", map("multiMetric", true));
+            }
             return map(
                     "protocolVersion", PROTOCOL_VERSION,
                     "profile", PROFILE,
@@ -3394,6 +3404,13 @@ public final class OumvSpring {
         // ---- dispatch
 
         Map<String, Object> dispatch(String method, Map<String, Object> params) throws RpcException {
+            // §8.5 (revision v1.11): a read-only deployment has no handler for the
+            // writing surface at all, so the answer is METHOD_NOT_FOUND whatever the
+            // session state is — never a policy refusal of a handler that exists.
+            if (opts.readOnly && ("oumv/applyEdit".equals(method) || "oumv/verify".equals(method))) {
+                throw new RpcException(-32601, "METHOD_NOT_FOUND: unknown method " + method,
+                        map("reason", "method_not_found", "method", method));
+            }
             switch (method) {
                 case "oumv/handshake":
                     return handshake(params);
@@ -3724,8 +3741,9 @@ public final class OumvSpring {
                             "observeLevels", Arrays.asList(OBSERVE_LEVELS),
                             "transports", list("http"),
                             "causality", false,
-                            "occ", true,
-                            "verify", true),
+                            "occ", !opts.readOnly,
+                            "verify", !opts.readOnly,
+                            "readOnly", opts.readOnly),
                     "startedAt", DateTimeFormatter.ISO_INSTANT.format(Instant.now()));
             if (opts.token != null) {
                 descriptor.put("sessionToken", opts.token);

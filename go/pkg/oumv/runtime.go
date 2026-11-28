@@ -477,6 +477,9 @@ func (r *Runtime) Handshake(ctx context.Context, params *protocol.OumvHandshakeP
 	if !r.config.Capabilities.Verify {
 		caps.Verify = protocol.VerifyCapability{}
 	}
+	// §8.5 read-only deployment: both writing pillars off means the writing methods
+	// are absent from the registry, so the handshake says so explicitly.
+	caps.ReadOnly = !r.config.Capabilities.Mutate && !r.config.Capabilities.Verify
 	// §3.1: honour the client's request by narrowing the advertised set. Arrays
 	// are filters (levels/formats); boolean flags express requirements, so the
 	// runtime answers with what it actually serves and the client decides.
@@ -506,6 +509,34 @@ func (r *Runtime) Handshake(ctx context.Context, params *protocol.OumvHandshakeP
 		},
 		Capabilities: caps,
 	}, nil
+}
+
+// RegisteredMethods states the closed dispatch registry for this configuration
+// (spec §3.1 rule 5 / §8.5, revision v1.11). A capability that is off contributes no
+// methods at all: the dispatcher then answers -32601 before session validation, so a
+// read-only deployment has no reachable code path to a write or a command execution.
+func (r *Runtime) RegisteredMethods() []string {
+	methods := []string{protocol.MethodHandshake, protocol.MethodDisconnect, protocol.MethodCancel, protocol.MethodQuery}
+	if r.config.Capabilities.Observe {
+		methods = append(methods, protocol.MethodObserve, protocol.MethodIndex)
+	}
+	if r.config.Capabilities.Understand {
+		methods = append(methods, protocol.MethodUnderstand)
+	}
+	// Source read is an observation capability, not a mutation: a read-only agent
+	// must be able to inspect code, so getSource survives either pillar being on.
+	if r.config.Capabilities.Observe || r.config.Capabilities.Mutate {
+		methods = append(methods, protocol.MethodGetSource)
+	}
+	if r.config.Capabilities.Mutate {
+		methods = append(methods, protocol.MethodApplyEdit, protocol.MethodPreviewEdit)
+	}
+	if r.config.Capabilities.Verify {
+		// Build executes a command, so it belongs to the writing surface and leaves
+		// the registry together with verify.
+		methods = append(methods, protocol.MethodVerify, protocol.MethodBuild)
+	}
+	return methods
 }
 
 // narrowCapabilities intersects the advertised observe levels/formats with the

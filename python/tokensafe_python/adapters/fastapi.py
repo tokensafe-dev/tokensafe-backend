@@ -82,6 +82,7 @@ class TokenSafeFastAPI:
         port: int = 8000,
         project_root: Optional[str] = None,
         permissions: Optional[Dict[str, Any]] = None,
+        read_only: bool = False,
     ):
         self.app = app
         self.rpc_path = rpc_path
@@ -96,6 +97,7 @@ class TokenSafeFastAPI:
             db_engine=db_engine if db_engine is not None else _discover_db_engine(app),
             project_root=project_root,
             permissions=permissions,
+            read_only=read_only,
         )
 
         self._introspect_app()
@@ -414,8 +416,15 @@ def mount_tokensafe(
     host: str = "127.0.0.1",
     port: int = 8000,
     project_root: Optional[str] = None,
+    permissions: Optional[Dict[str, Any]] = None,
+    read_only: bool = False,
 ) -> TokenSafeFastAPI:
-    """One-liner helper to mount TokenSafe UARP runtime onto a FastAPI application."""
+    """One-liner helper to mount TokenSafe UARP runtime onto a FastAPI application.
+
+    ``read_only=True`` is the spec §8.5 deployment shape: the writing methods
+    (applyEdit/previewEdit/verify/build and the mutation.* extensions) are never
+    registered, so they answer -32601 instead of a policy refusal.
+    """
     return TokenSafeFastAPI(
         app=app,
         rpc_path=rpc_path,
@@ -424,4 +433,6 @@ def mount_tokensafe(
         host=host,
         port=port,
         project_root=project_root,
+        permissions=permissions,
+        read_only=read_only,
     )

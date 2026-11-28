@@ -84,6 +84,10 @@ type OumvCapabilities struct {
 	Understand UnderstandCapability `json:"understand"`
 	Mutate     MutateCapability     `json:"mutate"`
 	Verify     VerifyCapability     `json:"verify"`
+	// ReadOnly marks a read-only deployment (spec §8.5, revision v1.11): the
+	// mutating methods are not registered at all, so a client must treat this as an
+	// authoritative refusal and never perform the edit through its own tools.
+	ReadOnly bool `json:"readOnly,omitempty"`
 	// Transports lists the bindings this runtime actually mounted (spec §2.3/§2.4).
 	Transports []string `json:"transports,omitempty"`
 	// Sessions advertises the session-lifecycle features the handshake honours.

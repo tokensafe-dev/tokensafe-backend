@@ -134,40 +134,111 @@ func TestCapabilityEnforcement(t *testing.T) {
 		},
 	})
 
-	// 1. Calling Observe must be rejected with ErrPermissionDenied (-32007)
-	obsBody, _ := json.Marshal(protocol.NewRequest(1, protocol.MethodObserve, protocol.ObserveParams{Level: "L0"}))
-	reqObs := httptest.NewRequest(http.MethodPost, "/__oumv/rpc", bytes.NewReader(obsBody))
-	recObs := httptest.NewRecorder()
-	app.ServeHTTP(recObs, reqObs)
-
-	var obsResp protocol.OumvResponse
-	_ = json.Unmarshal(recObs.Body.Bytes(), &obsResp)
-	if obsResp.Error == nil || obsResp.Error.Code != protocol.ErrPermissionDenied {
-		t.Fatalf("expected ErrPermissionDenied (-32007) when Observe is disabled, got: %+v", obsResp.Error)
+	// §8.5 (revision v1.11): a capability that is off contributes no method at all.
+	// Observe/Understand/Mutate/Verify are all disabled except Understand, so every
+	// pillar method answers -32601 METHOD_NOT_FOUND, never -32007.
+	call := func(id int, method string, params interface{}) *protocol.OumvResponse {
+		body, _ := json.Marshal(protocol.NewRequest(id, method, params))
+		req := httptest.NewRequest(http.MethodPost, "/__oumv/rpc", bytes.NewReader(body))
+		rec := httptest.NewRecorder()
+		app.ServeHTTP(rec, req)
+		var resp protocol.OumvResponse
+		_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+		return &resp
 	}
 
-	// 2. Calling GetSource must be rejected with ErrPermissionDenied (-32007)
-	srcBody, _ := json.Marshal(protocol.NewRequest(2, protocol.MethodGetSource, protocol.GetSourceParams{Path: "main.go"}))
-	reqSrc := httptest.NewRequest(http.MethodPost, "/__oumv/rpc", bytes.NewReader(srcBody))
-	recSrc := httptest.NewRecorder()
-	app.ServeHTTP(recSrc, reqSrc)
+	for _, tc := range []struct {
+		name   string
+		method string
+		params interface{}
+	}{
+		{"observe disabled", protocol.MethodObserve, protocol.ObserveParams{Level: "L0"}},
+		{"getSource disabled with both read pillars off", protocol.MethodGetSource, protocol.GetSourceParams{Path: "main.go"}},
+		{"applyEdit disabled", protocol.MethodApplyEdit, protocol.ApplyEditParams{Path: "main.go"}},
+		{"previewEdit disabled", protocol.MethodPreviewEdit, protocol.PreviewEditParams{Path: "main.go"}},
+		{"verify disabled", protocol.MethodVerify, protocol.VerifyParams{Target: "GET /"}},
+		{"build disabled with verify", protocol.MethodBuild, protocol.BuildParams{Command: "echo ok"}},
+	} {
+		resp := call(1, tc.method, tc.params)
+		if resp.Error == nil || resp.Error.Code != protocol.ErrMethodNotFound {
+			t.Fatalf("%s: expected METHOD_NOT_FOUND (-32601), got %+v", tc.name, resp.Error)
+		}
+	}
+}
 
-	var srcResp protocol.OumvResponse
-	_ = json.Unmarshal(recSrc.Body.Bytes(), &srcResp)
-	if srcResp.Error == nil || srcResp.Error.Code != protocol.ErrPermissionDenied {
-		t.Fatalf("expected ErrPermissionDenied (-32007) when Mutate is disabled, got: %+v", srcResp.Error)
+// TestReadOnlyProfileHasNoWritingMethods pins the shape the IH comment asked for:
+// read-only is a property of the registry, not a check inside a handler.
+func TestReadOnlyProfileHasNoWritingMethods(t *testing.T) {
+	cleanEnv(t)
+	app := core.New(core.AppConfig{
+		Name: "read-only-service",
+		OUMV: &oumv.RuntimeConfig{
+			Enabled:     true,
+			Environment: oumv.EnvDevelopment,
+			Transport: oumv.TransportConfig{
+				Enabled: true,
+				Host:    "127.0.0.1",
+				Path:    "/__oumv/rpc",
+			},
+			Capabilities: oumv.CapabilitiesConfig{
+				Observe:    true,
+				Understand: true,
+				Mutate:     false,
+				Verify:     false,
+			},
+		},
+	})
+
+	call := func(id int, method string, params interface{}) *protocol.OumvResponse {
+		body, _ := json.Marshal(protocol.NewRequest(id, method, params))
+		req := httptest.NewRequest(http.MethodPost, "/__oumv/rpc", bytes.NewReader(body))
+		rec := httptest.NewRecorder()
+		app.ServeHTTP(rec, req)
+		var resp protocol.OumvResponse
+		_ = json.Unmarshal(rec.Body.Bytes(), &resp)
+		return &resp
 	}
 
-	// 3. Calling Verify must be rejected with ErrPermissionDenied (-32007)
-	verBody, _ := json.Marshal(protocol.NewRequest(3, protocol.MethodVerify, protocol.VerifyParams{Target: "GET /"}))
-	reqVer := httptest.NewRequest(http.MethodPost, "/__oumv/rpc", bytes.NewReader(verBody))
-	recVer := httptest.NewRecorder()
-	app.ServeHTTP(recVer, reqVer)
+	// The handshake says what the registry is: readOnly, no mutate, no verify.
+	handshake := call(1, protocol.MethodHandshake, protocol.OumvHandshakeParams{ProtocolVersion: "1.6.0"})
+	if handshake.Error != nil {
+		t.Fatalf("handshake failed: %+v", handshake.Error)
+	}
+	raw, _ := json.Marshal(handshake.Result)
+	var shape struct {
+		Capabilities protocol.OumvCapabilities `json:"capabilities"`
+	}
+	_ = json.Unmarshal(raw, &shape)
+	if !shape.Capabilities.ReadOnly {
+		t.Fatalf("read-only deployment must advertise capabilities.readOnly, got %s", raw)
+	}
+	if shape.Capabilities.Mutate.OCC || shape.Capabilities.Verify.MultiMetric || shape.Capabilities.Verify.Build {
+		t.Fatalf("read-only deployment must not advertise mutate/verify, got %s", raw)
+	}
 
-	var verResp protocol.OumvResponse
-	_ = json.Unmarshal(recVer.Body.Bytes(), &verResp)
-	if verResp.Error == nil || verResp.Error.Code != protocol.ErrPermissionDenied {
-		t.Fatalf("expected ErrPermissionDenied (-32007) when Verify is disabled, got: %+v", verResp.Error)
+	// Reads stay registered: observe answers, and getSource is registered (a missing
+	// file is RESOURCE_NOT_FOUND, which only a registered method can answer).
+	if resp := call(2, protocol.MethodObserve, protocol.ObserveParams{Level: "L0"}); resp.Error != nil {
+		t.Fatalf("observe must stay registered in read-only mode, got %+v", resp.Error)
+	}
+	src := call(3, protocol.MethodGetSource, protocol.GetSourceParams{Path: "definitely-not-here.go"})
+	if src.Error == nil || src.Error.Code == protocol.ErrMethodNotFound {
+		t.Fatalf("getSource must stay registered in read-only mode, got %+v", src.Error)
+	}
+
+	// Writes are not registered at all: -32601, not -32007.
+	for _, tc := range []struct {
+		method string
+		params interface{}
+	}{
+		{protocol.MethodApplyEdit, protocol.ApplyEditParams{Path: "main.go"}},
+		{protocol.MethodPreviewEdit, protocol.PreviewEditParams{Path: "main.go"}},
+		{protocol.MethodVerify, protocol.VerifyParams{Target: "GET /"}},
+		{protocol.MethodBuild, protocol.BuildParams{Command: "echo ok"}},
+	} {
+		if resp := call(4, tc.method, tc.params); resp.Error == nil || resp.Error.Code != protocol.ErrMethodNotFound {
+			t.Fatalf("%s must answer -32601 in read-only mode, got %+v", tc.method, resp.Error)
+		}
 	}
 }
 

@@ -10,13 +10,22 @@ import (
 // Dispatcher coordinates incoming JSON-RPC 2.0 requests to the active OumvRuntimeAdapter.
 type Dispatcher struct {
 	adapter protocol.OumvRuntimeAdapter
+	// allowed is the closed dispatch registry (spec §8.5). nil means the adapter
+	// states no registry, so every known method is reachable (pre-v1.11 behaviour).
+	allowed map[string]struct{}
 }
 
 // NewDispatcher creates a new JSON-RPC dispatcher bound to an adapter.
 func NewDispatcher(adapter protocol.OumvRuntimeAdapter) *Dispatcher {
-	return &Dispatcher{
-		adapter: adapter,
+	d := &Dispatcher{adapter: adapter}
+	if registry, ok := adapter.(protocol.MethodRegistry); ok {
+		methods := registry.RegisteredMethods()
+		d.allowed = make(map[string]struct{}, len(methods))
+		for _, method := range methods {
+			d.allowed[method] = struct{}{}
+		}
 	}
+	return d
 }
 
 // Handle executes a raw incoming JSON-RPC message and produces a response envelope.
@@ -69,6 +78,15 @@ func (d *Dispatcher) EndSession(id string) bool {
 
 // Dispatch routes a validated OumvRequest to the corresponding adapter method.
 func (d *Dispatcher) Dispatch(ctx context.Context, req *protocol.OumvRequest) *protocol.OumvResponse {
+	// The registry is consulted first, before session validation: a method the
+	// runtime does not serve is METHOD_NOT_FOUND whatever the session state is
+	// (§3.1 rule 5). Answering -32011 here would leak that the method exists.
+	if d.allowed != nil {
+		if _, ok := d.allowed[req.Method]; !ok {
+			return protocol.NewErrorResponse(req.ID, protocol.NewMethodNotFoundError(req.Method))
+		}
+	}
+
 	if sessions, ok := d.adapter.(sessionAware); ok {
 		sessionID := sessionIDFromParams(req.Params)
 

@@ -165,8 +165,15 @@ func Run(dispatcher Dispatcher, spec Spec, markers Markers) Report {
 	// once so the ifVersion cases can assert both the unchanged envelope and
 	// -32010 without a cross-case capture mechanism.
 	negotiated := negotiatedVersion(dispatcher)
+	// Capabilities are read once, before any case runs: since revision v1.11 an
+	// ordered case may carry RequiresCapability too (a read-only runtime, §8.5,
+	// has no mutating methods at all, so those cases are not part of its report).
+	capabilities := advertisedCapabilities(dispatcher)
 	for _, tc := range spec.Cases {
 		if tc.MinWireVersion != "" && !wireAtLeast(negotiated, tc.MinWireVersion) {
+			continue
+		}
+		if tc.RequiresCapability != "" && !capabilityEnabled(capabilities, tc.RequiresCapability) {
 			continue
 		}
 		// Earlier cases legitimately mutate the workspace, so the §4.1 token is
@@ -206,7 +213,6 @@ func Run(dispatcher Dispatcher, spec Spec, markers Markers) Report {
 
 	// Capability cases prove an advertised claim; a runtime that does not make the
 	// claim is not penalised, the case simply is not part of its report.
-	capabilities := advertisedCapabilities(dispatcher)
 	if len(spec.CapabilityCases) > 0 {
 		for _, tc := range spec.CapabilityCases {
 			if !capabilityEnabled(capabilities, tc.RequiresCapability) {

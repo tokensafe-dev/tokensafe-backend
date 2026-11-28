@@ -1,7 +1,7 @@
 {
   "protocolVersion": "1.6.0",
   "spec": "https://github.com/tokensafe-dev/oumv/blob/main/spec/SPEC.md",
-  "description": "Language-neutral OUMV conformance cases (spec §10). Each case declares the conformance Level (1|2|3) it certifies. A runtime attains Level N only when every case with level <= N passes; a failure at a higher level caps the claim but does not fail the lower levels. fixtureVersion 3 added session handshake, getSource and verify-result shape coverage; fixtureVersion 4 requires the observe `format` field the spec envelope mandates; fixtureVersion 5 covers applyEdit mode=create (new file, no overwrite). Markers substituted by each runner: ${FIXTURE_FILE}, ${MISSING_FILE}, ${EDIT_TARGET_FILE}, ${EDIT_TARGET_VERSION}, ${EDIT_CONTENT}, ${BROKEN_CONTENT}, ${L2_TARGET}, ${L3_TARGET}, ${VERIFY_TARGET}. v7 (wire 1.3.0): applyEdit mode=patch (splice, target-missing), getSource window/dedup markers, unknown mode/symbol/level/version, create with expectedVersion, rename/delete validation. v8: pushCases for the SSE (§2.3) and WebSocket (§2.4) bindings — a certificate for that transport proves a mutation is pushed as `state`/`notifications/oumv.state` and that `Last-Event-ID` replays it. v9: capabilityCases gated on the handshake claim (verify.sandboxRollback), markers are substituted in nested params, and a case a runtime does not claim is absent from its report rather than skipped. v10 (wire 1.5.0): the applyEdit batch envelope (mutate.multiFile) — one atomic call creates two files, and a batch whose second edit fails syntax pre-flight leaves no bytes on disk; sessionCases issue a handshake with `sessionTtlSeconds` and prove an expired id answers -32011 with data.reason=session_expired. v11 (wire 1.6.0): capabilityCases for the new optional surface — previewEdit never writes (a follow-up getSource with ifVersion proves the bytes untouched), the idempotency key replays the first create instead of answering file_exists, cancel of an unknown requestId is a result not an error, index returns the ranked-matches contract, query proves the read-only split (SELECT answers columns/rows, INSERT is -32003 query_forbidden) and build returns status/command/diagnostics. Gated on the handshake claim (mutate.preview, sessions.idempotency, sessions.cancel, index.symbols, observeQuery.readOnly, verify.build) — a runtime that does not advertise stays absent from the report. v12: the §4.1 result-versioning handshake as ordered cases gated by `minWireVersion` — observe and understand carry a `workspaceVersion` token, a matching `ifVersion` answers the short unchanged envelope, and a stale token is rejected with -32010 STALE_RESOURCE_VERSION (runtimes frozen on wire 1.5.0 skip these cases and are absent from their report).",
+  "description": "Language-neutral OUMV conformance cases (spec §10). Each case declares the conformance Level (1|2|3) it certifies. A runtime attains Level N only when every case with level <= N passes; a failure at a higher level caps the claim but does not fail the lower levels. fixtureVersion 3 added session handshake, getSource and verify-result shape coverage; fixtureVersion 4 requires the observe `format` field the spec envelope mandates; fixtureVersion 5 covers applyEdit mode=create (new file, no overwrite). Markers substituted by each runner: ${FIXTURE_FILE}, ${MISSING_FILE}, ${EDIT_TARGET_FILE}, ${EDIT_TARGET_VERSION}, ${EDIT_CONTENT}, ${BROKEN_CONTENT}, ${L2_TARGET}, ${L3_TARGET}, ${VERIFY_TARGET}. v7 (wire 1.3.0): applyEdit mode=patch (splice, target-missing), getSource window/dedup markers, unknown mode/symbol/level/version, create with expectedVersion, rename/delete validation. v8: pushCases for the SSE (§2.3) and WebSocket (§2.4) bindings — a certificate for that transport proves a mutation is pushed as `state`/`notifications/oumv.state` and that `Last-Event-ID` replays it. v9: capabilityCases gated on the handshake claim (verify.sandboxRollback), markers are substituted in nested params, and a case a runtime does not claim is absent from its report rather than skipped. v10 (wire 1.5.0): the applyEdit batch envelope (mutate.multiFile) — one atomic call creates two files, and a batch whose second edit fails syntax pre-flight leaves no bytes on disk; sessionCases issue a handshake with `sessionTtlSeconds` and prove an expired id answers -32011 with data.reason=session_expired. v11 (wire 1.6.0): capabilityCases for the new optional surface — previewEdit never writes (a follow-up getSource with ifVersion proves the bytes untouched), the idempotency key replays the first create instead of answering file_exists, cancel of an unknown requestId is a result not an error, index returns the ranked-matches contract, query proves the read-only split (SELECT answers columns/rows, INSERT is -32003 query_forbidden) and build returns status/command/diagnostics. Gated on the handshake claim (mutate.preview, sessions.idempotency, sessions.cancel, index.symbols, observeQuery.readOnly, verify.build) — a runtime that does not advertise stays absent from the report. v12: the §4.1 result-versioning handshake as ordered cases gated by `minWireVersion` — observe and understand carry a `workspaceVersion` token, a matching `ifVersion` answers the short unchanged envelope, and a stale token is rejected with -32010 STALE_RESOURCE_VERSION (runtimes frozen on wire 1.5.0 skip these cases and are absent from their report). v14 (revision v1.11): a read-only deployment removes mutating methods instead of refusing them (§8.5). Any case may now carry `requiresCapability`, not only the capabilityCases family: the applyEdit/previewEdit/verify cases and the two verify-precondition L3 cases are tagged so a read-only report drops them without losing a level, and the read-only-* capability cases prove -32601 for applyEdit/previewEdit/verify/build, capabilities.readOnly=true, and that observe still works.",
   "cases": [
     {
       "id": "handshake-negotiates-capabilities",
@@ -131,7 +131,8 @@
         "data.traces"
       ],
       "expectLevelEquals": "L4",
-      "expectArrayField": "data.traces"
+      "expectArrayField": "data.traces",
+      "requiresCapability": "verify.multiMetric"
     },
     {
       "id": "understand-impact-resolves-target",
@@ -158,7 +159,8 @@
       ],
       "expectResultFields": [
         "causality.target"
-      ]
+      ],
+      "requiresCapability": "verify.multiMetric"
     },
     {
       "id": "verify-returns-status-timings-and-scope",
@@ -172,7 +174,8 @@
         "status",
         "timings.t_total_ms",
         "scope.checked"
-      ]
+      ],
+      "requiresCapability": "verify.multiMetric"
     },
     {
       "id": "occ-conflict-rejected",
@@ -185,7 +188,8 @@
       },
       "expectError": {
         "code": -32001
-      }
+      },
+      "requiresCapability": "mutate.occ"
     },
     {
       "id": "apply-edit-without-version-rejected",
@@ -197,7 +201,8 @@
       },
       "expectError": {
         "code": -32011
-      }
+      },
+      "requiresCapability": "mutate.occ"
     },
     {
       "id": "syntax-guard-rejects-broken-code",
@@ -210,7 +215,8 @@
       },
       "expectError": {
         "code": -32002
-      }
+      },
+      "requiresCapability": "mutate.occ"
     },
     {
       "id": "path-traversal-blocked",
@@ -223,7 +229,8 @@
       },
       "expectError": {
         "code": -32003
-      }
+      },
+      "requiresCapability": "mutate.occ"
     },
     {
       "id": "missing-resource-rejected",
@@ -236,7 +243,8 @@
       },
       "expectError": {
         "code": -32009
-      }
+      },
+      "requiresCapability": "mutate.occ"
     },
     {
       "id": "apply-edit-returns-real-occ-version",
@@ -251,7 +259,8 @@
         "status",
         "newVersion"
       ],
-      "expectVersionMatchesContent": "${EDIT_CONTENT}"
+      "expectVersionMatchesContent": "${EDIT_CONTENT}",
+      "requiresCapability": "mutate.occ"
     },
     {
       "id": "create-new-file",
@@ -268,7 +277,8 @@
         "newVersion",
         "created"
       ],
-      "expectVersionMatchesContent": "${EDIT_CONTENT}"
+      "expectVersionMatchesContent": "${EDIT_CONTENT}",
+      "requiresCapability": "mutate.occ"
     },
     {
       "id": "create-existing-file-rejected",
@@ -281,7 +291,8 @@
       },
       "expectError": {
         "code": -32001
-      }
+      },
+      "requiresCapability": "mutate.occ"
     },
     {
       "id": "apply-edit-patch-target-missing",
@@ -300,7 +311,8 @@
       },
       "expectError": {
         "code": -32009
-      }
+      },
+      "requiresCapability": "mutate.occ"
     },
     {
       "id": "apply-edit-patch-splices",
@@ -326,7 +338,8 @@
       "expectValues": {
         "hunksApplied": 1
       },
-      "expectVersionMatchesContent": "${PATCH_REPLACEMENT}"
+      "expectVersionMatchesContent": "${PATCH_REPLACEMENT}",
+      "requiresCapability": "mutate.occ"
     },
     {
       "id": "verify-multi-step-runs-in-order",
@@ -349,7 +362,8 @@
         "status",
         "steps"
       ],
-      "expectArrayField": "steps"
+      "expectArrayField": "steps",
+      "requiresCapability": "verify.multiMetric"
     },
     {
       "id": "apply-edit-replace-symbol",
@@ -368,7 +382,8 @@
         "symbol",
         "newVersion"
       ],
-      "expectVersionMatchesContent": "${SYMBOL_FILE_CONTENT}"
+      "expectVersionMatchesContent": "${SYMBOL_FILE_CONTENT}",
+      "requiresCapability": "mutate.occ"
     },
     {
       "id": "apply-edit-delete-forbids-replacement",
@@ -382,7 +397,8 @@
       },
       "expectError": {
         "code": -32011
-      }
+      },
+      "requiresCapability": "mutate.occ"
     },
     {
       "id": "apply-edit-delete",
@@ -400,7 +416,8 @@
       ],
       "expectValues": {
         "deleted": true
-      }
+      },
+      "requiresCapability": "mutate.occ"
     },
     {
       "id": "apply-edit-rename",
@@ -419,7 +436,8 @@
       ],
       "expectValues": {
         "newPath": "${RENAME_TARGET}"
-      }
+      },
+      "requiresCapability": "mutate.occ"
     },
     {
       "id": "observe-l1-pagination",
@@ -449,7 +467,8 @@
       },
       "expectError": {
         "code": -32006
-      }
+      },
+      "requiresCapability": "mutate.occ"
     },
     {
       "id": "apply-edit-create-forbids-version",
@@ -463,7 +482,8 @@
       },
       "expectError": {
         "code": -32011
-      }
+      },
+      "requiresCapability": "mutate.occ"
     },
     {
       "id": "get-source-unknown-symbol-rejected",
@@ -861,6 +881,83 @@
         "command",
         "diagnostics"
       ]
+    },
+    {
+      "id": "read-only-handshake-declares",
+      "level": 1,
+      "method": "oumv/handshake",
+      "params": {
+        "protocolVersion": "1.6.0"
+      },
+      "expectValues": {
+        "capabilities.readOnly": true
+      },
+      "requiresCapability": "readOnly"
+    },
+    {
+      "id": "read-only-apply-edit-not-registered",
+      "level": 2,
+      "method": "oumv/applyEdit",
+      "params": {
+        "path": "${EDIT_TARGET_FILE}",
+        "replacement": "${EDIT_CONTENT}",
+        "expectedVersion": "${EDIT_TARGET_VERSION}"
+      },
+      "expectError": {
+        "code": -32601
+      },
+      "requiresCapability": "readOnly"
+    },
+    {
+      "id": "read-only-preview-edit-not-registered",
+      "level": 2,
+      "method": "oumv/previewEdit",
+      "params": {
+        "path": "${EDIT_TARGET_FILE}",
+        "replacement": "${EDIT_CONTENT}"
+      },
+      "expectError": {
+        "code": -32601
+      },
+      "requiresCapability": "readOnly"
+    },
+    {
+      "id": "read-only-verify-not-registered",
+      "level": 2,
+      "method": "oumv/verify",
+      "params": {
+        "target": "${L2_TARGET}"
+      },
+      "expectError": {
+        "code": -32601
+      },
+      "requiresCapability": "readOnly"
+    },
+    {
+      "id": "read-only-build-not-registered",
+      "level": 2,
+      "method": "oumv/build",
+      "params": {
+        "command": "echo ok"
+      },
+      "expectError": {
+        "code": -32601
+      },
+      "requiresCapability": "readOnly"
+    },
+    {
+      "id": "read-only-observe-still-works",
+      "level": 1,
+      "method": "oumv/observe",
+      "params": {
+        "level": "L0"
+      },
+      "expectResultFields": [
+        "level",
+        "format",
+        "data"
+      ],
+      "requiresCapability": "readOnly"
     }
   ],
   "authCases": [
@@ -904,7 +1001,7 @@
       }
     }
   ],
-  "fixtureVersion": 13,
+  "fixtureVersion": 14,
   "levelDefinitions": {
     "1": "Handshake, L0-L1 observe, action verification",
     "2": "L2-L3 observe, impact analysis, OCC mutations, surface diffs",

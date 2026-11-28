@@ -111,8 +111,19 @@ public sealed class OumvOptions
     /// </summary>
     public string? BuildCommand { get; set; }
 
-    /// <summary>Set false to mount the transports but refuse mutations.</summary>
+    /// <summary>
+    /// Set false to mount the transports but refuse mutations. Since revision v1.11
+    /// this is the legacy spelling of <see cref="ReadOnly"/>: the mutating methods are
+    /// not registered at all, so they answer -32601 instead of a policy refusal.
+    /// </summary>
     public bool EnableMutations { get; set; } = true;
+
+    /// <summary>
+    /// Spec §8.5 read-only deployment: the writing methods (`applyEdit`,
+    /// `previewEdit`, `verify`, `build`) are not in the dispatch registry, and the
+    /// handshake advertises `capabilities.readOnly: true` instead of `mutate`/`verify`.
+    /// </summary>
+    public bool ReadOnly { get; set; }
 }
 
 /// <summary>Handshake sessions; expiry is enforced on read, absent ids are stateless.</summary>

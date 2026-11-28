@@ -37,7 +37,13 @@ export const failure = (
  * session validation happens once here so HTTP, SSE and WebSocket agree.
  */
 export class Dispatcher {
-  constructor(private readonly runtime: OumvRuntime) {}
+  /** Closed registry (spec §8.5): null means the runtime states no registry. */
+  private readonly allowed: Set<string> | null;
+
+  constructor(private readonly runtime: OumvRuntime) {
+    this.allowed =
+      typeof runtime.registeredMethods === 'function' ? new Set(runtime.registeredMethods()) : null;
+  }
 
   async dispatch(request: JsonRpcRequest): Promise<JsonRpcResponse> {
     const id = request?.id ?? null;
@@ -45,6 +51,13 @@ export class Dispatcher {
     const params = (request?.params ?? {}) as Record<string, any>;
 
     if (!method) return failure(id, ERROR_CODES.INVALID_REQUEST, 'INVALID_REQUEST: method is required');
+
+    // The registry is consulted first, before session validation: a method the runtime
+    // does not serve is METHOD_NOT_FOUND whatever the session state is (§3.1 rule 5).
+    // Answering -32011 here would leak that the method exists.
+    if (this.allowed && !this.allowed.has(method)) {
+      return failure(id, ERROR_CODES.METHOD_NOT_FOUND, `METHOD_NOT_FOUND: ${method}`);
+    }
 
     if (method === 'oumv/disconnect') {
       return success(id, { closed: this.runtime.sessions.delete(params.sessionId) });
