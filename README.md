@@ -12,13 +12,13 @@
 > - **Python (`python/`)**: FastAPI adapter published as `tokensafe-backend-python`; HTTP + SSE + WebSocket + stdio, SQLAlchemy rollback sandbox.
 > - **Node.js (`node/`)**: `tokensafe-backend-node` — Express and Fastify over HTTP, SSE, WebSocket and stdio.
 > - **.NET (`dotnet/`)**: `TokenSafe.Oumv.AspNetCore` — minimal APIs and MVC controllers on `net8.0`/`net10.0`, in-process endpoint dispatch and an EF Core rollback sandbox that discovers `DbContext`s from DI.
-> - **Sidecars (`java/`, `php/`)**: single-file Spring and Laravel/Symfony adapters for projects that cannot take a library dependency (Level 2: no live traces).
+> - **Sidecars (`java/`, `php/`)**: single-file Spring and Laravel/Symfony adapters for projects that cannot take a library dependency; with `--app-url` they dispatch `verify` to the running application and record real L4 traces (Level 3).
 
 ---
 
 ## Highlights
 
-- **✅ Certified OUMV adapters (spec §10)**: Gin, Chi, `net/http`, FastAPI, Express, Fastify and ASP.NET Core each pass the language-neutral conformance suite over their real transport — Level 3, reports committed under [`certification/`](certification/) and reproduced in CI. Spring and PHP sidecars certify Level 2 and name their single missing case. Exact counts are generated below.
+- **✅ Certified OUMV adapters (spec §10)**: Gin, Chi, `net/http`, FastAPI, Starlette, Express, Fastify, Next.js, Elysia, ASP.NET Core and the Spring/PHP sidecars each pass the language-neutral conformance suite over their real transport — Level 3, reports committed under [`certification/`](certification/) and reproduced in CI, plus a read-only certificate per runtime. Exact counts are generated below.
 - **🛡️ In-Memory Compiler Pre-Flight Guard**: AST-guided symbol edits validated in memory via `go/parser` and `go/types` in <5ms—blocking non-compiling edits before touching the disk.
 - **🔄 Zero Database Pollution**: In-memory transactional dry-runs (`net/http/httptest` + `pkg/db`) execute with guaranteed `ROLLBACK`, eliminating state contamination across test cycles.
 - **🔍 Progressive Context Disclosure (L0–L4)**: Replaces 3,000+ token file crawls with compact pulse (`L0`, ~20 tokens), endpoint surfaces (`L1`, ~110 tokens), and reflected schemas (`L2`, ~60 tokens).
@@ -106,7 +106,9 @@ cd python && CERT_OUT_DIR=../certification .venv/bin/python -m pytest -q tests/t
 # Node adapters — HTTP, stdio, SSE and WS (writes certification/*.json and transports/*.json)
 cd node && CERT_OUT_DIR=../certification OUMV_REPO=../../agent-oumv pnpm test
 
-# Spring (JDK-only sidecar) and Laravel/Symfony (PHP sidecar) — Level 2, stdio
+# Spring (JDK-only sidecar) and Laravel/Symfony (PHP sidecar) — Level 3 with --app-url.
+# Each script boots the real framework application (Maven / Composer, pinned and
+# cached) so verify dispatches to it and the responses become L4 traces.
 cd java && ./certify.sh
 cd ../php && ./certify.sh
 
