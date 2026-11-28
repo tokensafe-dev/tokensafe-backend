@@ -23,8 +23,8 @@ EDIT_TARGET = "conformance_edit_target.py"
 EDIT_ORIGINAL = b"value = 41\n"
 
 
-@pytest.mark.asyncio
-async def test_conformance_certification(tmp_path):
+def _cert_app(tmp_path, *, read_only: bool = False):
+    """The certification app: fixture files, a real SQLite engine and the routes."""
     (tmp_path / "conformance_fixture.py").write_text("value = 0\n", encoding="utf-8")
     (tmp_path / EDIT_TARGET).write_bytes(EDIT_ORIGINAL)
     (tmp_path / "conformance_symbol_target.py").write_text("def value():\n    return 41\n", encoding="utf-8")
@@ -37,7 +37,7 @@ async def test_conformance_certification(tmp_path):
         conn.execute(text("CREATE TABLE cert_probe (id INTEGER PRIMARY KEY, v INTEGER)"))
         conn.execute(text("INSERT INTO cert_probe (id, v) VALUES (1, 0)"))
     mounted = mount_tokensafe(
-        app, auto_discover=False, project_root=str(tmp_path), db_engine=engine
+        app, auto_discover=False, project_root=str(tmp_path), db_engine=engine, read_only=read_only
     )
 
     @app.post("/__oumv_sandbox_probe")
@@ -77,6 +77,12 @@ async def test_conformance_certification(tmp_path):
         batch_file_b="conformance_batch_b.py",
         batch_content="value = 7\n",
     )
+    return app, markers
+
+
+@pytest.mark.asyncio
+async def test_conformance_certification(tmp_path):
+    app, markers = _cert_app(tmp_path)
 
     transport = httpx.ASGITransport(app=app)
     async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
@@ -101,6 +107,37 @@ async def test_conformance_certification(tmp_path):
     assert not failures, failures
     assert report["attainedLevel"] == 3, (report["attainedLevel"], report["levels"])
     assert report["specVersion"] == "1.6.0"
+
+
+@pytest.mark.asyncio
+async def test_read_only_conformance_certification(tmp_path):
+    """§8.5 read-only profile: the writing methods are absent, the read surface stays."""
+    app, markers = _cert_app(tmp_path, read_only=True)
+
+    transport = httpx.ASGITransport(app=app)
+    async with httpx.AsyncClient(transport=transport, base_url="http://test") as client:
+
+        async def post(method, params):
+            resp = await client.post(
+                "/__oumv/rpc",
+                json={"jsonrpc": "2.0", "id": method, "method": method, "params": params},
+            )
+            assert resp.status_code == 200, resp.text
+            return resp.json()
+
+        report = await conformance.run_conformance(
+            post, FIXTURES, markers, adapter_name="python-fastapi", framework="fastapi"
+        )
+
+    out_dir = os.environ.get("CERT_OUT_DIR")
+    if out_dir:
+        conformance.save_report(report, Path(out_dir) / "python-fastapi-readonly.json")
+
+    read_only_cases = [c for c in report["cases"] if c["id"].startswith("read-only-")]
+    failures = [c for c in report["cases"] if c["status"] != "passed"]
+    assert len(read_only_cases) == 6, read_only_cases
+    assert not failures, failures
+    assert report["attainedLevel"] == 3, (report["attainedLevel"], report["levels"])
 
 
 def test_fixture_file_has_level_tagged_v6_shape():

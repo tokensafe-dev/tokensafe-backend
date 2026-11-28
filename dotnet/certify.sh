@@ -103,7 +103,10 @@ SERVER_LOG="$(dirname "$WORKSPACE")/$(basename "$WORKSPACE").server.log"
 }
 
 start_server() {
+  # CERT_READ_ONLY=1 boots the same app with the §8.5 profile: the adapter reads
+  # TOKENSAFE_OUMV_READ_ONLY at AddTokensafe time and omits the writing methods.
   ( cd "$HERE/certapp" && TOKENSAFE_CERT_WORKSPACE="$WORKSPACE" TOKENSAFE_OUMV_AUTH_TOKEN="$CERT_TOKEN" \
+      TOKENSAFE_OUMV_READ_ONLY="${CERT_READ_ONLY:-0}" \
       ASPNETCORE_ENVIRONMENT=Production \
       exec "$DOTNET" "$APP_DLL" --urls "http://127.0.0.1:$PORT" ) >"$SERVER_LOG" 2>&1 &
   SERVER_PID=$!
@@ -162,6 +165,28 @@ node "$CERTIFY" --adapter dotnet-aspnetcore-ws --framework aspnetcore --profile 
   --token "$CERT_TOKEN" \
   --markers "@$MARKERS" --fixtures "$FIXTURES" \
   --report "$TRANSPORT_DIR/dotnet-aspnetcore-ws.json" --min-level "$MIN_LEVEL"
+stop_server
+rm -rf "$WORKSPACE"
+WORKSPACE=""
+
+echo "▸ certifying the read-only profile (§8.5: writing methods absent)"
+RO_REPORT="${REPORT%.json}-readonly.json"
+choose_port
+prepare_workspace
+CERT_READ_ONLY=1 start_server
+node "$CERTIFY" --adapter dotnet-aspnetcore --framework aspnetcore --profile backend \
+  --url "http://127.0.0.1:$PORT/__oumv/rpc" --token "$CERT_TOKEN" --auth \
+  --markers "@$MARKERS" --fixtures "$FIXTURES" \
+  --report "$RO_REPORT" --min-level "$MIN_LEVEL"
+RO_CASES=$(node -e '
+const r = require(process.argv[1]);
+const ro = r.cases.filter((c) => c.id.startsWith("read-only-"));
+const failed = r.cases.filter((c) => c.status !== "passed");
+console.log("  read-only: level " + r.attainedLevel + " · " + r.passed + "/" + r.total + " · " + ro.length + " read-only cases");
+if (ro.length < 6) { console.error("✗ the read-only cases are missing from the report"); process.exit(1); }
+if (failed.length) { console.error("✗ failures: " + failed.map((c) => c.id + ": " + c.error).join("; ")); process.exit(1); }
+' "$RO_REPORT")
+echo "$RO_CASES"
 stop_server
 rm -rf "$WORKSPACE"
 WORKSPACE=""

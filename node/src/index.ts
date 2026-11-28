@@ -7,6 +7,7 @@
  * imports the `elysia` peer dependency, so plain Node installs never need it.
  */
 export { OumvRuntime, PROTOCOL_VERSION, OBSERVE_LEVELS } from './runtime.js';
+export { createReadOnlyRuntime } from './readonly.js';
 export type {
   OumvRuntimeOptions,
   ObserveLevel,

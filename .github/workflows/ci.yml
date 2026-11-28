@@ -182,7 +182,7 @@ jobs:
         working-directory: go
         run: |
           go mod download
-          CERT_OUT_DIR="$GITHUB_WORKSPACE/cert-fresh" go test -count=1 ./pkg/adapters -run TestAdapterCertification
+          CERT_OUT_DIR="$GITHUB_WORKSPACE/cert-fresh" go test -count=1 ./pkg/adapters -run 'TestAdapter(ReadOnly)?Certification'
 
       - name: Generate Python adapter report
         working-directory: python

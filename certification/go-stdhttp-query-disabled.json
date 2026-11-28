@@ -3,8 +3,8 @@
   "framework": "net/http",
   "specVersion": "1.6.0",
   "fixtureVersion": 17,
-  "total": 46,
-  "passed": 46,
+  "total": 48,
+  "passed": 48,
   "failed": 0,
   "skipped": 0,
   "attainedLevel": 3,
@@ -243,9 +243,19 @@
       "id": "expired-session-is-rejected",
       "level": 3,
       "status": "passed"
+    },
+    {
+      "id": "policy-query-disabled-is-refused",
+      "level": 2,
+      "status": "passed"
+    },
+    {
+      "id": "policy-observe-is-unaffected",
+      "level": 1,
+      "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-28T18:01:59.967Z",
+  "generatedAt": "2026-11-28T19:07:29.323Z",
   "environment": {
     "transport": "http",
     "profile": "backend",

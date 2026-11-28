@@ -29,38 +29,48 @@
 ## Certification (spec §10)
 
 <!-- certification:start -->
-**19 adapters certified against the same language-neutral fixtures** (`fixtureVersion` 17): 18 at Level 3 and 1 source-level adapter(s) at Level 2 — frozen on the wire 1.5.0 subset they still serve, each with its single L3 gap named below. The smallest suite in the table is 26 cases: a runtime that advertises an optional capability also runs the case gated on it, and a runtime frozen on an older wire skips the newer-wire cases instead of failing them. Generated from `certification/*.json` by `scripts/render_certification.py`; CI fails when this block no longer matches the reports.
+**12 adapters certified at Level 3** — 45 language-neutral cases (`fixtureVersion` 17) over the transport an agent actually uses. Generated from `certification/*.json` by `scripts/render_certification.py`; CI fails when this block no longer matches the reports.
 
 | Adapter | Framework | Transport exercised | Level | Cases | Report |
 | :--- | :--- | :--- | :--- | :--- | :--- |
-| `bun-elysia` | ? | — | **3** | 51/51 | [certification/bun-elysia-query-disabled.json](certification/bun-elysia-query-disabled.json) |
 | `bun-elysia` | Elysia (Bun) | Bun `POST /__oumv/rpc` + SSE/WS | **3** | 51/51 | [certification/bun-elysia.json](certification/bun-elysia.json) |
 | `dotnet-aspnetcore` | aspnetcore | ASP.NET Core `POST /__oumv/rpc` | **3** | 51/51 | [certification/dotnet-aspnetcore.json](certification/dotnet-aspnetcore.json) |
 | `go-chi` | chi | HTTP `POST /__oumv/rpc` | **3** | 46/46 | [certification/go-chi.json](certification/go-chi.json) |
 | `go-gin` | Gin | HTTP `POST /__oumv/rpc` | **3** | 46/46 | [certification/go-gin.json](certification/go-gin.json) |
-| `go-stdhttp` | net/http | HTTP `POST /__oumv/rpc` | **3** | 46/46 | [certification/go-stdhttp-query-disabled.json](certification/go-stdhttp-query-disabled.json) |
 | `go-stdhttp` | net/http | HTTP `POST /__oumv/rpc` | **3** | 46/46 | [certification/go-stdhttp.json](certification/go-stdhttp.json) |
-| `java-spring` | Spring Boot | JDK `POST /__oumv/rpc` + stdio | **3** | 26/26 | [certification/java-spring-readonly.json](certification/java-spring-readonly.json) |
+| `java-spring` | Spring Boot | JDK `POST /__oumv/rpc` + stdio | **3** | 45/45 | [certification/java-spring.json](certification/java-spring.json) |
 | `next-app-router` | Next.js App Router | Web `Request`/`Response` `POST /__oumv/rpc` | **3** | 48/48 | [certification/next-app-router.json](certification/next-app-router.json) |
 | `node-express` | Express | Node `POST /__oumv/rpc` | **3** | 46/46 | [certification/node-express.json](certification/node-express.json) |
 | `node-fastify` | Fastify | Node `POST /__oumv/rpc` | **3** | 46/46 | [certification/node-fastify.json](certification/node-fastify.json) |
-| `php-laravel` | Laravel / Symfony | PHP `POST /__oumv/rpc` + stdio | **3** | 26/26 | [certification/php-laravel-readonly.json](certification/php-laravel-readonly.json) |
-| `php-laravel` | Laravel / Symfony | PHP `POST /__oumv/rpc` + stdio | **3** | 41/41 | [certification/php-laravel.json](certification/php-laravel.json) |
-| `python-fastapi` | FastAPI | ASGI `POST /__oumv/rpc` | **3** | 48/48 | [certification/python-fastapi-query-disabled.json](certification/python-fastapi-query-disabled.json) |
+| `php-laravel` | Laravel / Symfony | PHP `POST /__oumv/rpc` + stdio | **3** | 45/45 | [certification/php-laravel.json](certification/php-laravel.json) |
 | `python-fastapi` | FastAPI | ASGI `POST /__oumv/rpc` | **3** | 48/48 | [certification/python-fastapi.json](certification/python-fastapi.json) |
-| `python-starlette` | starlette | — | **3** | 48/48 | [certification/python-starlette-query-disabled.json](certification/python-starlette-query-disabled.json) |
-| `python-starlette` | starlette | — | **3** | 28/28 | [certification/python-starlette-readonly.json](certification/python-starlette-readonly.json) |
 | `python-starlette` | starlette | — | **3** | 48/48 | [certification/python-starlette.json](certification/python-starlette.json) |
 
-Source-level adapters scan the framework's route declarations statically, apply OCC-checked edits and run a real verify command, but they do not boot the application — so they record no live request traces, `observe-l4-returns-recorded-traces` fails, and Level 3 is not claimed:
+Read-only deployments (§8.5) are a second run of the same runtime with the writing pillars off: the mutating/verifying methods are absent from the registry and answer `-32601`, the handshake advertises `capabilities.readOnly`, and the six `read-only-*` cases prove it. 12 profiles certified, one per runtime:
 
-| Adapter | Framework | Transport exercised | Level | Cases | Report |
-| :--- | :--- | :--- | :--- | :--- | :--- |
-| `java-spring` | Spring Boot | JDK `POST /__oumv/rpc` + stdio | **2** | 44/45 | [certification/java-spring.json](certification/java-spring.json) |
+| Certificate | Adapter | Level | Cases |
+| :--- | :--- | :--- | :--- |
+| [certification/bun-elysia-readonly.json](certification/bun-elysia-readonly.json) | `bun-elysia` | **3** | 31/31 |
+| [certification/dotnet-aspnetcore-readonly.json](certification/dotnet-aspnetcore-readonly.json) | `dotnet-aspnetcore` | **3** | 31/31 |
+| [certification/go-chi-readonly.json](certification/go-chi-readonly.json) | `go-chi` | **3** | 26/26 |
+| [certification/go-gin-readonly.json](certification/go-gin-readonly.json) | `go-gin` | **3** | 26/26 |
+| [certification/go-stdhttp-readonly.json](certification/go-stdhttp-readonly.json) | `go-stdhttp` | **3** | 26/26 |
+| [certification/java-spring-readonly.json](certification/java-spring-readonly.json) | `java-spring` | **3** | 26/26 |
+| [certification/next-app-router-readonly.json](certification/next-app-router-readonly.json) | `next-app-router` | **3** | 26/26 |
+| [certification/node-express-readonly.json](certification/node-express-readonly.json) | `node-express` | **3** | 26/26 |
+| [certification/node-fastify-readonly.json](certification/node-fastify-readonly.json) | `node-fastify` | **3** | 26/26 |
+| [certification/php-laravel-readonly.json](certification/php-laravel-readonly.json) | `php-laravel` | **3** | 26/26 |
+| [certification/python-fastapi-readonly.json](certification/python-fastapi-readonly.json) | `python-fastapi` | **3** | 28/28 |
+| [certification/python-starlette-readonly.json](certification/python-starlette-readonly.json) | `python-starlette` | **3** | 28/28 |
 
-Named gaps:
+Workspace policy (§14.2) is certified by running the same suite against a runtime whose `permissions.query` is off: `oumv/query` stays registered and answers `-32007` with `reason="query_disabled"`, while observation is unaffected (the two `policy-*` cases):
 
-- `java-spring` → `observe-l4-returns-recorded-traces`: expected success, got error -32006: UNSUPPORTED_CAPABILITY: observe L4 requires live request traces; this JDK-only sidecar does not run the Spring application, so it records none
+| Certificate | Adapter | Level | Cases |
+| :--- | :--- | :--- | :--- |
+| [certification/bun-elysia-query-disabled.json](certification/bun-elysia-query-disabled.json) | `bun-elysia` | **3** | 51/51 |
+| [certification/go-stdhttp-query-disabled.json](certification/go-stdhttp-query-disabled.json) | `go-stdhttp` | **3** | 48/48 |
+| [certification/python-fastapi-query-disabled.json](certification/python-fastapi-query-disabled.json) | `python-fastapi` | **3** | 48/48 |
+| [certification/python-starlette-query-disabled.json](certification/python-starlette-query-disabled.json) | `python-starlette` | **3** | 48/48 |
 
 Transport certificates run the same suite over the optional bindings, plus the fixture v8 push cases (§2.3 `state` with `Last-Event-ID` replay, §2.4 `notifications/oumv.state`):
 
@@ -70,8 +80,8 @@ Transport certificates run the same suite over the optional bindings, plus the f
 | [transports/bun-elysia-ws.json](certification/transports/bun-elysia-ws.json) | `bun-elysia-ws` | ws | 49/49 |
 | [transports/dotnet-aspnetcore-sse.json](certification/transports/dotnet-aspnetcore-sse.json) | `dotnet-aspnetcore-sse` | sse | 52/52 |
 | [transports/dotnet-aspnetcore-ws.json](certification/transports/dotnet-aspnetcore-ws.json) | `dotnet-aspnetcore-ws` | ws | 49/49 |
-| [transports/go-stdhttp-sse.json](certification/transports/go-stdhttp-sse.json) | `go-stdhttp-sse` | sse | 50/50 |
-| [transports/go-stdhttp-ws.json](certification/transports/go-stdhttp-ws.json) | `go-stdhttp-ws` | ws | 47/47 |
+| [transports/go-stdhttp-sse.json](certification/transports/go-stdhttp-sse.json) | `go-stdhttp-sse` | sse | 52/52 |
+| [transports/go-stdhttp-ws.json](certification/transports/go-stdhttp-ws.json) | `go-stdhttp-ws` | ws | 49/49 |
 | [transports/node-express-sse.json](certification/transports/node-express-sse.json) | `node-express-sse` | sse | 50/50 |
 | [transports/node-express-ws.json](certification/transports/node-express-ws.json) | `node-express-ws` | ws | 47/47 |
 | [transports/node-fastify-sse.json](certification/transports/node-fastify-sse.json) | `node-fastify-sse` | sse | 50/50 |

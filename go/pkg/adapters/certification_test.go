@@ -10,6 +10,7 @@ import (
 	"net/http/httptest"
 	"os"
 	"path/filepath"
+	"strings"
 	"testing"
 
 	"github.com/gin-gonic/gin"
@@ -127,6 +128,14 @@ func workspace(t *testing.T, tmpDir, l2Target string) conformance.Markers {
 
 func newTestRuntime(t *testing.T, name, workspaceDir string) *oumv.Runtime {
 	t.Helper()
+	return newRuntimeWithCapabilities(t, name, workspaceDir, true, true)
+}
+
+// newRuntimeWithCapabilities builds a runtime whose mutating/verifying pillars can
+// be switched off, which is the §8.5 read-only shape: with both off the writing
+// methods are absent from the registry and the handshake says readOnly.
+func newRuntimeWithCapabilities(t *testing.T, name, workspaceDir string, mutate, verify bool) *oumv.Runtime {
+	t.Helper()
 	return oumv.NewRuntime(oumv.Config{
 		Name:         name,
 		Version:      "cert",
@@ -139,24 +148,22 @@ func newTestRuntime(t *testing.T, name, workspaceDir string) *oumv.Runtime {
 			Capabilities: oumv.CapabilitiesConfig{
 				Observe:    true,
 				Understand: true,
-				Mutate:     true,
-				Verify:     true,
+				Mutate:     mutate,
+				Verify:     verify,
 			},
 		},
 	})
 }
 
-// TestAdapterCertification certifies each framework adapter over HTTP and writes
-// a machine-readable report (CERT_OUT_DIR) so the level claim is reproducible.
-func TestAdapterCertification(t *testing.T) {
-	spec, err := conformance.LoadCases(filepath.Join("..", "oumv", "testdata", "conformance-cases.json"))
-	if err != nil {
-		t.Fatal(err)
-	}
-	outDir := os.Getenv("CERT_OUT_DIR")
-	gin.SetMode(gin.ReleaseMode)
-
-	cases := []struct {
+// adapterBuilders returns the three Go framework bindings mounted over one
+// runtime shape. The same table serves the writable and the read-only certificate
+// runs, so the two reports differ only in the capability profile they certify.
+func adapterBuilders() []struct {
+	id        string
+	framework string
+	build     func(t *testing.T, rt *oumv.Runtime) http.Handler
+} {
+	return []struct {
 		id        string
 		framework string
 		build     func(t *testing.T, rt *oumv.Runtime) http.Handler
@@ -207,6 +214,19 @@ func TestAdapterCertification(t *testing.T) {
 			},
 		},
 	}
+}
+
+// TestAdapterCertification certifies each framework adapter over HTTP and writes
+// a machine-readable report (CERT_OUT_DIR) so the level claim is reproducible.
+func TestAdapterCertification(t *testing.T) {
+	spec, err := conformance.LoadCases(filepath.Join("..", "oumv", "testdata", "conformance-cases.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	outDir := os.Getenv("CERT_OUT_DIR")
+	gin.SetMode(gin.ReleaseMode)
+
+	cases := adapterBuilders()
 
 	for _, tc := range cases {
 		tc := tc
@@ -247,6 +267,74 @@ func TestAdapterCertification(t *testing.T) {
 					t.Fatalf("create certification dir: %v", err)
 				}
 				if err := report.Save(filepath.Join(outDir, tc.id+".json")); err != nil {
+					t.Fatalf("save report: %v", err)
+				}
+			}
+		})
+	}
+}
+
+// TestAdapterReadOnlyCertification is the §8.5 counterpart of TestAdapterCertification:
+// the same three bindings, mounted over a runtime whose writing pillars are off, so
+// the handshake advertises readOnly and the writing methods are absent from the
+// registry. The fixture runner drops every case whose capability is unadvertised,
+// so this report proves the read-only shape with the read-only-* cases instead of
+// asserting it in prose.
+func TestAdapterReadOnlyCertification(t *testing.T) {
+	spec, err := conformance.LoadCases(filepath.Join("..", "oumv", "testdata", "conformance-cases.json"))
+	if err != nil {
+		t.Fatal(err)
+	}
+	outDir := os.Getenv("CERT_OUT_DIR")
+	gin.SetMode(gin.ReleaseMode)
+
+	for _, tc := range adapterBuilders() {
+		tc := tc
+		t.Run(tc.id, func(t *testing.T) {
+			workspaceDir := t.TempDir()
+			rt := newRuntimeWithCapabilities(t, "tokensafe-"+tc.framework+"-readonly", workspaceDir, false, false)
+			rt.SetDBSandbox(newCertSandbox(t))
+			handler := tc.build(t, rt)
+			server := httptest.NewServer(handler)
+			defer server.Close()
+
+			markers := workspace(t, workspaceDir, "GET /api/v1/orders")
+			report := conformance.Run(
+				httpDispatcher{url: server.URL + "/__oumv/rpc"},
+				spec,
+				markers,
+			)
+			report.AdapterName = tc.id
+			report.Framework = tc.framework
+
+			var readOnlyCases int
+			for _, c := range report.Cases {
+				if strings.HasPrefix(c.ID, "read-only-") {
+					readOnlyCases++
+				}
+			}
+			t.Logf("%s (read-only): level %d — %d/%d cases, %d read-only cases",
+				tc.id, report.AttainedLevel, report.Passed, report.Total, readOnlyCases)
+
+			if readOnlyCases < 6 {
+				t.Errorf("%s: the read-only cases are missing from the report (%d)", tc.id, readOnlyCases)
+			}
+			if report.Failed > 0 {
+				for _, c := range report.Cases {
+					if c.Status != "passed" {
+						t.Errorf("%s: %s (L%d) %s", tc.id, c.ID, c.Level, c.Error)
+					}
+				}
+			}
+			if report.AttainedLevel != 3 {
+				t.Errorf("%s attains level %d in read-only mode, expected 3", tc.id, report.AttainedLevel)
+			}
+
+			if outDir != "" {
+				if err := os.MkdirAll(outDir, 0755); err != nil {
+					t.Fatalf("create certification dir: %v", err)
+				}
+				if err := report.Save(filepath.Join(outDir, tc.id+"-readonly.json")); err != nil {
 					t.Fatalf("save report: %v", err)
 				}
 			}

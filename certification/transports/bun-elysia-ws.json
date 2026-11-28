@@ -260,7 +260,7 @@
       "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-28T18:03:08.632Z",
+  "generatedAt": "2026-11-28T19:23:04.689Z",
   "environment": {
     "transport": "ws",
     "runtime": "bun 1.3.10"

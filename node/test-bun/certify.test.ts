@@ -40,7 +40,7 @@ interface CertApp {
  * read-only query hook are what let the report claim the 2 Level-3 capability cases
  * a Next.js cert cannot (48 base instead of 46).
  */
-async function startCertApp(options: { queryDisabled?: boolean } = {}): Promise<CertApp> {
+async function startCertApp(options: { queryDisabled?: boolean; readOnly?: boolean } = {}): Promise<CertApp> {
   const workspace = createWorkspace();
   const db = new Database(':memory:');
   db.run('CREATE TABLE fixture (id INTEGER PRIMARY KEY)');
@@ -69,6 +69,7 @@ async function startCertApp(options: { queryDisabled?: boolean } = {}): Promise<
     workspaceDir: workspace.dir,
     authToken: CERT_TOKEN,
     sandbox,
+    ...(options.readOnly ? { readOnly: true } : {}),
     ...(options.queryDisabled ? { permissions: { query: false } } : {}),
   });
   const app = new Elysia()
@@ -210,6 +211,39 @@ describe('Elysia/Bun certificate', () => {
     },
     120_000
   );
+  it(
+    'certifies the §8.5 read-only deployment (writing methods absent)',
+    async () => {
+      if (!hasConformanceRunner) return; // runner not built in agent-oumv
+      const live = await startCertApp({ readOnly: true });
+      try {
+        const { loadFixtures, runFixtureSuite, httpTransport } = require(CONFORMANCE_ENTRY);
+        const transport = httpTransport({ url: live.rpcUrl, token: CERT_TOKEN });
+        const handshake = await transport.request({
+          jsonrpc: '2.0',
+          id: 'certify-handshake',
+          method: 'oumv/handshake',
+          params: {},
+        });
+        const report = await runFixtureSuite(transport, loadFixtures(FIXTURES_PATH), live.workspace.markers, {
+          adapterName: 'bun-elysia',
+          framework: 'elysia',
+          environment: { transport: 'http', auth: 'required', readOnly: true, runtime: `bun ${Bun.version}` },
+          capabilities: (handshake.result as any)?.capabilities,
+          negotiatedVersion: (handshake.result as any)?.protocolVersion,
+          auth: true,
+        });
+        if (report.failed > 0) console.log(report.cases.filter((entry: any) => entry.status !== 'passed'));
+        expect(report.failed).toBe(0);
+        expect(report.cases.filter((c: any) => c.id.startsWith('read-only-'))).toHaveLength(6);
+        writeReport('bun-elysia-readonly.json', report);
+      } finally {
+        await live.cleanup();
+      }
+    },
+    120_000
+  );
+
   it(
     'certifies the §14.2 workspace policy (permissions.query=false)',
     async () => {

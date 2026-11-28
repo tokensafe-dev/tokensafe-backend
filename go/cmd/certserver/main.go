@@ -46,7 +46,9 @@ func main() {
 		WorkspaceDir: *workspace,
 		Runtime:      cfg,
 	})
-	rt.SetDBSandbox(db.NewMemorySandbox())
+	// The read-capable memory sandbox advertises observeQuery.readOnly, so the
+	// §14.2 policy certificate has a registered query method to refuse with -32007.
+	rt.SetDBSandbox(db.NewMemorySandboxWithReads())
 
 	mux := stdhttp.NewServeMux(rt)
 	mux.HandleFunc("GET /api/v1/orders", func(w http.ResponseWriter, _ *http.Request) {

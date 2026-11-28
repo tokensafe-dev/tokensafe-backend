@@ -95,7 +95,9 @@ export async function runFixtures(
   url: string,
   markers: Record<string, string>,
   adapterName: string,
-  framework: string
+  framework: string,
+  /** Report file stem when it must differ from the adapter name (read-only runs). */
+  reportName?: string
 ): Promise<FixtureRun> {
   const { loadFixtures, runFixtureSuite, httpTransport, defaultMarkers } = require(CONFORMANCE_CJS);
   const transport = httpTransport({ url });
@@ -113,7 +115,8 @@ export async function runFixtures(
   const outDir = process.env.CERT_OUT_DIR;
   if (outDir) {
     fs.mkdirSync(outDir, { recursive: true });
-    fs.writeFileSync(path.join(outDir, `${adapterName.replace(/[/\\]/g, '-')}.json`), JSON.stringify(report, null, 2) + '\n');
+    const stem = reportName ?? adapterName;
+    fs.writeFileSync(path.join(outDir, `${stem.replace(/[/\\]/g, '-')}.json`), JSON.stringify(report, null, 2) + '\n');
   }
   return { report };
 }

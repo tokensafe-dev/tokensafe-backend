@@ -391,6 +391,10 @@ export class OumvRuntime {
     const advertised = capabilities as unknown as Record<string, unknown>;
     if (!this.enabled.mutate) delete advertised.mutate;
     if (!this.enabled.verify) delete advertised.verify;
+    // §3 idempotency replays applyEdit/previewEdit results: with the mutating
+    // methods absent it has nothing to replay, and advertising it would make the
+    // capability case call a method that answers -32601.
+    if (!this.enabled.mutate && capabilities.sessions) capabilities.sessions.idempotency = false;
     if (!this.enabled.mutate && !this.enabled.verify) advertised.readOnly = true;
 
     // §3.1: narrow to the client's request; an empty intersection stays empty.

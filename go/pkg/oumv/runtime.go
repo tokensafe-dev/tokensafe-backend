@@ -473,6 +473,12 @@ func (r *Runtime) Handshake(ctx context.Context, params *protocol.OumvHandshakeP
 	}
 	if !r.config.Capabilities.Mutate {
 		caps.Mutate = protocol.MutateCapability{}
+		// §3 idempotency covers applyEdit/previewEdit only: with the mutating
+		// methods absent there is nothing to replay, so advertising it would run
+		// the capability case against a method that answers -32601.
+		if caps.Sessions != nil {
+			caps.Sessions.Idempotency = false
+		}
 	}
 	if !r.config.Capabilities.Verify {
 		caps.Verify = protocol.VerifyCapability{}

@@ -61,13 +61,51 @@ def load_reports() -> list[tuple[str, dict]]:
     # `*-sim.json` files are profile evidence, not adapters: the Next browser
     # bridge certificate (spec §7.4) exercises the same adapter with a page
     # attached and is reproduced in CI, but it is not a twelfth stack.
+    # `*-readonly.json` files are the §8.5 profile of an adapter already in the
+    # table: they are rendered as read-only evidence, never as extra adapters.
+    # `*-query-disabled.json` files are the §14.2 workspace-policy profile of the
+    # same adapter and are rendered separately for the same reason.
     reports = [
         (path.name, json.loads(path.read_text(encoding="utf-8")))
         for path in sorted(REPORTS.glob("*.json"))
         if not path.name.endswith("-sim.json")
+        and not path.name.endswith("-readonly.json")
+        and not path.name.endswith("-query-disabled.json")
     ]
     if not reports:
         raise SystemExit(f"no committed reports in {REPORTS}")
+    return reports
+
+
+def load_policy_reports() -> list[tuple[str, dict]]:
+    """§14.2 workspace-policy certificates (`*-query-disabled.json`)."""
+    reports = [
+        (path.name, json.loads(path.read_text(encoding="utf-8")))
+        for path in sorted(REPORTS.glob("*-query-disabled.json"))
+    ]
+    for name, report in reports:
+        policy_cases = [c for c in report.get("cases", []) if c["id"].startswith("policy-")]
+        failing = [c["id"] for c in report.get("cases", []) if c.get("status") != "passed"]
+        if len(policy_cases) != 2:
+            raise SystemExit(f"{name}: expected 2 policy cases, found {len(policy_cases)}")
+        if failing:
+            raise SystemExit(f"{name}: policy certificate has failing cases: {', '.join(failing)}")
+    return reports
+
+
+def load_readonly_reports() -> list[tuple[str, dict]]:
+    """§8.5 read-only certificates (`*-readonly.json`), one per runtime profile."""
+    reports = [
+        (path.name, json.loads(path.read_text(encoding="utf-8")))
+        for path in sorted(REPORTS.glob("*-readonly.json"))
+    ]
+    for name, report in reports:
+        read_only_cases = [c for c in report.get("cases", []) if c["id"].startswith("read-only-")]
+        failing = [c["id"] for c in report.get("cases", []) if c.get("status") != "passed"]
+        if len(read_only_cases) != 6:
+            raise SystemExit(f"{name}: expected 6 read-only cases, found {len(read_only_cases)}")
+        if failing:
+            raise SystemExit(f"{name}: read-only certificate has failing cases: {', '.join(failing)}")
     return reports
 
 
@@ -163,6 +201,45 @@ def render(reports: list[tuple[str, dict]]) -> str:
                     gaps.append(f"`{report['adapterName']}` → `{case['id']}`: {case.get('error', '')}")
         if gaps:
             lines += ["", "Named gaps:", ""] + [f"- {gap}" for gap in gaps]
+
+    readonly_reports = load_readonly_reports()
+    if readonly_reports:
+        lines += [
+            "",
+            "Read-only deployments (§8.5) are a second run of the same runtime with the writing pillars "
+            "off: the mutating/verifying methods are absent from the registry and answer `-32601`, the "
+            "handshake advertises `capabilities.readOnly`, and the six `read-only-*` cases prove it. "
+            f"{len(readonly_reports)} profiles certified, one per runtime:",
+            "",
+            "| Certificate | Adapter | Level | Cases |",
+            "| :--- | :--- | :--- | :--- |",
+        ]
+        for name, report in readonly_reports:
+            lines.append(
+                f"| [certification/{name}](certification/{name}) "
+                f"| `{report.get('adapterName', Path(name).stem)}` "
+                f"| **{report['attainedLevel']}** "
+                f"| {report['passed']}/{report['total']} |"
+            )
+
+    policy_reports = load_policy_reports()
+    if policy_reports:
+        lines += [
+            "",
+            "Workspace policy (§14.2) is certified by running the same suite against a runtime whose "
+            "`permissions.query` is off: `oumv/query` stays registered and answers `-32007` with "
+            "`reason=\"query_disabled\"`, while observation is unaffected (the two `policy-*` cases):",
+            "",
+            "| Certificate | Adapter | Level | Cases |",
+            "| :--- | :--- | :--- | :--- |",
+        ]
+        for name, report in policy_reports:
+            lines.append(
+                f"| [certification/{name}](certification/{name}) "
+                f"| `{report.get('adapterName', Path(name).stem)}` "
+                f"| **{report['attainedLevel']}** "
+                f"| {report['passed']}/{report['total']} |"
+            )
 
     transport_reports = load_transport_reports()
     if transport_reports:

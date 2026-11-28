@@ -240,7 +240,7 @@
       "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-28T17:10:31.050Z",
+  "generatedAt": "2026-11-28T19:22:53.656Z",
   "environment": {
     "transport": "stdio",
     "node": "v24.14.0"

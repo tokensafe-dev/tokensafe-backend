@@ -273,15 +273,19 @@ public sealed class OumvRuntime
             ("observe", OumvJson.Obj(("levels", new[] { "L0", "L1", "L2", "L3", "L4" }), ("formats", new[] { "json" }))),
             ("understand", OumvJson.Obj(("causality", true), ("impactAnalysis", true))),
             ("index", OumvJson.Obj(("symbols", true))),
-            // §14.2 is opt-in per app: without a DbContext there is no read-only door.
-            ("observeQuery", OumvJson.Obj(("readOnly", _sandbox.HasEngine))),
-            ("sessions", OumvJson.Obj(("ttlSeconds", true), ("cancel", true), ("idempotency", true))),
-            ("transports", new[] { "http", "sse", "ws" }));
+        // §14.2 is opt-in per app: without a DbContext there is no read-only door.
+        ("observeQuery", OumvJson.Obj(("readOnly", _sandbox.HasEngine))),
+        // §3 idempotency replays applyEdit/previewEdit results; a read-only runtime
+        // has neither method, so the flag is cleared below instead of advertising a
+        // replay the capability case would call with -32601.
+        ("sessions", OumvJson.Obj(("ttlSeconds", true), ("cancel", true), ("idempotency", true))),
+        ("transports", new[] { "http", "sse", "ws" }));
 
         // §8.5: a read-only deployment advertises neither pillar and says so explicitly,
         // so a client never mistakes absence for an older adapter that lacks the method.
         if (IsReadOnly)
         {
+            capabilities["sessions"] = OumvJson.Obj(("ttlSeconds", true), ("cancel", true), ("idempotency", false));
             capabilities["readOnly"] = true;
             return capabilities;
         }

@@ -269,7 +269,7 @@
       "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-28T18:03:09.974Z",
+  "generatedAt": "2026-11-28T19:23:07.352Z",
   "environment": {
     "transport": "http",
     "policy": "query_disabled",

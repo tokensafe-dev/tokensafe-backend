@@ -3,8 +3,8 @@
   "framework": "net/http",
   "specVersion": "1.6.0",
   "fixtureVersion": 17,
-  "total": 47,
-  "passed": 47,
+  "total": 49,
+  "passed": 49,
   "failed": 0,
   "skipped": 0,
   "attainedLevel": 3,
@@ -240,6 +240,16 @@
       "status": "passed"
     },
     {
+      "id": "query-read-only-select-answers-columns-rows",
+      "level": 3,
+      "status": "passed"
+    },
+    {
+      "id": "query-rejects-write-statement",
+      "level": 3,
+      "status": "passed"
+    },
+    {
       "id": "build-returns-status-and-diagnostics",
       "level": 3,
       "status": "passed"
@@ -250,7 +260,7 @@
       "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-28T17:11:12.460Z",
+  "generatedAt": "2026-11-28T19:22:16.965Z",
   "environment": {
     "transport": "ws",
     "profile": "backend",

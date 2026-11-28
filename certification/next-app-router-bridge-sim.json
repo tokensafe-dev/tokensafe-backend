@@ -270,7 +270,7 @@
       "status": "passed"
     }
   ],
-  "generatedAt": "2026-11-28T17:10:30.879Z",
+  "generatedAt": "2026-11-28T19:22:53.319Z",
   "environment": {
     "transport": "http",
     "auth": "required",
